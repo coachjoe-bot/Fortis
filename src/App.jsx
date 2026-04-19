@@ -356,9 +356,9 @@ const needsSeasonDate = !athlete.season_date;
     } catch(e) { /* couldn't extract date, that's ok */ }
   }
 
-  const hasData = parsed.exercises?.length>0||parsed.pain_flags?.length>0||parsed.questions?.length>0;
+  const hasData = parsed.exercises?.length>0||parsed.pain_flags?.length>0||parsed.questions?.length>0||true;
   if(hasData) {
-    await sbInsert("workouts",{athlete_id:athlete.id,raw_message:msg,parsed_data:parsed});
+    await sbInsert("workouts",{athlete_id:athlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsed});
     if(parsed.pr_attempts?.length>0) {
       for(const pr of parsed.pr_attempts) {
         if(pr.achieved&&pr.weight) await sbInsert("prs",{athlete_id:athlete.id,exercise:pr.exercise,weight:pr.weight,reps:pr.reps||1});
@@ -609,7 +609,17 @@ return (
                   {aw.length===0 ? <div style={{padding:24,textAlign:"center",color:C.muted}}>No sessions logged yet</div> : aw.map((w,i)=>(
                     <div key={i} style={{padding:16,borderBottom:`1px solid ${C.border}`}}>
                       <div style={{color:C.muted,fontSize:10,letterSpacing:1,marginBottom:8}}>{new Date(w.created_at).toLocaleString()}</div>
-                      <div style={{background:C.navy3,borderRadius:"12px 12px 4px 12px",padding:"10px 14px",marginBottom:8,fontSize:13,color:C.text,lineHeight:1.6}}>{w.raw_message}</div>
+                      {/* Athlete message */}
+                      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+                        <div style={{maxWidth:"85%",background:C.gold,borderRadius:"12px 12px 4px 12px",padding:"10px 14px",fontSize:13,color:"#000",lineHeight:1.6}}>{w.raw_message}</div>
+                      </div>
+                      {/* Joe-bot reply */}
+                      {w.bot_reply&&(
+                        <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"flex-start"}}>
+                          <div style={{width:26,height:26,borderRadius:"50%",background:`linear-gradient(135deg,${C.gold},#8a6000)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#000",flexShrink:0}}>J</div>
+                          <div style={{maxWidth:"85%",background:C.navy3,border:`1px solid ${C.border}`,borderRadius:"12px 12px 12px 4px",padding:"10px 14px",fontSize:13,color:C.text,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{w.bot_reply}</div>
+                        </div>
+                      )}
                       <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                         {w.parsed_data?.exercises?.map((ex,j)=>(
                           <div key={j} style={{background:"#0a1e14",border:`1px solid ${C.green}30`,borderRadius:6,padding:"3px 8px",fontSize:11,color:C.green}}>
