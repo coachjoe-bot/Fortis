@@ -37,8 +37,27 @@ try { return JSON.parse(text.replace(/`json|`/g,””).trim()); }
 catch { return {exercises:[],pain_flags:[],equipment_issues:[],questions:[],pr_attempts:[],session_feel:null,general_notes:message}; }
 }
 
-async function getJoeBotReply(message, athlete, history) {
+async function getJoeBotReply(message, athlete, history, workoutHistory=[]) {
 const hist = history.slice(-6).map(m=>`${m.role==="user"?athlete.name:"Coach Joe"}: ${m.content}`).join(”\n”);
+
+// Build recent workout context from Supabase logs
+let pastContext = “”;
+if(workoutHistory && workoutHistory.length > 0) {
+const recentSessions = workoutHistory.slice(0, 5).map(w => {
+const d = new Date(w.created_at).toLocaleDateString();
+const exs = w.parsed_data?.exercises?.map(e =>
+`${e.name}${e.weight ? " " + e.weight + "lbs" : ""}${e.sets && e.reps ? " " + e.sets + "x" + e.reps : ""}${e.feel ? " ("+e.feel+")" : ""}`
+).join(”, “) || “”;
+const pain = w.parsed_data?.pain_flags?.map(p => p.area).join(”, “) || “”;
+const note = w.raw_message?.slice(0, 120) || “”;
+return `${d}: ${exs}${pain ? " | PAIN: "+pain : ""}${!exs ? note : ""}`;
+}).filter(Boolean).join(”\n”);
+pastContext = `
+
+ATHLETE’S RECENT WORKOUT HISTORY (last ${workoutHistory.slice(0,5).length} sessions):
+${recentSessions}
+Use this to give context-aware advice – reference their actual numbers, note progress or patterns, flag if something looks off.`;
+}
 
 // Determine training phase from season date
 let phaseContext = “”;
@@ -147,7 +166,7 @@ FORMATTING RULES – follow these exactly:
   - Keep the bar close
   - Lock hips and knees out together`;
   
-  return askClaude(sys, `${hist}\n\n${athlete.name}: ${message}`, 450);
+  return askClaude(sys + pastContext, `${hist}\n\n${athlete.name}: ${message}`, 450);
   }
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
@@ -318,9 +337,20 @@ const daysAgo = Math.floor((new Date()-lastLog)/(1000*60*60*24));
 const [input,setInput] = useState(””);
 const [loading,setLoading] = useState(false);
 const [saved,setSaved] = useState(false);
+const [workoutHistory,setWorkoutHistory] = useState([]);
 const bottomRef = useRef(null);
 
 useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:“smooth”});},[messages,loading]);
+
+// Load recent workout history on mount for Joe-bot context
+useEffect(()=>{
+(async()=>{
+try {
+const logs = await sbGet(“workouts”,`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=10`);
+if(logs&&logs.length>0) setWorkoutHistory(logs);
+} catch(e) {}
+})();
+},[]);
 
 const send = async () => {
 const msg = input.trim();
@@ -335,7 +365,7 @@ const needsSeasonDate = !athlete.season_date;
 
 ```
   const [reply,parsed] = await Promise.all([
-    getJoeBotReply(msg, {...athlete, _needsSeasonDate: needsSeasonDate}, newMsgs),
+    getJoeBotReply(msg, {...athlete, _needsSeasonDate: needsSeasonDate}, newMsgs, workoutHistory),
     parseWorkout(msg,athlete.name,athlete.sport)
   ]);
 
@@ -356,15 +386,56 @@ const needsSeasonDate = !athlete.season_date;
     } catch(e) { /* couldn't extract date, that's ok */ }
   }
 
-  const hasData = parsed.exercises?.length>0||parsed.pain_flags?.length>0||parsed.questions?.length>0||true;
-  if(hasData) {
-    await sbInsert("workouts",{athlete_id:athlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsed});
-    if(parsed.pr_attempts?.length>0) {
-      for(const pr of parsed.pr_attempts) {
-        if(pr.achieved&&pr.weight) await sbInsert("prs",{athlete_id:athlete.id,exercise:pr.exercise,weight:pr.weight,reps:pr.reps||1});
+  // Always save the workout
+  await sbInsert("workouts",{athlete_id:athlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsed});
+  setSaved(true); setTimeout(()=>setSaved(false),3000);
+
+  // Auto-detect PRs by comparing to existing bests
+  // Rule: must have a previous entry for that exercise -- first time logging = baseline only, not a PR
+  const newPRs = [];
+  if(parsed.exercises?.length>0) {
+    const existingPRs = await sbGet("prs",`?athlete_id=eq.${athlete.id}`);
+    const prMap = {};
+    if(Array.isArray(existingPRs)) {
+      existingPRs.forEach(pr => {
+        const key = pr.exercise?.toLowerCase().trim();
+        if(!prMap[key]||pr.weight>prMap[key].weight) prMap[key]=pr;
+      });
+    }
+
+    for(const ex of parsed.exercises) {
+      if(!ex.name||!ex.weight||ex.unit==="bodyweight") continue;
+      const key = ex.name.toLowerCase().trim();
+      const existing = prMap[key];
+
+      if(!existing) {
+        // First time logging this exercise -- save as baseline but do NOT flag as PR
+        await sbInsert("prs",{athlete_id:athlete.id,exercise:ex.name,weight:ex.weight,reps:ex.reps||1});
+      } else if(ex.weight > existing.weight) {
+        // Beat their previous best -- this is a real PR
+        await sbInsert("prs",{athlete_id:athlete.id,exercise:ex.name,weight:ex.weight,reps:ex.reps||1});
+        newPRs.push({exercise:ex.name,weight:ex.weight,prev:existing.weight,diff:ex.weight-existing.weight});
       }
     }
-    setSaved(true); setTimeout(()=>setSaved(false),3000);
+  }
+
+  // If new PRs were hit, append a callout to Joe-bot's reply
+  if(newPRs.length>0) {
+    const prCallout = newPRs.map(pr=>
+      `${pr.exercise}: ${pr.weight}lbs (+${pr.diff}lbs over previous best of ${pr.prev}lbs)`
+    ).join("\n");
+    const prMsg = `\n\nNEW PR ALERT:\n${prCallout}\n\nCall this out in Coach Joe's voice. This is earned -- acknowledge it directly. One line per PR.`;
+    try {
+      const prReply = await askClaude(
+        `You are Coach Joe Thomas. An athlete just hit a new personal record. Acknowledge it directly in your voice. No fluff, no paragraph -- just a short punchy callout. "Atta boy/girl" is appropriate here if it fits.`,
+        `Athlete: ${athlete.name} (${athlete.sport})\nNew PRs hit today:\n${prCallout}`,
+        150
+      );
+      setMessages(prev=>[...prev,{role:"assistant",content:prReply}]);
+    } catch(e) {
+      // Fallback PR message
+      setMessages(prev=>[...prev,{role:"assistant",content:newPRs.map(pr=>`New PR -- ${pr.exercise} at ${pr.weight}lbs. +${pr.diff}lbs over your previous best. That's what the work is for.`).join("\n")}]);
+    }
   }
   setMessages(prev=>[...prev,{role:"assistant",content:reply}]);
 } catch(e) {
