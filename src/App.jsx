@@ -206,7 +206,9 @@ function SignupScreen({setView,setAthlete,setErr,err}) {
               body:JSON.stringify({season_date:seasonDate,no_season:data.noSeason})
             });
           } catch(e) { /* season date optional, don't block signup */ }
-          setAthlete({...newAthlete, season_date: data.noSeason ? null : data.seasonDate||null, no_season:data.noSeason});
+          const fullAthlete = {...newAthlete, season_date: data.noSeason ? null : data.seasonDate||null, no_season:data.noSeason};
+          setAthlete(fullAthlete);
+          setView("athlete");
         } else {
           const errMsg = created?.message || created?.error || created?.hint || JSON.stringify(created);
           setErr("Error: " + errMsg);
@@ -287,7 +289,7 @@ function LoginScreen({setView,setAthlete,setErr,err}) {
     setLoading(true); setErr("");
     try {
       const results = await sbGet("athletes",`?name=eq.${encodeURIComponent(name.trim())}&pin=eq.${pin}&select=*`);
-      if(results?.length>0) { setAthlete(results[0]); }
+      if(results?.length>0) { setAthlete(results[0]); setView("athlete"); }
       else {
         // Check if name exists but wrong PIN
         const nameCheck = await sbGet("athletes",`?name=eq.${encodeURIComponent(name.trim())}`);
@@ -336,7 +338,7 @@ function CoachLoginScreen({setView,setCoach,setErr,err}) {
     setLoading(true); setErr("");
     try {
       const results = await sbGet("coaches",`?pin=eq.${pin}&select=*`);
-      if(results?.length>0) { setCoach(results[0]); }
+      if(results?.length>0) { setCoach(results[0]); setView("coach"); }
       else setErr("PIN not found. Check your PIN or set up your coach account first.");
     } catch(e) { setErr("Connection error."); }
     setLoading(false);
@@ -397,7 +399,7 @@ function CoachSetupScreen({setView,setCoach,setErr,err}) {
     setLoading(true); setErr("");
     try {
       const updated = await sbUpdate("coaches",coachRecord.id,{pin});
-      if(updated?.length>0) { setCoach({...coachRecord,pin}); }
+      if(updated?.length>0) { setCoach({...coachRecord,pin}); setView("coach"); }
       else setErr("Could not save PIN. Try again.");
     } catch(e) { setErr("Connection error."); }
     setLoading(false);
