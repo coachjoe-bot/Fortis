@@ -288,11 +288,11 @@ function LoginScreen({setView,setAthlete,setErr,err}) {
     if(!name.trim()||pin.length!==4) { setErr("Enter your name and 4-digit PIN."); return; }
     setLoading(true); setErr("");
     try {
-      const results = await sbGet("athletes",`?name=eq.${encodeURIComponent(name.trim())}&pin=eq.${pin}&select=*`);
+      const results = await sbGet("athletes",`?name=ilike.${encodeURIComponent(name.trim())}&pin=eq.${pin}&select=*`);
       if(results?.length>0) { setAthlete(results[0]); setView("athlete"); }
       else {
         // Check if name exists but wrong PIN
-        const nameCheck = await sbGet("athletes",`?name=eq.${encodeURIComponent(name.trim())}`);
+        const nameCheck = await sbGet("athletes",`?name=ilike.${encodeURIComponent(name.trim())}`);
         if(nameCheck?.length>0) setErr("Wrong PIN. Try again.");
         else setErr("Name not found. Check spelling or sign up as a new athlete.");
       }
