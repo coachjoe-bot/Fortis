@@ -197,8 +197,11 @@ function SignupScreen({setView,setAthlete,setErr,err}) {
           season_date:seasonDate,
           no_season:data.noSeason
         });
-        if(created?.length>0) { setAthlete(created[0]); /* navigate to athlete view handled by parent */ }
-        else setErr("Could not create account. Try again.");
+        if(created?.length>0) { setAthlete(created[0]); }
+        else {
+          const errMsg = created?.message || created?.error || created?.hint || JSON.stringify(created);
+          setErr("Error: " + errMsg);
+        }
       } catch(e) { setErr("Connection error."); }
       setLoading(false);
     }
