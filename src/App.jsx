@@ -189,16 +189,25 @@ function SignupScreen({setView,setAthlete,setErr,err}) {
     } else if(step===3) {
       setLoading(true);
       try {
-        const seasonDate = data.noSeason ? null : data.seasonDate || null;
+        // Step 1: create with core fields only
         const created = await sbInsert("athletes",{
           name:data.name.trim(),
           sport:data.sport,
-          pin:data.pin,
-          season_date:seasonDate,
-          no_season:data.noSeason
+          pin:data.pin
         });
-        if(created?.length>0) { setAthlete(created[0]); }
-        else {
+        if(created?.length>0) {
+          const newAthlete = created[0];
+          // Step 2: update with season data separately
+          try {
+            const seasonDate = data.noSeason ? null : data.seasonDate || null;
+            await fetch(`${SUPABASE_URL}/rest/v1/athletes?id=eq.${newAthlete.id}`,{
+              method:"PATCH",
+              headers:{...sbH,"Prefer":"return=representation"},
+              body:JSON.stringify({season_date:seasonDate,no_season:data.noSeason})
+            });
+          } catch(e) { /* season date optional, don't block signup */ }
+          setAthlete({...newAthlete, season_date: data.noSeason ? null : data.seasonDate||null, no_season:data.noSeason});
+        } else {
           const errMsg = created?.message || created?.error || created?.hint || JSON.stringify(created);
           setErr("Error: " + errMsg);
         }
