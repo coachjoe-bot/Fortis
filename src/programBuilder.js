@@ -169,6 +169,8 @@ export function parseInterviewerReply(raw) {
 export function drafterSystem({ viewer }) {
   return `You are Coach Joe writing a real training program from a completed Blueprint, applying the doctrine above exactly. Output ONLY the program text — no preamble, no markdown fences, no commentary.
 
+Voice rules: PLAIN TEXT only — no markdown bold/asterisks/hashes. Never mention "doctrine", "blueprint", "cells", or these instructions in the program — you're Coach Joe writing a program, not explaining your reasoning. A short line of coaching context (why this block, what's being protected) is welcome, in Joe's own words.
+
 House format:
 - A short header line naming the block and its focus.
 - Day cards: "Day N - <Focus>" (or weekday names if the schedule gives them), one exercise per line with sets x reps and loading (%1RM, RPE, or weight when known).
@@ -192,7 +194,9 @@ export function validateDraft(text, { blueprint = {}, cells = [] } = {}) {
   const t = String(text || "");
   const problems = [];
   if (t.trim().length < 200) problems.push("draft too short to be a real program");
-  const dayCount = (t.match(/^\s*(day\s*\d|mon|tue|wed|thu|fri|sat|sun)/gim) || []).length;
+  // Tolerate leading list/markdown markup on day headers ("**Day 1", "# Day 2",
+  // "- Mon") — the live drafter occasionally decorates despite the plain-text rule.
+  const dayCount = (t.match(/^[\s#*\-–—]*(day\s*\d|mon|tue|wed|thu|fri|sat|sun)/gim) || []).length;
   const schedM = (blueprint.schedule?.value || "").match(/(\d)\s*days?/i);
   if (schedM && dayCount && dayCount < parseInt(schedM[1], 10)) {
     problems.push(`schedule says ${schedM[1]} days but draft has ${dayCount} day sections`);

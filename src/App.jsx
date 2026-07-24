@@ -6680,8 +6680,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0}}>
               {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"]].map(([k,label])=>(
                 <button key={k} onClick={()=>setProgramTab(k)}
-                  style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s"}}>
+                  style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5}}>
                   {label}
+                  {k==="builder"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
                 </button>
               ))}
             </div>
@@ -8295,7 +8296,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
         <div key={b.id} style={card}>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
             <span style={{color:CA.text,fontSize:12.5,fontWeight:600}}>
-              {fmtD(b.applied_at)} → {b.completed_at?fmtD(b.completed_at):"current"}
+              {fmtD(b.applied_at||b.created_at)} → {b.completed_at?fmtD(b.completed_at):"current"}
             </span>
             {!b.completed_at&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`}}/>}
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
@@ -8305,7 +8306,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
           </div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide":"View"}</button>
-            <button disabled title="Builder coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
+            <button disabled title="Coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
           </div>
           {openBlock===b.id&&(
             <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"10px 0 0",borderTop:`1px solid ${CA.border}`,paddingTop:10}}>

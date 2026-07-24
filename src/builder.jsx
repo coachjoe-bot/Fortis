@@ -260,6 +260,8 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: 13, background: "rgba(5,10,24,.55)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 7 }}>
           <span style={{ fontFamily: "'Bebas Neue'", fontSize: 15, letterSpacing: 1.5, color: CA.text }}>BLUEPRINT</span>
+          <span title="The Builder is brand new — double-check what Joe writes and tell us if something feels off."
+            style={{ ...mono, fontSize: 7.5, letterSpacing: 1, color: CA.amber, border: `1px solid ${CA.amber}88`, borderRadius: 4, padding: "1px 4px" }}>BETA</span>
           <span style={{ ...mono, fontSize: 11, color: pct === 100 ? CA.green : CA.cyan }}>{pct}%</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
             {scopes.map(s => (

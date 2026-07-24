@@ -85,5 +85,8 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
     program_text: t,
     source,
     block_summary: summary,
+    // Explicit rather than relying on the DB default: the demo's mock store has
+    // no column defaults, and ordering/date-ranges key off this everywhere.
+    applied_at: new Date().toISOString(),
   });
 }
