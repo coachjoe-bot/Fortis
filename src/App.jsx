@@ -1618,6 +1618,9 @@ export const GSA = `
 .hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 62%,#000),var(--tc));box-shadow:0 0 calc(8px + var(--tb,0)*22px) var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
 .hfill::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 13px,transparent 13px 16px);opacity:.45;}
 .hcell.go .hfill{transform:scaleX(var(--pct,0));}
+/* Rank-up claim — replays the charge in the NEW tier colour when the athlete taps RANK UP */
+@keyframes rankCharge{0%{transform:scaleX(.03);filter:brightness(2.1) saturate(1.5);}55%{filter:brightness(1.7) saturate(1.25);}100%{transform:scaleX(var(--pct,0));}}
+.hcell.revealup .hfill{animation:rankCharge 1.15s cubic-bezier(.3,.85,.3,1) both;}
 /* RADAR empty state ("awaiting signal") */
 .radar{width:92px;height:92px;border-radius:50%;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
 .radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,transparent 0deg,rgba(55,230,255,.35) 42deg,transparent 62deg);animation:spin 2.4s linear infinite;}
@@ -1659,6 +1662,7 @@ export const GSA = `
 @media (prefers-reduced-motion: reduce){
   .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
   .hcell.go .hfill{transform:scaleX(var(--pct,0))!important;}
+  .hcell.revealup .hfill{animation:none!important;transform:scaleX(var(--pct,0))!important;}
   .a-draw{stroke-dasharray:none!important;}
 }
 `;
@@ -8040,7 +8044,12 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
   const [editVal,setEditVal] = useState("");
   const [showScoreInfo,setShowScoreInfo] = useState(false);
   const [showRankInfo,setShowRankInfo] = useState(false);
-  const [rankedUp,setRankedUp] = useState(()=>new Set());   // lift keys whose tier rose since last open → rank-up flash
+  // Rank-up "claim" moment: a lift that crossed into a higher tier (vs a stored baseline, and
+  // not the athlete's first-ever record of that lift) waits as a tappable RANK UP button.
+  // Tapping animates the tube up into the new tier, then the button retires. pendingRanks holds
+  // the OLD tier to show until claimed; `revealed` holds keys claimed this session.
+  const [pendingRanks,setPendingRanks] = useState({});       // {liftKey: oldTierIdx}
+  const [revealed,setRevealed] = useState(()=>new Set());    // liftKeys claimed this session → animate to new tier
   const [benchGo,setBenchGo] = useState(false);             // flips on shortly after the Benchmarks tab opens → power cells charge up
   const [rmLoaded,setRmLoaded] = useState(false);           // actual-1RMs loaded → tier colours are final (no charge-up before this)
   // Hold the charge-up until the manual 1RMs have loaded — otherwise a lift renders at
@@ -8218,24 +8227,51 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
   // (manual 1RMs, history) settle first — otherwise the initial partial render would
   // read as a "rank up" every time. After firing we rebaseline so it only flashes once.
   const benchSig = bodyweight ? dedupedBench.map(b=>`${b.key}:${tierIdxOf(b)}`).join("|") : "";
-  const baselineRef = useRef(null);
+  // High-water map of the highest tier each lift has been SHOWN at (persisted per athlete). It
+  // only ever climbs — so a later bodyweight gain that lowers the computed tier can never drop
+  // the displayed rank (Will's rule), and a genuine rank-up is detected against it. Seeded
+  // synchronously on first render so the ratchet floor is present on first paint (no frame
+  // where a dropped rank flashes before the floor loads).
+  const achievedRef = useRef(null);
+  if(achievedRef.current===null){
+    try{ achievedRef.current=JSON.parse(localStorage.getItem(`wilco_bench_tiers_${athlete.id}`)||"{}"); }catch{ achievedRef.current={}; }
+  }
+  // Detect pending rank-ups. Debounced 600ms so async loads (manual 1RMs, history) settle first —
+  // a partial early render would otherwise read as a rank-up. First-ever records of a lift are
+  // stored silently (no button); a computed tier ABOVE the stored high-water on a KNOWN lift arms
+  // the RANK UP button and keeps the old tier as the floor until it's claimed.
   useEffect(()=>{
-    if(baselineRef.current!==null) return;
-    try{ baselineRef.current=JSON.parse(localStorage.getItem(`wilco_bench_tiers_${athlete.id}`)||"{}"); }catch{ baselineRef.current={}; }
-  },[athlete.id]);
-  useEffect(()=>{
-    if(!bodyweight || baselineRef.current===null) return;
+    if(!bodyweight) return;
     const storeKey=`wilco_bench_tiers_${athlete.id}`;
     const id=setTimeout(()=>{
-      const base=baselineRef.current||{};
-      const cur={}; const ups=new Set();
-      dedupedBench.forEach(b=>{ const t=tierIdxOf(b); cur[b.key]=t; if(b.key in base && t>base[b.key]) ups.add(b.key); });
-      if(ups.size) setRankedUp(ups);
-      try{ localStorage.setItem(storeKey,JSON.stringify(cur)); }catch{}
-      baselineRef.current=cur;   // rebaseline so it doesn't re-fire within this open
+      const ach=achievedRef.current||{};
+      const newPending={};
+      dedupedBench.forEach(b=>{
+        const computed=tierIdxOf(b);
+        const stored=ach[b.key];
+        if(stored===undefined){ ach[b.key]=computed; }          // first time seen → record silently
+        else if(computed>stored){ newPending[b.key]=stored; }   // rank-up waiting to be claimed (keep old floor)
+        // else computed<=stored → ratchet holds; leave ach[b.key] as-is (never lowered)
+      });
+      try{ localStorage.setItem(storeKey,JSON.stringify(ach)); }catch{}
+      setPendingRanks(newPending);
+      // Re-arm the button if a lift ranked up AGAIN after being claimed this session.
+      const keys=Object.keys(newPending);
+      if(keys.length) setRevealed(prev=>{ const n=new Set(prev); keys.forEach(k=>n.delete(k)); return n; });
     },600);
     return ()=>clearTimeout(id);
   },[benchSig,bodyweight]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Claim a waiting rank-up: raise the high-water floor to the new tier, mark it revealed so the
+  // tube animates up into it, and retire the button.
+  const claimRankUp = (key, newTier) => {
+    try{
+      const m=achievedRef.current||{}; m[key]=newTier; achievedRef.current=m;
+      localStorage.setItem(`wilco_bench_tiers_${athlete.id}`,JSON.stringify(m));
+    }catch{}
+    setRevealed(prev=>new Set(prev).add(key));
+    setPendingRanks(prev=>{ const n={...prev}; delete n[key]; return n; });
+    haptic(50);
+  };
 
   const [manualMsg,setManualMsg] = useState(""); // A4: save/remove failure surfaced in the edit row
   const saveManual = async (row) => {
@@ -8365,9 +8401,16 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
 
             {bodyweight&&dedupedBench.map((b,i)=>{
               const ratio = b.e1rm / bodyweight;
-              const tierIdx = tierForRatio(ratio, b.thresh);   // 0=Rookie .. 7=Legendary
+              const computedTier = tierForRatio(ratio, b.thresh);   // 0=Rookie .. 7=Legendary
+              const floor = achievedRef.current?.[b.key];           // high-water tier (undefined = first time)
+              const isRevealed = revealed.has(b.key);
+              // A pending rank-up shows the OLD tier + a claim button until it's tapped. Otherwise
+              // ratchet: the displayed tier never drops below the high-water floor (a bodyweight
+              // gain can lower computedTier but must not lower the shown rank).
+              const pending = (b.key in pendingRanks) && !isRevealed;
+              const tierIdx = pending ? pendingRanks[b.key] : Math.max(computedTier, floor ?? computedTier);
               const isTop = tierIdx>=TIER_NAMES.length-1;
-              // Fill = progress THROUGH the CURRENT tier band, so on a rank-up the tube resets to
+              // Fill = progress THROUGH the displayed tier band, so on a claim the tube resets to
               // ~empty in the new (brighter) colour and recharges toward the next rank. --tb (glow)
               // scales with RANK, not fill. (artifact .hcell: STRONG=.52 fill / .3 glow, etc.)
               const tierFloor = tierIdx===0 ? 0 : b.thresh[tierIdx-1];
@@ -8376,21 +8419,27 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
               const toNext = isTop ? 0 : Math.max(0, Math.round(b.thresh[tierIdx]*bodyweight - b.e1rm));
               const dispName = b.name;                           // canonical (resolveLift)
               const isBW = b.bwLoaded;                            // pull-ups / dips / chin-ups / muscle-ups → bodyweight + added
-              const up = rankedUp.has(b.key);                     // climbed a tier since last open → flash
               const bwSub = isBW ? bwLoadLabel(b.e1rm, bodyweight) : `${ratio.toFixed(2)}× bw`;
               return (
                 // POWER CELL — battery tube filled to --pct in the tier colour, glow scales by --tb (artifact .hcell)
-                <div key={i} className={`hcell${benchGo?" go":""}`} style={{marginBottom:15}}>
+                <div key={i} className={`hcell${benchGo?" go":""}${isRevealed?" revealup":""}`} style={{marginBottom:15}}>
                   <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
                     <span style={{fontSize:12.5,color:CA.text,fontWeight:600}}>{dispName}</span>
                     <span style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:0.5,color:TIER_COLORS[tierIdx]}}>{TIER_NAMES[tierIdx]}</span>
                     {b.actual&&<span title="Using your actual 1RM" style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8,color:TIER_COLORS[tierIdx],border:`1px solid ${TIER_COLORS[tierIdx]}`,borderRadius:3,padding:"0 4px",letterSpacing:0.5}}>PR</span>}
-                    {up&&<span className="a-stamp" style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8,color:CA.cyan,border:`1px solid ${CA.cyan}`,borderRadius:3,padding:"0 4px",letterSpacing:0.5}}>⬆ RANK UP</span>}
+                    {pending&&(
+                      <button onClick={()=>claimRankUp(b.key, computedTier)} title={`Claim ${TIER_NAMES[computedTier]}`} className="a-stamp"
+                        style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,fontWeight:700,color:CA.cyan,background:`${CA.cyan}12`,border:`1px solid ${CA.cyan}`,borderRadius:5,padding:"2px 8px",letterSpacing:0.8,cursor:"pointer",boxShadow:`0 0 12px ${CA.cyan}66`}}>
+                        ⬆ RANK UP
+                      </button>
+                    )}
                     <span style={{marginLeft:"auto",fontFamily:"'Bebas Neue'",fontSize:16,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{Math.round(b.e1rm)}<small style={{fontFamily:"'DM Sans'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small></span>
                   </div>
                   <div className="htube"><div className="hfill" style={{"--tc":TIER_COLORS[tierIdx],"--tb":tierIdx/(TIER_NAMES.length-1),"--pct":fillPct}}/></div>
-                  <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:CA.faint,marginTop:5,letterSpacing:0.3}}>
-                    {isTop ? "TRULY INCREDIBLE 🏆" : `${toNext} ${toNext===1?"LB":"LBS"} TO ${TIER_NAMES[tierIdx+1]}`}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span>
+                  <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:pending?CA.cyan:CA.faint,marginTop:5,letterSpacing:0.3}}>
+                    {pending
+                      ? <>TAP RANK UP TO CLAIM {TIER_NAMES[computedTier]}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>
+                      : <>{isTop ? "TRULY INCREDIBLE 🏆" : `${toNext} ${toNext===1?"LB":"LBS"} TO ${TIER_NAMES[tierIdx+1]}`}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>}
                   </div>
                 </div>
               );
