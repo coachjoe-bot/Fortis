@@ -4402,6 +4402,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [loading,setLoading] = useState(false);
   const [videoLoading,setVideoLoading] = useState(false);
   const [prStamp,setPrStamp] = useState(null);   // {exercise,weight,unit} → "NEW MAX" stamp overlay when a PR lands
+  const [logStamp,setLogStamp] = useState(null); // {n} → "WORKOUT #N" stamp when a normal session logs (defers to a PR stamp)
   const [workoutHistory,setWorkoutHistory] = useState(()=>snapshot?.workouts||[]);
   const [historyLoaded,setHistoryLoaded] = useState(false);
   // True when there's on-device data worth painting before the network answers.
@@ -4981,6 +4982,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // count self-heals downward from any legacy inflated total_sessions_logged.
       // The cert block runs BEFORE the optimistic setWorkoutHistory below, so
       // workoutHistory here is pre-insert — prepending newRow counts this log once.
+      // Total Workouts stamp — capture the lifetime number for THIS log so the chat
+      // can press it on after PR detection (a PR outranks it). Only a genuinely new
+      // session moves the authoritative count, so this stays null on same-session
+      // follow-up messages and on non-workout chatter.
+      let loggedSessionNumber = null;
       try {
         const prevCount = updatedAthlete.total_sessions_logged||0;
         // Authoritative session count comes from the SQL view (v_athlete_session_counts,
@@ -5012,6 +5018,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // authenticated gateway round trip on the common path.
         const badgeUpdates = {};
         if(newCount!==prevCount) badgeUpdates.total_sessions_logged=newCount;
+        if(newCount>prevCount) loggedSessionNumber=newCount;   // a real new session → eligible for the Total Workouts stamp
         // Stamp the "earned" timestamp the first time real workouts reach 100. We never
         // clear it (it's a keepsake of when they earned it) — the badge's VISIBILITY is
         // gated live on the count>=100 in the header, so it recomputes for everyone.
@@ -5217,6 +5224,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             : `New PR -- ${pr.exercise} at ${fmtWeight(pr.weight,pr.unit)} x${pr.reps} (est. 1RM: ${Math.round(pr.e1rm)}lbs-equiv). +${Math.round(pr.diff)}lbs-equiv over previous best. That's what the work is for.`
           ).join("\n")+propagationNote}]);
         }
+      }
+      // Total Workouts stamp — a normal logged session presses its lifetime number
+      // onto the chat, NEW MAX-style. A PR in the same log outranks it (one
+      // celebration at a time), so this fires on ordinary training days — which is
+      // the whole point: showing up is the win, a PR is the bonus on top.
+      if(loggedSessionNumber && newPRs.length===0){
+        setLogStamp({n:loggedSessionNumber});
+        haptic(30);
+        setTimeout(()=>setLogStamp(null),2200);
       }
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Hit a snag saving that. Try again."}]);
@@ -6239,6 +6255,17 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div className="stamp hit">
             <div style={{fontFamily:"'Bebas Neue'",fontSize:34,letterSpacing:2,color:"#fff",lineHeight:0.9}}>NEW MAX</div>
             <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:10,letterSpacing:1,color:CA.cyan,marginTop:6}}>{prStamp.exercise} · {fmtWeight(prStamp.weight,prStamp.unit)}</div>
+          </div>
+        </div>
+      )}
+      {/* Total Workouts stamp — a logged session presses its lifetime number on (accent
+          blue, so it reads as "showed up" rather than a cyan "NEW MAX"). Only when no PR. */}
+      {logStamp&&(
+        <div className="stampstage">
+          <div className="stamp hit" style={{borderColor:CA.accent,boxShadow:`0 0 40px ${CA.accent}`}}>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:20,letterSpacing:3,color:CA.cyan,lineHeight:1}}>WORKOUT</div>
+            <div style={{fontFamily:"'Bebas Neue'",fontSize:52,letterSpacing:1,color:"#fff",lineHeight:0.9,marginTop:2}}>#{logStamp.n}</div>
+            <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:1,color:CA.muted2,marginTop:6}}>LOGGED WITH WILCO</div>
           </div>
         </div>
       )}
@@ -7405,6 +7432,26 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   );
 }
 
+// Count-up for the Total Workouts hero: eases 0 → end once on mount. Snaps straight
+// to the number under prefers-reduced-motion (no rAF, no motion).
+function CountUp({end, dur=800, style}) {
+  const reduce = (()=>{ try{ return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }catch{ return false; } })();
+  const [n,setN] = useState(reduce ? end : 0);
+  useEffect(()=>{
+    if(reduce){ setN(end); return; }
+    let raf, start=null;
+    const tick=(t)=>{
+      if(start==null) start=t;
+      const p=Math.min(1,(t-start)/dur);
+      setN(Math.round(end*(1-Math.pow(1-p,3))));   // easeOutCubic
+      if(p<1) raf=requestAnimationFrame(tick);
+    };
+    raf=requestAnimationFrame(tick);
+    return ()=>cancelAnimationFrame(raf);
+  },[end,dur,reduce]);
+  return <span style={style}>{n}</span>;
+}
+
 function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead, onOpenProofChat, setWorkoutHistory}) {
   const [tab,setTab] = useState("workouts");
   const [editSession,setEditSession] = useState(null);
@@ -7569,27 +7616,22 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
           ].filter(it=>!liftFilter||it.type!=="session"||sessionHasLift(it.data,liftFilter))
            .sort((a,b)=>b.date-a.date);
 
-          const chipRow = liftChips.length>1&&(
-            <div className="no-sb" style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:10,marginBottom:2}}>
-              {liftFilter&&(
-                <button onClick={()=>setLiftFilter(null)}
-                  style={{flexShrink:0,background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"5px 12px",cursor:"pointer",fontSize:11,whiteSpace:"nowrap"}}>✕ All</button>
-              )}
-              {liftChips.map(c=>{
-                const on = liftFilter===c.id;
-                return (
-                  <button key={c.id} onClick={()=>setLiftFilter(on?null:c.id)}
-                    style={{flexShrink:0,background:on?`${CA.accent}22`:CA.navy3,border:`1px solid ${on?CA.accent:CA.border}`,color:on?CA.accent:CA.muted2,borderRadius:20,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:on?700:400,whiteSpace:"nowrap"}}>
-                    {c.name}
-                  </button>
-                );
-              })}
+          // Total Workouts hero — the lifetime session count as the focal stat of the
+          // log, count-ups on open. Replaces the old per-lift filter chip row (Will's
+          // call: the count is the thing worth surfacing here).
+          const totalWorkoutsHero = (
+            <div style={{background:"linear-gradient(180deg,rgba(58,123,255,0.10),rgba(58,123,255,0.02))",border:`1px solid ${CA.line2}`,borderRadius:14,padding:"16px 18px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}>
+              <div>
+                <div style={{fontFamily:"'DM Sans'",fontSize:10,fontWeight:700,letterSpacing:2,color:CA.cyan,textTransform:"uppercase"}}>Total Workouts</div>
+                <div style={{color:CA.muted,fontSize:11,marginTop:3}}>Every session you've logged with WILCO</div>
+              </div>
+              <CountUp end={totalSessions} style={{fontFamily:"'Bebas Neue'",fontSize:52,lineHeight:0.9,color:CA.accent,fontVariantNumeric:"tabular-nums"}}/>
             </div>
           );
 
           if(timeline.length===0) return (
             <div>
-              {chipRow}
+              {totalWorkoutsHero}
               <div style={{color:CA.muted,textAlign:"center",padding:40,fontSize:13}}>
                 {liftFilter
                   ? <>No loaded sessions include that lift{allLoaded?".":" yet — keep scrolling to load older history."}</>
@@ -7600,7 +7642,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
 
           return (
             <div>
-              {chipRow}
+              {totalWorkoutsHero}
               {timeline.map((item,i)=>{
                 if(item.type==="session"){
                   const session = item.data;
