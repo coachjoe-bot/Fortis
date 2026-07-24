@@ -4430,6 +4430,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [movementLabel,setMovementLabel] = useState("");
   const [sessionCheckPending,setSessionCheckPending] = useState(null);
   const [programReplacePending,setProgramReplacePending] = useState(null);
+  // Phase D chat redirect: "make me a program" from a Builder-eligible athlete
+  // (pro+, unlocked, not in Field Mode) offers the Builder instead of generating
+  // inline slop. {msg, reply} kept so "Just write it here" can still run the old
+  // inline path. Typing dismisses, like every other pending chip.
+  const [builderRedirectPending,setBuilderRedirectPending] = useState(null);
   // Pending AI log-correction plan awaiting the athlete's confirm tap:
   // {plan:<resolveLogCorrection result>, targetId:<workouts row id>}
   const [correctionPending,setCorrectionPending] = useState(null);
@@ -4455,7 +4460,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Program Builder Phase A: the Program view is three subtabs (My Program /
   // Builder / Drafts). Always reopens on My Program.
   const [programTab,setProgramTab] = useState("program");
-  useEffect(()=>{ if(showProgram){ setProgramTab("program"); setBuilderDraft(null); } },[showProgram]);
+  // Reset on CLOSE (not open) so a deep link may set the subtab before opening —
+  // the chat redirect's "Open the Builder" needs to land ON the Builder.
+  useEffect(()=>{ if(!showProgram){ setProgramTab("program"); setBuilderDraft(null); } },[showProgram]);
   // A parked Builder session being resumed from the Drafts tab (Phase C). Keyed
   // into the pane so resuming a different draft remounts a fresh interview.
   const [builderDraft,setBuilderDraft] = useState(null);
@@ -4466,6 +4473,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     await sbUpdate("athletes",athlete.id,{program_text:t||null});
     snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true});
     setAthlete(prev=>({...prev,program_text:t||null}));
+    // Phase D coach summary card: a coached (but unlocked) athlete saved a
+    // Builder program — give the coach eyes on it. Distinct source "builder"
+    // renders its own card (Looks good / View / Lock) in the coach inbox.
+    // Best-effort: a card failure never costs the save.
+    if(t && athlete.coach_id && !athlete.program_locked){
+      const headline = (t.split("\n").find(l=>l.trim())||"New program").slice(0,140);
+      sbInsert("program_change_requests",{
+        athlete_id: athlete.id, coach_id: athlete.coach_id,
+        items: [{lift:null, suggested_change:`${athlete.name} built and saved a new program with Joe: ${headline}`, current:null, why:"Saved from the Program Builder"}],
+        reason: (athleteGoals[0]&&(athleteGoals[0].goal_text||athleteGoals[0].text)) || athlete.goal || null,
+        source: "builder",
+      }).catch(e=>console.error("[builder] coach card failed:",e?.message||e));
+    }
   };
   const [showProgress,setShowProgress] = useState(false);
   const [showQuickLog,setShowQuickLog] = useState(false);
@@ -4483,6 +4503,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // the exact draft text, same as quickLogPending, so a later message can't inherit
   // someone else's note. Stamped onto the workout row as parsed_data.focus_note.
   const quickLogNote = useRef(null);
+  // Quick Log warm-up/cool-down booleans, keyed on the draft text exactly like
+  // the focus note so they can only ever stamp their own workout row.
+  const quickLogPrep = useRef(null); // {text, warmup, cooldown} | null
   const pendingQuickLogSend = useRef(null); // A12: draft queued while a reply streams — auto-fired when the stream clears
   const [quickLogParked,setQuickLogParked] = useState(false); // an unfinished Quick Log draft is waiting — surfaced on the nav button
   // Re-read whenever the sheet closes (draft just parked) or history moves (they logged, so
@@ -4793,6 +4816,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setOutbox(rest);   // its pending bubble disappears here; send() appends the real one
     if(item.pure) quickLogPending.current = item.text; // a queued Quick Log draft is still a pure log
     if(item.note) quickLogNote.current = {text:item.text, note:item.note}; // …and keeps its focus note
+    if(item.prep) quickLogPrep.current = {text:item.text, warmup:!!item.prep.warmup, cooldown:!!item.prep.cooldown}; // …and its prep booleans
     send(item.text);
   },[offline,loading,videoLoading,historyLoaded,outbox]); // eslint-disable-line react-hooks/exhaustive-deps
   // Snapshot for the NEXT open. Debounced because `athlete` gets a new object
@@ -4994,6 +5018,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(quickLogNote.current && quickLogNote.current.text===msg){
         parsedFinal = {...parsedFinal, focus_note: quickLogNote.current.note};
         quickLogNote.current = null;
+      }
+      // Warm-up/cool-down booleans (Program Builder): stamped on every Quick Log
+      // send — presence of the fields marks "the toggles were offered", which is
+      // the denominator for the coach's warm-up adherence rate.
+      if(quickLogPrep.current && quickLogPrep.current.text===msg){
+        parsedFinal = {...parsedFinal, warmup_done: !!quickLogPrep.current.warmup, cooldown_done: !!quickLogPrep.current.cooldown};
+        quickLogPrep.current = null;
       }
       // Free tier: no memory — don't persist workouts or PRs
       if(tier==="free"){
@@ -5468,6 +5499,42 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     }
   };
 
+  // "Just write it here" on the Builder redirect: run the pre-redirect inline
+  // generation with the captured request + reply. Same guards, same replace-
+  // confirm gate, same snapshot as the legacy chat_create path.
+  const builderRedirectFallback = async () => {
+    const p = builderRedirectPending;
+    setBuilderRedirectPending(null);
+    if(!p) return;
+    setMessages(prev=>[...prev,{role:"assistant",content:"Writing the full version into your Program tab — give me a few seconds."}]);
+    try {
+      let generated = null;
+      try {
+        generated = await generateFullProgram({
+          athlete, workoutHistory, messages, goals: athleteGoals,
+          contextNotes: athleteContext, request: p.msg, joeReply: p.reply,
+        });
+      } catch(_){}
+      if(!generated) generated = await extractProgramText(p.reply);
+      const looksLikeProgram = generated && generated.trim().length > 120 && generated.trim().split("\n").length > 3;
+      if(!looksLikeProgram){
+        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version — open the Builder from the Program tab and I'll do it right."}]);
+        return;
+      }
+      if(athlete.program_text && athlete.program_text.trim()){
+        setProgramReplacePending({newText:generated.trim()});
+        setMessages(prev=>[...prev,{role:"assistant",content:"That's the program I'd put you on. You've already got one saved though — want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so."}]);
+      } else {
+        await sbUpdate("athletes",athlete.id,{program_text:generated.trim()});
+        snapshotProgram(athlete.id,generated.trim(),"chat_create",{forceNewBlock:true});
+        setAthlete(prev=>({...prev, program_text: generated.trim()}));
+        setMessages(prev=>[...prev,{role:"assistant",content:"📋 Saved that to your Program tab — it'll drive every session from here. Tweak it anytime in the Program tab."}]);
+      }
+    } catch(e){
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version — open the Builder from the Program tab and I'll do it right."}]);
+    }
+  };
+
   // Send (or drop) the change request Joe drafted for a coach-locked program.
   // Only an explicit Send tap writes to the coach's inbox — declining (or typing
   // instead of tapping, handled in send()) files nothing at all.
@@ -5589,12 +5656,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(offline){
       const pure = quickLogPending.current === msg;
       const note = (quickLogNote.current && quickLogNote.current.text===msg) ? quickLogNote.current.note : null;
+      const prep = (quickLogPrep.current && quickLogPrep.current.text===msg) ? {warmup:quickLogPrep.current.warmup, cooldown:quickLogPrep.current.cooldown} : null;
       quickLogPending.current = null;
       setInput("");
       // Queued messages render from `outbox`, NOT from `messages` — send() owns the
       // transcript and appends its own copy on replay, so a bubble pushed into
       // `messages` here would survive into that append and show twice.
-      setOutbox(queueOutbox(athlete.id, msg, {pure, note}));
+      setOutbox(queueOutbox(athlete.id, msg, {pure, note, prep}));
       return;
     }
     // A27: typing while the session-gap question is pending resolves it as "same
@@ -5615,6 +5683,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // chose NOT to use the chips. Drop the proposal (never switch without an explicit
     // tap) and process this new message normally.
     if(programReplacePending) setProgramReplacePending(null);
+    // Typing over the Builder-redirect offer = declined; process the message normally.
+    if(builderRedirectPending) setBuilderRedirectPending(null);
     // Same rule for a pending log correction: typing instead of tapping = declined.
     if(correctionPending) setCorrectionPending(null);
     // And for a drafted coach change-request: typing = don't send.
@@ -5851,6 +5921,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             }
           }
         } catch(e){}
+      } else if(parsed.program_create_request && !fromQuickLog
+                && (updatedAthlete.tier||"free")!=="free" && !updatedAthlete.temp_program_text){
+        // Phase D: a real program request from a Builder-eligible athlete gets the
+        // Builder, not inline generation — the Builder interviews properly and
+        // drafts from doctrine. "Just write it here" keeps the old path one tap
+        // away (builderRedirectFallback). Free tier and Field Mode keep the
+        // inline path below; locked programs never reach here (locked branch above).
+        setBuilderRedirectPending({msg, reply}); chipSetThisSend = true;
+        followUp("That's a Builder job. It sits you down properly — goal, schedule, red flags, what you've got to train with — then drafts the real thing from my actual programming rules. Tap “Open the Builder” below, or I can write something quick right here.");
       } else if(parsed.program_create_request && !fromQuickLog){
         // Athlete asked Joe to BUILD them a program. The conversational reply is
         // capped at 800 tokens, so it can never BE the program — a dedicated
@@ -6068,6 +6147,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         setOutbox(queueOutbox(athlete.id, msg, {
           pure: fromQuickLog,
           note: (quickLogNote.current && quickLogNote.current.text===msg) ? quickLogNote.current.note : null,
+          prep: (quickLogPrep.current && quickLogPrep.current.text===msg) ? {warmup:quickLogPrep.current.warmup, cooldown:quickLogPrep.current.cooldown} : null,
         }));
         setLoading(false);
         return;
@@ -6533,6 +6613,18 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             Cancel
           </button>
         </div>
+      ):builderRedirectPending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={()=>{setBuilderRedirectPending(null); track("builder_redirect_open","ai"); setShowProgram(true); setProgramTab("builder");}}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            🏗️ Open the Builder
+          </button>
+          <button onClick={builderRedirectFallback}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Just write it here
+          </button>
+        </div>
       ):programReplacePending?(
         <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
           <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
@@ -6689,9 +6781,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {programTab==="builder"&&(
               <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column"}}>
                 <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
-                  <ProgramBuilderPane key={builderDraft?.id||"new"} athlete={athlete} viewer="athlete"
+                  <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
                     locked={!!athlete.program_locked}
-                    initialDraft={builderDraft}
+                    initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
+                    rebuildFrom={builderDraft?.__rebuildFrom||null}
                     onSaveToProgram={applyBuilderText}/>
                 </Suspense>
               </div>
@@ -6700,6 +6793,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
+                  onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
               </div>
             )}
@@ -6849,8 +6943,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           contextNotes={athleteContext}
           onClose={()=>setShowQuickLog(false)}
           onAddProgram={()=>{setShowQuickLog(false);setShowProgram(true);}}
-          onSend={(text,focusNote)=>{
+          onSend={(text,focusNote,qlPrep)=>{
             setShowQuickLog(false);
+            quickLogPrep.current = qlPrep ? {text, warmup:!!qlPrep.warmup, cooldown:!!qlPrep.cooldown} : null;
             // Mark THIS draft text as a Quick Log log so send() can never route it
             // into a program overwrite (survives the queued path below too). Keyed
             // on the text, so a different message typed later can't inherit it.
@@ -7258,6 +7353,10 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   const [editErr,setEditErr] = useState("");
   const [undoStack,setUndoStack] = useState([]);
   const [resumed,setResumed] = useState(false); // drives the "picked up where you left off" banner
+  // Warm-up / cool-down tap-to-log (Program Builder): TWO BOOLEANS ONLY — the
+  // full prep detail lives in the program text; the log records just "did it".
+  // Rides parsed_data.warmup_done/cooldown_done on the workout row via onSend.
+  const [prep,setPrep] = useState({warmup:false,cooldown:false});
   const ctxRef = useRef(null);
 
   const todayStr = qlTodayStr;
@@ -7294,6 +7393,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
     const parked = qlLoad(athlete.id, workoutHistory);
     if(parked){
       setDraft(parked.draft); setNotes(parked.notes); setUndoStack(parked.undoStack);
+      if(parked.prep) setPrep(parked.prep);
       // Only the athlete's OWN parked work gets the "picked up where you left off"
       // banner. A background pre-build just opens, instantly, with no explanation
       // owed — claiming they left off would be a lie about their own session.
@@ -7313,19 +7413,19 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Park the draft as it changes so a close — or an iOS kill — mid-workout keeps it.
   useEffect(()=>{
     if(phase!=="ready") return;
-    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack});
+    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
     const t = setTimeout(flush, 400); // debounced: this runs per keystroke in the textarea
     // Backgrounding the PWA (music, camera, screen lock between sets) can kill it outright,
     // and iOS won't run the pending timer first — flush on the way out.
     const onHide = () => { if(document.visibilityState==="hidden") flush(); };
     document.addEventListener("visibilitychange", onHide);
     return ()=>{ clearTimeout(t); document.removeEventListener("visibilitychange", onHide); };
-  },[draft,notes,undoStack,phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  },[draft,notes,undoStack,prep,phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Closing is a save point, so flush synchronously — the debounce above may not have
   // fired yet and unmounting kills its timer.
   const closeSheet = () => {
-    if(phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack});
+    if(phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
     onClose();
   };
 
@@ -7490,9 +7590,20 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           {/* Drop the parked copy BEFORE handing the draft off. Once it's logged, resuming it
               would show the athlete a workout they already sent and invite a double-log —
               the one way draft memory could actually corrupt their history. */}
+          {/* Warm-up / cool-down: tap-to-log booleans only (Program Builder). Every
+              Builder day card is written WITH a prep block — the log just records
+              whether it happened, at zero typing cost. */}
+          <div style={{display:"flex",gap:8}}>
+            {[["warmup","🔥 Warmed up"],["cooldown","🧊 Cooled down"]].map(([k,label])=>(
+              <button key={k} onClick={()=>setPrep(p=>({...p,[k]:!p[k]}))}
+                style={{flex:1,background:prep[k]?`${CA.green}18`:CA.navy3,border:`1px solid ${prep[k]?CA.green:CA.border}`,color:prep[k]?CA.green:CA.muted2,borderRadius:10,padding:"9px 8px",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"'DM Sans'",transition:"all 0.12s"}}>
+                {prep[k]?"✓ ":""}{label}
+              </button>
+            ))}
+          </div>
           {/* The focus note goes WITH the log — it's the record of why this session
               mattered, and it's already paid for. See parsed_data.focus_note. */}
-          <button onClick={()=>{qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null);}} disabled={!canSend}
+          <button onClick={()=>{qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep);}} disabled={!canSend}
             style={{background:canSend?CA.accent:CA.navy3,color:canSend?"#000":CA.muted,border:`1px solid ${canSend?CA.accent:CA.border}`,borderRadius:12,padding:"14px",fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:16,cursor:canSend?"pointer":"not-allowed"}}>
             SEND TO CHAT →
           </button>
@@ -8112,7 +8223,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 // current program and hands the confirmed text to onSaveToProgram, which is the
 // caller's own gated save path (athlete: sbUpdate + snapshot; coach:
 // onProgramSave — so the coach notification + parse-at-save ride along free).
-export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume}){
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume, onRebuild}){
   const [drafts,setDrafts] = useState([]);
   const [blocks,setBlocks] = useState([]);
   const [loaded,setLoaded] = useState(false);
@@ -8306,7 +8417,11 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
           </div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide":"View"}</button>
-            <button disabled title="Coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
+            {onRebuild?(
+              <button onClick={()=>onRebuild(b)} title="Start a Builder interview with this block as the starting point" style={miniBtn(false)}>Rebuild from this</button>
+            ):(
+              <button disabled title="Coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
+            )}
           </div>
           {openBlock===b.id&&(
             <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"10px 0 0",borderTop:`1px solid ${CA.border}`,paddingTop:10}}>

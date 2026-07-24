@@ -397,6 +397,17 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
       lastWeekSets: lastWeekVolume,
       deltaSets: thisWeekVolume - lastWeekVolume,
     },
+    // Warm-up/cool-down check-offs (Quick Log tap-to-log booleans, Program
+    // Builder). Only toggle-bearing rows count — chat logs carry no signal.
+    prep: (() => {
+      const rows = thisWeekSessions.flat().filter((w) => typeof getPD(w).warmup_done === "boolean");
+      if (!rows.length) return null;
+      return {
+        logged: rows.length,
+        warmups: rows.filter((w) => getPD(w).warmup_done).length,
+        cooldowns: rows.filter((w) => getPD(w).cooldown_done).length,
+      };
+    })(),
     lifts,
     plateaus,
     prs: recentPRs,

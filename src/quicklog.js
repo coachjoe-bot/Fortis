@@ -42,6 +42,9 @@ export const qlLoad = (athleteId, workoutHistory) => {
       notes: typeof d.notes==="string" ? d.notes : "",
       undoStack: Array.isArray(d.undoStack) ? d.undoStack : [],
       prebuilt: !!d.prebuilt,
+      // Warm-up / cool-down tap-to-log toggles (Program Builder: two booleans
+      // only — full prep detail lives in the program text, never the log).
+      prep: d.prep && typeof d.prep==="object" ? {warmup:!!d.prep.warmup, cooldown:!!d.prep.cooldown} : {warmup:false, cooldown:false},
     };
   }catch(_){ return null; }
 };
@@ -54,7 +57,7 @@ export const qlLoad = (athleteId, workoutHistory) => {
 // the RESUME LOG nav label, which is a promise about the athlete's own unfinished
 // work. Any later save from the sheet omits the flag, so the moment they touch it
 // the draft becomes a normal parked one.
-export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt}) => {
+export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt, prep}) => {
   try{
     if(!draft||!draft.trim()){ qlClear(athleteId); return; }
     localStorage.setItem(qlKey(athleteId), JSON.stringify({
@@ -64,6 +67,7 @@ export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, preb
       savedAt: Date.now(),
       stamp: qlStamp(workoutHistory),
       prebuilt: !!prebuilt,
+      prep: prep && (prep.warmup||prep.cooldown) ? {warmup:!!prep.warmup, cooldown:!!prep.cooldown} : undefined,
     }));
   }catch(_){}
 };

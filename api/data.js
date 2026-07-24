@@ -163,7 +163,9 @@ const ATHLETE_COL_ALLOW = {
   // to 'pending' in the DB; only the coach flips it (coach write path below).
   program_change_requests: {
     cols: new Set(["coach_id", "items", "reason", "source"]),
-    values: { source: (v) => ["plateau", "pr", "pain", "feedback"].includes(v) },
+    // "builder" = the Phase D coach summary card: an unlocked athlete saved a
+    // Builder program; the coach gets a distinct inbox card (not a change ask).
+    values: { source: (v) => ["plateau", "pr", "pain", "feedback", "builder"].includes(v) },
   },
   // Program Builder Phase B. An athlete's draft is always their OWN (owner_type
   // pinned to 'athlete', never coach_id-bearing), and status/scope stay inside

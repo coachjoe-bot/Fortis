@@ -3710,15 +3710,46 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
 
       <div style={{padding:20,maxHeight:"calc(100vh - 320px)",overflowY:"auto"}}>
 
+        {/* ── Builder summary cards (Phase D): an UNLOCKED athlete saved a program
+            they built with Joe. Distinct from change requests — nothing needs
+            merging; the coach just gets eyes on it, with a one-tap lock. ── */}
+        {requests.filter(r=>r.source==="builder").map(r=>(
+          <div key={r.id} style={{background:`${CA.green}0d`,border:`1px solid ${CA.green}40`,borderRadius:12,padding:14,marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+              <span style={{fontFamily:"'Bebas Neue'",fontSize:15,color:CA.green,letterSpacing:1}}>🏗️ NEW PROGRAM FROM THE BUILDER</span>
+              <span style={{marginLeft:"auto",fontSize:10.5,color:CA.muted}}>{fmtDateRelative?fmtDateRelative(r.created_at):new Date(r.created_at).toLocaleDateString()}</span>
+            </div>
+            <div style={{color:CA.text,fontSize:13,lineHeight:1.55,marginBottom:4}}>
+              {(Array.isArray(r.items)&&r.items[0]?.suggested_change)||`${athlete.name} built and saved a new program with Joe.`}
+            </div>
+            {r.reason&&<div style={{color:CA.muted,fontSize:11.5,marginBottom:10}}>Their goal: “{r.reason.length>160?r.reason.slice(0,157)+"…":r.reason}”</div>}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <button onClick={()=>onResolveRequest(r,"applied")}
+                style={{background:CA.green,color:"#02120a",border:"none",borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans'"}}>Looks good ✓</button>
+              <button onClick={()=>{setTab("program");setProgTab("program");}}
+                style={{background:"transparent",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans'"}}>View program</button>
+              <button onClick={async ()=>{
+                  try{
+                    await sbUpdate("athletes",athlete.id,{program_locked:true});
+                    setProgramLocked(true);
+                    onAthletePatched&&onAthletePatched(athlete.id,{program_locked:true});
+                    onResolveRequest(r,"applied");
+                  }catch(e){ console.error("builder-card lock",e); }
+                }}
+                style={{background:"transparent",border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans'"}}>🔒 Lock program</button>
+            </div>
+          </div>
+        ))}
+
         {/* ── Program change requests (locked-program collaboration) ── */}
-        {requests.length>0&&(
+        {requests.filter(r=>r.source!=="builder").length>0&&(
           <div style={{background:`${CA.accent}0d`,border:`1px solid ${CA.accent}40`,borderRadius:12,padding:14,marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
               <span style={{fontFamily:"'Bebas Neue'",fontSize:15,color:CA.accent,letterSpacing:1}}>PROGRAM CHANGE REQUESTS</span>
-              <span style={{fontSize:10,fontWeight:800,color:CA.accent,background:`${CA.accent}22`,border:`1px solid ${CA.accent}55`,borderRadius:999,padding:"1px 7px"}}>{requests.length}</span>
+              <span style={{fontSize:10,fontWeight:800,color:CA.accent,background:`${CA.accent}22`,border:`1px solid ${CA.accent}55`,borderRadius:999,padding:"1px 7px"}}>{requests.filter(r=>r.source!=="builder").length}</span>
               <span style={{marginLeft:"auto",fontSize:10.5,color:CA.muted,textTransform:"uppercase",letterSpacing:.5}}>🔒 Locked</span>
             </div>
-            {requests.map((r)=>{
+            {requests.filter(r=>r.source!=="builder").map((r)=>{
               // Joe authors the suggestion (items[0].suggested_change); r.reason is
               // the athlete's own words. Legacy rows have them equal (both athlete
               // text) — show one quote and skip the drafted-by attribution there.
@@ -3773,7 +3804,24 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             ):(
               <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:16,color:CA.muted,fontSize:13}}>No sessions logged yet.</div>
             )}
-
+            {/* Warm-up/cool-down adherence (Program Builder tap-to-log booleans).
+                Denominator = Quick Log sends where the toggles existed (rows
+                carrying the fields), so chat-only loggers simply show nothing. */}
+            {(()=>{
+              const pd = (w)=>{ const p=w?.parsed_data; if(typeof p==="string"){ try{ return JSON.parse(p); }catch(_){ return {}; } } return p||{}; };
+              const rows = workouts.filter(w=>typeof pd(w).warmup_done==="boolean");
+              if(rows.length===0) return null;
+              const wu = rows.filter(w=>pd(w).warmup_done).length;
+              const cd = rows.filter(w=>pd(w).cooldown_done).length;
+              return (
+                <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",gap:18,flexWrap:"wrap",alignItems:"center"}}>
+                  <span style={{color:CA.accent,fontSize:11,letterSpacing:1,fontWeight:700}}>PREP ADHERENCE</span>
+                  <span style={{color:wu/rows.length>=0.7?CA.green:CA.amber,fontSize:12.5,fontWeight:600}}>🔥 Warmed up {wu} of {rows.length}</span>
+                  <span style={{color:cd/rows.length>=0.5?CA.green:CA.muted2,fontSize:12.5,fontWeight:600}}>🧊 Cooled down {cd} of {rows.length}</span>
+                  <span style={{color:CA.muted,fontSize:10.5}}>from Quick Log check-offs</span>
+                </div>
+              );
+            })()}
             {(()=>{
               const painLogs = workouts.filter(w=>w.parsed_data?.pain_flags?.some(p=>!resolvedPainAreas.includes(p.area.toLowerCase())));
               if(!painLogs.length) return null;
@@ -4047,8 +4095,9 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             {progTab==="builder"&&(
               <div style={{minHeight:420,display:"flex",flexDirection:"column"}}>
                 <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
-                  <ProgramBuilderPane key={builderDraft?.id||"new"} athlete={athlete} viewer="coach" coachId={coachId}
-                    initialDraft={builderDraft}
+                  <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="coach" coachId={coachId}
+                    initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
+                    rebuildFrom={builderDraft?.__rebuildFrom||null}
                     onSaveToProgram={applyBuilderDraft}/>
                 </Suspense>
               </div>
@@ -4056,6 +4105,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             {progTab==="drafts"&&(
               <ProgramDraftsPane athlete={athlete} viewer="coach"
                 onResume={(d)=>{ setBuilderDraft(d); setProgTab("builder"); }}
+                onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgTab("builder"); }}
                 onSaveToProgram={applyBuilderDraft}/>
             )}
             {progTab==="program"&&(<>

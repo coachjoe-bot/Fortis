@@ -43,7 +43,7 @@ const BUILDER_CSS = `
 
 const nowIso = () => new Date().toISOString();
 
-export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, locked = false, onSaveToProgram, onParked }) {
+export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, onSaveToProgram, onParked }) {
   // Athlete quick-builds stay in chat (Field Mode) — quick is coach-only.
   const scopes = viewer === "coach" ? ["full", "short", "quick"] : ["full", "short"];
   const [scope, setScope] = useState(initialDraft?.scope || "full");
@@ -72,17 +72,25 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
     if (blueprint) { if (phase === "boot") setPhase("interview"); return; }
     let on = true;
     (async () => {
-      let lastBlock = null, goals = [];
-      try {
-        const h = await sbRead("program_history", `?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=block_summary,program_text,applied_at`);
-        lastBlock = (Array.isArray(h) && h[0]) || null;
-      } catch (_) {}
+      // "Rebuild from this": a chosen past block IS the hand-off — skip the
+      // latest-block fetch and anchor the interview on the block they picked.
+      let lastBlock = rebuildFrom, goals = [];
+      if (!lastBlock) {
+        try {
+          const h = await sbRead("program_history", `?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=block_summary,program_text,applied_at`);
+          lastBlock = (Array.isArray(h) && h[0]) || null;
+        } catch (_) {}
+      }
       try {
         const g = await sbRead("athlete_goals", `?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=1`);
         goals = Array.isArray(g) ? g : [];
       } catch (_) {}
       if (!on) return;
       const bp = precharge({ athlete, goals, lastBlock, viewer });
+      if (rebuildFrom) {
+        const name = rebuildFrom.block_summary || (rebuildFrom.program_text || "").split("\n").find(l => l.trim()) || "a previous block";
+        bp.handoff = { value: `REBUILD of a past block: ${name}. Its full text is the starting template — keep what worked, change what the interview surfaces.`, source: "known" };
+      }
       setBlueprint(bp);
       setPhase("interview");
       openInterview(bp, scope);
@@ -184,12 +192,15 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
     try {
       track("builder_draft_generate", "ai");
       const sys = drafterSystem({ viewer });
-      let text = await askClaude({ cached: doctrine(), dynamic: sys }, draftUser({ blueprint, cells, athlete }), 3500, [], "claude-sonnet-5", "program_draft");
+      // A rebuild carries the old block's full text as the starting template.
+      let userPrompt = draftUser({ blueprint, cells, athlete });
+      if (rebuildFrom?.program_text) userPrompt += `\n\nPREVIOUS BLOCK (rebuild starting template — keep its working structure unless the blueprint says otherwise):\n${rebuildFrom.program_text.slice(0, 3000)}`;
+      let text = await askClaude({ cached: doctrine(), dynamic: sys }, userPrompt, 3500, [], "claude-sonnet-5", "program_draft");
       let check = validateDraft(text, { blueprint, cells });
       if (!check.ok) {
         // one corrective retry with the exact failures — the harness asserts the same rules
         text = await askClaude({ cached: doctrine(), dynamic: sys },
-          draftUser({ blueprint, cells, athlete }) + `\n\nYour previous attempt failed these checks — fix ALL of them:\n- ${check.problems.join("\n- ")}`,
+          userPrompt + `\n\nYour previous attempt failed these checks — fix ALL of them:\n- ${check.problems.join("\n- ")}`,
           3500, [], "claude-sonnet-5", "program_draft");
         check = validateDraft(text, { blueprint, cells });
       }
