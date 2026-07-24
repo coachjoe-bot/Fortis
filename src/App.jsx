@@ -28,6 +28,9 @@ import {
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
 import { snapshotProgramHistory } from "./programHistory.js";
+// Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
+// UI download only when the Builder subtab actually opens.
+const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
 // Chat-routing decisions (model escalation, "remember this", is-this-a-log, PR
 // propagation guards). Pure regexes/logic pulled out of send() so they have a
 // suite — see src/chatRouting.js and scripts/test-chat-routing.mjs.
@@ -4452,7 +4455,18 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Program Builder Phase A: the Program view is three subtabs (My Program /
   // Builder / Drafts). Always reopens on My Program.
   const [programTab,setProgramTab] = useState("program");
-  useEffect(()=>{ if(showProgram) setProgramTab("program"); },[showProgram]);
+  useEffect(()=>{ if(showProgram){ setProgramTab("program"); setBuilderDraft(null); } },[showProgram]);
+  // A parked Builder session being resumed from the Drafts tab (Phase C). Keyed
+  // into the pane so resuming a different draft remounts a fresh interview.
+  const [builderDraft,setBuilderDraft] = useState(null);
+  // Builder/Drafts "save to program": the same write as every other athlete save
+  // path, with the builder-source history snapshot (always its own block).
+  const applyBuilderText = async (text) => {
+    const t=(text||"").trim();
+    await sbUpdate("athletes",athlete.id,{program_text:t||null});
+    snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true});
+    setAthlete(prev=>({...prev,program_text:t||null}));
+  };
   const [showProgress,setShowProgress] = useState(false);
   const [showQuickLog,setShowQuickLog] = useState(false);
   // Holds the exact Quick Log draft TEXT awaiting send (not a bare boolean): the
@@ -6672,24 +6686,20 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               ))}
             </div>
             {programTab==="builder"&&(
-              <div style={{flex:1,overflowY:"auto",padding:"32px 24px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",gap:10}}>
-                <div style={{fontSize:30}}>🏗️</div>
-                <div style={{fontFamily:"'Bebas Neue'",fontSize:24,letterSpacing:2,color:CA.text}}>PROGRAM BUILDER</div>
-                <div style={{background:"linear-gradient(135deg,#f6c96b,#c9971f)",color:"#1a1204",borderRadius:6,padding:"2px 10px",fontSize:10,fontWeight:800,letterSpacing:1.5}}>PRO</div>
-                <div style={{color:CA.muted2,fontSize:13,lineHeight:1.7,maxWidth:300}}>
-                  A short sit-down with Joe that turns your goal into a real program — built from your training history, your schedule, and what you've got to train with. Coming soon.
-                </div>
+              <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column"}}>
+                <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+                  <ProgramBuilderPane key={builderDraft?.id||"new"} athlete={athlete} viewer="athlete"
+                    locked={!!athlete.program_locked}
+                    initialDraft={builderDraft}
+                    onSaveToProgram={applyBuilderText}/>
+                </Suspense>
               </div>
             )}
             {programTab==="drafts"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
-                  onSaveToProgram={async (text)=>{
-                    const t=(text||"").trim();
-                    await sbUpdate("athletes",athlete.id,{program_text:t||null});
-                    snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true});
-                    setAthlete(prev=>({...prev,program_text:t||null}));
-                  }}/>
+                  onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
+                  onSaveToProgram={applyBuilderText}/>
               </div>
             )}
             {programTab==="program"&&(<>
@@ -8101,7 +8111,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 // current program and hands the confirmed text to onSaveToProgram, which is the
 // caller's own gated save path (athlete: sbUpdate + snapshot; coach:
 // onProgramSave — so the coach notification + parse-at-save ride along free).
-export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram}){
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume}){
   const [drafts,setDrafts] = useState([]);
   const [blocks,setBlocks] = useState([]);
   const [loaded,setLoaded] = useState(false);
@@ -8252,8 +8262,13 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram}){
               {d.status==="draft"&&(
                 <button onClick={()=>{setEditingId(d.id);setEditText(d.draft_text||"");}} style={miniBtn(false)}>Open & edit</button>
               )}
-              {d.status==="interview"&&(
-                <button disabled title="Builder coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Resume — Builder coming soon</button>
+              {d.status==="interview"&&(onResume?(
+                <button onClick={()=>onResume(d)} style={miniBtn(true,CA.cyan)}>Resume interview</button>
+              ):(
+                <button disabled style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Resume</button>
+              ))}
+              {d.status==="draft"&&onResume&&(
+                <button onClick={()=>onResume(d)} style={miniBtn(false)}>Open in Builder</button>
               )}
               {deleteArm===d.id?(
                 <>
