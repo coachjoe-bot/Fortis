@@ -1,9 +1,10 @@
 # Doctrine — programming knowledge for the Program Builder
 
-**Status: awaiting Will's doctrine-extraction interview.** Phase C of the Builder
-(docs/program-builder-build-handoff.md) does not start until these files exist.
+**Status: LOADED 2026-07-24.** Will delivered the full doctrine set (three
+interview passes, zero open gaps — see open-questions.md). The Builder
+(src/builder.jsx) loads these files exactly as specified below.
 
-This directory is the drop point. When the interview lands, it gets distilled into:
+Structure:
 
 - `doctrine-core.md` — the always-loaded core: how Will programs, non-negotiables,
   house formatting style, red-flag handling, warm-up/cool-down defaults, progression
