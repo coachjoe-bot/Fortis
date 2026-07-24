@@ -27,6 +27,7 @@ import {
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
+import { snapshotProgramHistory } from "./programHistory.js";
 // Chat-routing decisions (model escalation, "remember this", is-this-a-log, PR
 // propagation guards). Pure regexes/logic pulled out of send() so they have a
 // suite — see src/chatRouting.js and scripts/test-chat-routing.mjs.
@@ -318,6 +319,15 @@ export const sbUpsert = async (table,data,conflict) => {
     return;
   }
   await dataApi("upsert",table,{data,conflict});
+};
+
+// Program-history block snapshot (Program Builder Phase B). Called fire-and-forget
+// after EVERY successful program_text write — athlete chat branches, tab saves,
+// propagation rewrites, and coach.jsx's onProgramSave all route here (flush rule:
+// every sibling call site). Never awaited on a save's critical path, never throws.
+export const snapshotProgram = (athleteId, text, source, opts = {}) => {
+  snapshotProgramHistory({ athleteId, text, source, ...opts }, { sbRead, sbInsert, sbUpdateWhere, askClaude })
+    .catch((e) => console.error("[program-history] snapshot failed:", e?.message || e));
 };
 
 // Authenticated identity/login calls go through our server (api/identity.js),
@@ -2641,6 +2651,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     if(apply && programPending?.newText){
       try{
         await sbUpdate("athletes",athlete.id,{program_text:programPending.newText});
+        snapshotProgram(athlete.id,programPending.newText,"checkin_change");
         applied = programPending.newText;
         setMessages(prev=>[...prev,{role:"assistant",content:"📋 Program updated to protect that area."}]);
       }catch(_){}
@@ -4438,6 +4449,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [showLog,setShowLog] = useState(false);
   const [showSettings,setShowSettings] = useState(false);
   const [showProgram,setShowProgram] = useState(false);
+  // Program Builder Phase A: the Program view is three subtabs (My Program /
+  // Builder / Drafts). Always reopens on My Program.
+  const [programTab,setProgramTab] = useState("program");
+  useEffect(()=>{ if(showProgram) setProgramTab("program"); },[showProgram]);
   const [showProgress,setShowProgress] = useState(false);
   const [showQuickLog,setShowQuickLog] = useState(false);
   // Holds the exact Quick Log draft TEXT awaiting send (not a bare boolean): the
@@ -4660,6 +4675,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setAthleteProgramSaving(true); setAthleteProgramMsg("");
     try {
       await sbUpdate("athletes",athlete.id,{program_text:athleteProgramText.trim()||null});
+      snapshotProgram(athlete.id,athleteProgramText.trim()||null,"manual_edit");
       setAthlete(prev=>({...prev,program_text:athleteProgramText.trim()||null}));
       setAthleteProgramMsg("Saved.");
     } catch(e){ setAthleteProgramMsg("Couldn't save. Try again."); }
@@ -5188,6 +5204,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
                 throw new Error("program changed underneath propagation — skipping write");
               }
               await sbUpdate("athletes",updatedAthlete.id,{program_text:currentProgramText});
+              snapshotProgram(updatedAthlete.id,currentProgramText,"pr_propagation");
               setAthlete(prev=>({...prev,program_text:currentProgramText}));
               updatedAthlete.program_text = currentProgramText;
               // Log to program_modifications
@@ -5395,6 +5412,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               const aiResult = await propagateForPRs(athlete.program_text, [{exercise:exDisplay, old1RM:bogusE1RM||trueE1RM, e1rm:trueE1RM}]);
               if(aiResult?.changed && aiResult.text!==athlete.program_text){
                 await sbUpdate("athletes",athlete.id,{program_text:aiResult.text});
+                snapshotProgram(athlete.id,aiResult.text,"correction_reversal");
                 setAthlete(prev=>({...prev,program_text:aiResult.text}));
                 await sbInsert("program_modifications",{
                   athlete_id:athlete.id, modification_type:"correction_reversal",
@@ -5425,6 +5443,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(apply){
       try {
         await sbUpdate("athletes",athlete.id,{program_text:pending.newText});
+        snapshotProgram(athlete.id,pending.newText,"chat_replace",{forceNewBlock:true});
         setAthlete(prev=>({...prev,program_text:pending.newText}));
         setMessages(prev=>[...prev,{role:"assistant",content:"📋 Done — swapped in the new program. It's in your Program tab now."}]);
       } catch(e){
@@ -5527,6 +5546,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(!pending || !pending.merged) return;
     try {
       await sbUpdate("athletes",athlete.id,{program_text:pending.merged});
+      snapshotProgram(athlete.id,pending.merged,"self_change");
       setAthlete(prev=>({...prev,program_text:pending.merged}));
       try{ track("self_change_applied","ai"); }catch(_){}
       setSelfChangePending(null);
@@ -5792,6 +5812,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           if(addition && addition.trim().length > 20){
             const merged = hasProgram ? (updatedAthlete.program_text.trim() + "\n\n" + addition.trim()) : addition.trim();
             await sbUpdate("athletes",athlete.id,{program_text:merged});
+            snapshotProgram(athlete.id,merged,"chat_append");
             updatedAthlete.program_text = merged;
             setAthlete(prev=>({...prev, program_text: merged}));
             followUp(hasProgram ? "📋 Added that to your Program tab." : "📋 Saved that to your Program tab.");
@@ -5809,6 +5830,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               followUp("You've already got a program saved. Want me to replace it with this one? Tap “Replace program” below to switch, or “Keep current” to leave it as-is. I won't change anything until you say so.");
             } else {
               await sbUpdate("athletes",athlete.id,{program_text:programText});
+              snapshotProgram(athlete.id,programText,"chat_save");
               updatedAthlete.program_text = programText;
               setAthlete(prev=>({...prev, program_text: programText}));
               followUp("📋 Program saved to your Program tab — I'll reference it every session.");
@@ -5843,6 +5865,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               followUp("That's the program I'd put you on. You've already got one saved though — want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so.");
             } else {
               await sbUpdate("athletes",athlete.id,{program_text:generated.trim()});
+              snapshotProgram(athlete.id,generated.trim(),"chat_create",{forceNewBlock:true});
               updatedAthlete.program_text = generated.trim();
               setAthlete(prev=>({...prev, program_text: generated.trim()}));
               followUp("📋 Saved that to your Program tab — it'll drive every session from here. Tweak it anytime in the Program tab.");
@@ -6636,9 +6659,40 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <style>{GS}{GSA}</style>
           <div style={{flex:1,minHeight:0,width:"100%",display:"flex",flexDirection:"column"}}>
             <div style={{paddingTop:"calc(16px + env(safe-area-inset-top, 0px))",paddingBottom:"12px",paddingLeft:"20px",paddingRight:"20px",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-              <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:CA.cyan,letterSpacing:2}}>MY PROGRAM</div>
+              <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:CA.cyan,letterSpacing:2}}>PROGRAM</div>
               <button onClick={()=>setShowProgram(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕ Close</button>
             </div>
+            {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
+            <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0}}>
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"]].map(([k,label])=>(
+                <button key={k} onClick={()=>setProgramTab(k)}
+                  style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s"}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {programTab==="builder"&&(
+              <div style={{flex:1,overflowY:"auto",padding:"32px 24px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",gap:10}}>
+                <div style={{fontSize:30}}>🏗️</div>
+                <div style={{fontFamily:"'Bebas Neue'",fontSize:24,letterSpacing:2,color:CA.text}}>PROGRAM BUILDER</div>
+                <div style={{background:"linear-gradient(135deg,#f6c96b,#c9971f)",color:"#1a1204",borderRadius:6,padding:"2px 10px",fontSize:10,fontWeight:800,letterSpacing:1.5}}>PRO</div>
+                <div style={{color:CA.muted2,fontSize:13,lineHeight:1.7,maxWidth:300}}>
+                  A short sit-down with Joe that turns your goal into a real program — built from your training history, your schedule, and what you've got to train with. Coming soon.
+                </div>
+              </div>
+            )}
+            {programTab==="drafts"&&(
+              <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <ProgramDraftsPane athlete={athlete} viewer="athlete"
+                  onSaveToProgram={async (text)=>{
+                    const t=(text||"").trim();
+                    await sbUpdate("athletes",athlete.id,{program_text:t||null});
+                    snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true});
+                    setAthlete(prev=>({...prev,program_text:t||null}));
+                  }}/>
+              </div>
+            )}
+            {programTab==="program"&&(<>
             {programMods.length>0&&(
               <div style={{borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0}}>
                 <button onClick={()=>setShowProgramMods(v=>!v)}
@@ -6768,6 +6822,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 </button>
               </div>
             )}
+            </>)}
           </div>
         </div>
       )}
@@ -8036,6 +8091,218 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 }
 
 // ─── PROGRESS MODAL ───────────────────────────────────────────────────────────
+// ─── PROGRAM DRAFTS PANE (Program Builder Phase B) ────────────────────────────
+// The Drafts subtab of the Program view, shared verbatim by the athlete modal and
+// the coach AthleteDetail program tab (exported; coach.jsx imports it like the
+// other App.jsx helpers). Shows three card kinds from the handoff: parked
+// interviews (Builder resumes them — Phase C), finished drafts (save / edit /
+// delete), and the applied-block history that snapshotProgram captures. "Save to
+// My Program" NEVER writes directly: it shows the exact line diff against the
+// current program and hands the confirmed text to onSaveToProgram, which is the
+// caller's own gated save path (athlete: sbUpdate + snapshot; coach:
+// onProgramSave — so the coach notification + parse-at-save ride along free).
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram}){
+  const [drafts,setDrafts] = useState([]);
+  const [blocks,setBlocks] = useState([]);
+  const [loaded,setLoaded] = useState(false);
+  const [openBlock,setOpenBlock] = useState(null);   // block id whose full text is expanded
+  const [editingId,setEditingId] = useState(null);   // draft id in hand-edit mode
+  const [editText,setEditText] = useState("");
+  const [confirming,setConfirming] = useState(null); // {draft, diff} → replace-confirm view
+  const [busy,setBusy] = useState(false);
+  const [deleteArm,setDeleteArm] = useState(null);   // draft id armed for delete
+  const [err,setErr] = useState("");
+  const locked = viewer==="athlete" && !!athlete.program_locked;
+
+  const load = () => {
+    // Drafts are the VIEWER'S own: the athlete sees drafts they built for
+    // themselves; the coach sees their own drafts for this athlete (the read
+    // gateway already scopes coach reads of this table to coach_id).
+    const ownerFilter = viewer==="coach" ? "coach" : "athlete";
+    sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.("interview","draft")&order=updated_at.desc&select=*`)
+      .then(r=>{ if(Array.isArray(r)) setDrafts(r); })
+      .catch(()=>{});
+    sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=12&select=id,block_summary,source,applied_at,completed_at,program_text`)
+      .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
+      .catch(()=>{})
+      .finally(()=>setLoaded(true));
+  };
+  useEffect(load,[athlete.id]);
+
+  const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+  const firstLine = (t) => (String(t||"").split("\n").find(l=>l.trim())||"").slice(0,80);
+
+  const startConfirm = (d) => {
+    const diff = lineDiff(athlete.program_text||"", d.draft_text||"").filter(x=>x.type!=="same"||x.text.trim());
+    setConfirming({draft:d, diff});
+  };
+  const applyConfirmed = async () => {
+    if(!confirming||busy) return;
+    setBusy(true); setErr("");
+    try {
+      await onSaveToProgram(confirming.draft.draft_text);
+      await sbUpdateWhere("program_drafts",`?id=eq.${confirming.draft.id}`,{status:"applied",updated_at:new Date().toISOString()});
+      setConfirming(null);
+      load();
+    } catch(e){ setErr("Couldn't save that — try again in a sec."); }
+    setBusy(false);
+  };
+  const saveDraftEdit = async (d) => {
+    if(busy) return;
+    setBusy(true); setErr("");
+    try {
+      await sbUpdateWhere("program_drafts",`?id=eq.${d.id}`,{draft_text:editText,updated_at:new Date().toISOString()});
+      setDrafts(prev=>prev.map(x=>x.id===d.id?{...x,draft_text:editText}:x));
+      setEditingId(null);
+    } catch(e){ setErr("Couldn't save the edit — try again."); }
+    setBusy(false);
+  };
+  const deleteDraft = async (d) => {
+    if(busy) return;
+    setBusy(true); setErr("");
+    try {
+      await sbDelete("program_drafts",`?id=eq.${d.id}`);
+      setDrafts(prev=>prev.filter(x=>x.id!==d.id));
+      setDeleteArm(null);
+    } catch(e){ setErr("Couldn't delete that draft — try again."); }
+    setBusy(false);
+  };
+
+  const sub = {fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:8};
+  const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10};
+  const miniBtn = (active,color=CA.accent) => ({background:active?`${color}20`:"transparent",border:`1px solid ${active?color:CA.border}`,color:active?color:CA.muted,borderRadius:8,padding:"5px 11px",cursor:"pointer",fontSize:11.5,fontWeight:600,fontFamily:"'DM Sans'"});
+
+  // ── Replace-confirm view (the diff gate) ────────────────────────────────────
+  if(confirming){
+    const dels = confirming.diff.filter(d=>d.type==="del").length;
+    const adds = confirming.diff.filter(d=>d.type==="add").length;
+    return (
+      <div>
+        <div style={sub}>Review — replaces your current program</div>
+        <div style={{color:CA.muted2,fontSize:12,marginBottom:10}}>
+          {athlete.program_text?`${dels} line${dels!==1?"s":""} out, ${adds} in. Everything shown is the exact change:`:"No current program — this saves as-is:"}
+        </div>
+        <div style={{border:`1px solid ${CA.border}`,borderRadius:10,background:"rgba(5,10,24,.5)",padding:"10px 12px",maxHeight:280,overflowY:"auto",marginBottom:12}}>
+          {confirming.diff.map((d,i)=>(
+            <div key={i} style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:11.5,lineHeight:1.7,whiteSpace:"pre-wrap",wordBreak:"break-word",
+              color:d.type==="add"?CA.green:d.type==="del"?CA.red:CA.muted,opacity:d.type==="same"?0.6:1}}>
+              {d.type==="add"?"+ ":d.type==="del"?"− ":"  "}{d.text||" "}
+            </div>
+          ))}
+        </div>
+        {err&&<div style={{color:CA.red,fontSize:11.5,marginBottom:8}}>{err}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={applyConfirmed} disabled={busy}
+            style={{background:busy?CA.navy3:CA.accent,color:busy?CA.muted:"#000",border:"none",borderRadius:9,padding:"9px 16px",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1}}>
+            {busy?"SAVING…":"REPLACE PROGRAM"}
+          </button>
+          <button onClick={()=>{setConfirming(null);setErr("");}} disabled={busy} style={miniBtn(false)}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* ── Drafts ── */}
+      <div style={sub}>Drafts & parked interviews</div>
+      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
+      {loaded&&drafts.length===0&&(
+        <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
+          Nothing here yet. When {viewer==="coach"?"you build":"you and Joe build"} a program in the Builder, parked interviews and finished drafts wait here — nothing touches the live program until it's saved.
+        </div>
+      )}
+      {drafts.map(d=>(
+        <div key={d.id} style={card}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:1,color:CA.text}}>
+              {d.title||(d.status==="interview"?"INTERVIEW IN PROGRESS":"PROGRAM DRAFT")}
+            </span>
+            <span style={{background:d.status==="interview"?`${CA.amber}18`:`${CA.accent}18`,border:`1px solid ${d.status==="interview"?CA.amber:CA.accent}55`,color:d.status==="interview"?CA.amber:CA.accent,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
+              {d.status==="interview"?"Parked":"Ready"}
+            </span>
+            <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
+          </div>
+          {d.status==="draft"&&editingId!==d.id&&(
+            <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.6,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"0 0 10px",maxHeight:96,overflow:"hidden"}}>
+              {String(d.draft_text||"").split("\n").slice(0,4).join("\n")}
+            </pre>
+          )}
+          {d.status==="interview"&&(
+            <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Saved mid-interview — the Builder picks up exactly where it stopped.</div>
+          )}
+          {editingId===d.id&&(
+            <>
+              <textarea value={editText} onChange={e=>setEditText(e.target.value)} rows={10}
+                style={{width:"100%",boxSizing:"border-box",background:"rgba(58,123,255,0.03)",border:`1px solid ${CA.line2}`,borderRadius:10,padding:"10px 12px",color:CA.text,fontSize:12,outline:"none",resize:"vertical",lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",marginBottom:8}}/>
+              <div style={{display:"flex",gap:8,marginBottom:4}}>
+                <button onClick={()=>saveDraftEdit(d)} disabled={busy} style={miniBtn(true,CA.green)}>{busy?"Saving…":"Save draft"}</button>
+                <button onClick={()=>setEditingId(null)} style={miniBtn(false)}>Cancel</button>
+              </div>
+            </>
+          )}
+          {editingId!==d.id&&(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {d.status==="draft"&&!locked&&(
+                <button onClick={()=>startConfirm(d)} style={miniBtn(true)}>Save to My Program</button>
+              )}
+              {d.status==="draft"&&locked&&(
+                <span style={{color:CA.muted,fontSize:11,alignSelf:"center"}}>🔒 Coach-locked — ask your coach to apply it.</span>
+              )}
+              {d.status==="draft"&&(
+                <button onClick={()=>{setEditingId(d.id);setEditText(d.draft_text||"");}} style={miniBtn(false)}>Open & edit</button>
+              )}
+              {d.status==="interview"&&(
+                <button disabled title="Builder coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Resume — Builder coming soon</button>
+              )}
+              {deleteArm===d.id?(
+                <>
+                  <button onClick={()=>deleteDraft(d)} disabled={busy} style={miniBtn(true,CA.red)}>{busy?"…":"Really delete"}</button>
+                  <button onClick={()=>setDeleteArm(null)} style={miniBtn(false)}>Keep</button>
+                </>
+              ):(
+                <button onClick={()=>setDeleteArm(d.id)} style={miniBtn(false)}>Delete</button>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+      {err&&!confirming&&<div style={{color:CA.red,fontSize:11.5,marginBottom:10}}>{err}</div>}
+
+      {/* ── Applied-block history ── */}
+      <div style={{...sub,marginTop:18}}>Past blocks</div>
+      {loaded&&blocks.length===0&&(
+        <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
+          No block history yet. From now on, every saved program is archived here — so the Builder can ask "how did the last block go?" with the receipts in hand.
+        </div>
+      )}
+      {blocks.map(b=>(
+        <div key={b.id} style={card}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
+            <span style={{color:CA.text,fontSize:12.5,fontWeight:600}}>
+              {fmtD(b.applied_at)} → {b.completed_at?fmtD(b.completed_at):"current"}
+            </span>
+            {!b.completed_at&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`}}/>}
+            <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
+          </div>
+          <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:8}}>
+            {b.block_summary||firstLine(b.program_text)||"—"}
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide":"View"}</button>
+            <button disabled title="Builder coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
+          </div>
+          {openBlock===b.id&&(
+            <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"10px 0 0",borderTop:`1px solid ${CA.border}`,paddingTop:10}}>
+              {b.program_text}
+            </pre>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProgressModal({athlete, workoutHistory, onClose}) {
   const [tab,setTab] = useState("benchmarks");
   const [search,setSearch] = useState("");

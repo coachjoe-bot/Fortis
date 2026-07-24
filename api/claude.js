@@ -98,6 +98,10 @@ const FEATURES = new Set([
   // Already called from src/changeRequest.js / src/App.jsx / coach.jsx — allowlist
   // them here too so they don't silently fall back to "other" in usage_costs.
   "change_request_draft", "program_apply_change", "coach_checkin", "log_correction",
+  // Program Builder Phase B: the Haiku one-liner that titles each block in
+  // program_history (src/programHistory.js). Phases C's program_build /
+  // program_draft labels land with the Builder itself.
+  "program_summary",
 ]);
 
 // Snapshot the segmentation fields AT CALL TIME so cost stays correctly attributed
