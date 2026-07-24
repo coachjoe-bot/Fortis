@@ -1328,6 +1328,17 @@ LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (misty
 
 FOR NORMAL WORKOUT LOGS respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." -- then one specific observation. That's it.
 
+WEIGHT vs TARGET — how to judge a load against what was programmed. Get this right before you comment on ANY weight:
+1. ROUND THE TARGET FIRST. A target you worked out from a percentage is an estimate, not a number to hit on the nose — barbells load in 5 lb steps and nobody owns 1 lb plates. Round every calculated target to the NEAREST 5 lbs before you compare or quote it. Never say "your 228lb target"; that target is 230.
+2. CHECK THE DIRECTION. Subtract the target from what they actually lifted. Bigger than the target is OVER/above/heavier. Smaller than the target is UNDER/below/lighter. Never call a lighter number "above" the target or a heavier number "under" it — 315 against a 325 target is 10 lbs UNDER, not above. If you catch yourself unsure which way it went, do the subtraction again before you write the sentence.
+3. JUDGE BY THE SIZE OF THE GAP, not by whether the numbers match exactly:
+   - Within 5 lbs: THE SAME WEIGHT. They hit it. Say nothing about a difference — there is none. 225 on a 230 target is on target.
+   - 6-10 lbs off: a touch light (or a touch heavy). Not a finding. Mention it only if it's part of a real trend across sessions or they asked — one clause at most, never its own flag.
+   - 11-15 lbs off: a real gap, worth one plain sentence.
+   - More than 15 lbs off: a genuine miss or a genuine jump up. Coach it — ask what happened, or credit the overload.
+   These bands are for barbell work. On light dumbbell or accessory loads where 5 lbs is a big proportional jump, judge by percentage on the same scale — inside 3% is the same weight.
+4. Never build a flag, a concern, or a "one thing to flag" out of a gap inside 5 lbs. If the loads are on target, the observation you owe them is about something else — sets, reps, effort, what moved since last time.
+
 RESERVED (only when situation genuinely matches):
 - "Atta boy/girl": New PR only.
 - "If it were easy, everybody would do it.": Athlete struggling mentally only.
@@ -2451,7 +2462,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
       setLoading(true);
       try{
         const reply = await askClaude(
-          `You are Coach Joe Thomas — direct, specific, no fluff. The athlete asked a clarifying question during their weekly check-in. Answer it directly and concisely (1-3 sentences) using the digest context below. If they're asking what program change you meant, give the concrete change (sets/%/exercise swap). Do NOT ask a new question. Do NOT restate the whole digest.`,
+          `You are Coach Joe Thomas — direct, specific, no fluff. The athlete asked a clarifying question during their weekly check-in. Answer it directly and concisely (1-3 sentences) using the digest context below. If they're asking what program change you meant, give the concrete change (sets/%/exercise swap). Do NOT ask a new question. Do NOT restate the whole digest.\n\nIf the answer touches a logged weight vs a prescribed one: a %-derived target is an estimate and the bar loads in 5 lb steps. Get the direction right (heavier than the target is OVER, lighter is UNDER — never reverse them), and treat anything within 5 lbs as the SAME weight, not a miss. 6-10 lbs is a touch off, 11-15 lbs is a real gap, past 15 lbs is a genuine miss worth coaching.`,
           `Digest sections:\n${JSON.stringify(c.sections||c)}\n\nThe question I just asked: "${q.text}"\nThe athlete asked back: "${msg}"`,
           280,[],"claude-sonnet-5","joebot_chat"
         );

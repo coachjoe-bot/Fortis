@@ -258,7 +258,11 @@ export function compareProgramVsActual(parsed, thisWeekSessions, oneRMs = {}) {
       matchedActVolCapped += Math.min(aVol, pVol); // overshoot isn't extra credit
     }
     const ref1rm = oneRMs[p.refLift?.toLowerCase()?.trim()] || oneRMs[p.name.toLowerCase().trim()] || null;
-    const prescribedLoad = ref1rm && p.pct ? Math.round(ref1rm * p.pct / 100) : null;
+    // Nearest 5, not nearest 1: a %-derived load is an estimate and the bar only
+    // loads in 5s, so an exact-looking 228 is false precision that reads back to
+    // the athlete and the coach as a number they missed. Same rounding rule the
+    // Quick Log draft and "what's my workout today" already use.
+    const prescribedLoad = ref1rm && p.pct ? Math.round(ref1rm * p.pct / 100 / 5) * 5 : null;
     if (match && prescribedLoad && a.topLoad) loadRatios.push(a.topLoad / prescribedLoad);
     byLift.push({
       lift: p.name, matched: !!match,
