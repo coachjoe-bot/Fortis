@@ -49,6 +49,10 @@ const WRITABLE = new Set([
   // same row shape parseProgramIfNeeded writes on the proof cron. Ownership-scoped
   // like the raw athlete tables.
   "program_prescriptions",
+  // Program Builder Phase B: parked interviews / finished drafts, and the
+  // block-history snapshot written on every program_text save (see
+  // src/programHistory.js). RLS-on/zero-policy tables reached only through here.
+  "program_drafts", "program_history",
 ]);
 
 // ─── Phase 1b(b): scoped READS ────────────────────────────────────────────────
@@ -84,12 +88,20 @@ const READ_OWN_COL = {
   coach_context: "coach_id",
   coach_push_subscriptions: "coach_id",
   program_change_requests: "athlete_id",
+  // Program Builder Phase B. Athletes read their own drafts/history by athlete_id;
+  // coach reads of program_drafts are overridden to coach_id below (their OWN
+  // drafts — a coach's in-progress work isn't the athlete's to browse, and
+  // team-level drafts have a NULL athlete_id that roster scoping would drop).
+  // program_history is athlete data proper: roster-scoped for coaches like workouts.
+  program_drafts: "athlete_id",
+  program_history: "athlete_id",
 };
 
 // Tables read/written by COACH callers scoped to their OWN coach_id (not their
 // roster's athlete_ids) — the coach's own data + the aggregate/inbox rows.
 const COACH_SELF_SCOPED = new Set([
   "proof_digests", "coach_context", "coach_push_subscriptions", "program_change_requests",
+  "program_drafts",
 ]);
 
 // Tables an ATHLETE caller may write, each mapped to the column that must equal
@@ -112,6 +124,11 @@ const ATHLETE_OWN_COL = {
   // roster; it also permits an athlete to (re)write their OWN row — same trust as
   // them writing the workouts that feed the same adherence math.
   program_prescriptions: "athlete_id",
+  // Program Builder Phase B: an athlete owns their drafts and their block history.
+  // Column-level limits below pin what they may set (owner_type is forced to
+  // 'athlete', status/scope/source to their enums).
+  program_drafts: "athlete_id",
+  program_history: "athlete_id",
 };
 
 // ── Per-COLUMN allowlist for athlete writes to sensitive tables ───────────────
@@ -147,6 +164,33 @@ const ATHLETE_COL_ALLOW = {
   program_change_requests: {
     cols: new Set(["coach_id", "items", "reason", "source"]),
     values: { source: (v) => ["plateau", "pr", "pain", "feedback"].includes(v) },
+  },
+  // Program Builder Phase B. An athlete's draft is always their OWN (owner_type
+  // pinned to 'athlete', never coach_id-bearing), and status/scope stay inside
+  // the vocab the Drafts tab renders.
+  program_drafts: {
+    cols: new Set([
+      "owner_type", "title", "status", "blueprint", "transcript",
+      "draft_text", "provisional_goal", "scope", "updated_at",
+    ]),
+    values: {
+      owner_type: (v) => v === "athlete",
+      status: (v) => ["interview", "draft", "applied"].includes(v),
+      scope: (v) => ["full", "short", "quick"].includes(v),
+    },
+  },
+  // Block-history snapshots (src/programHistory.js). source names the save path
+  // that opened the block; the vocab is closed so free-text chat extraction can
+  // never invent one.
+  program_history: {
+    cols: new Set(["program_text", "source", "block_summary", "completed_at"]),
+    values: {
+      source: (v) => [
+        "manual_edit", "chat_save", "chat_replace", "chat_append", "chat_create",
+        "self_change", "checkin_change", "pr_propagation", "correction_reversal",
+        "builder", "coach_save",
+      ].includes(v),
+    },
   },
 };
 
@@ -195,6 +239,10 @@ export default async function handler(req, res) {
       let scope = "";
       if (caller.role === "athlete") {
         scope = `&${col}=eq.${enc(caller.id)}`;
+        // A coach's in-progress draft ABOUT an athlete carries the same athlete_id
+        // but may hold the coach's candid notes (team read, roster spread). The
+        // athlete sees only their OWN drafts; the coach's stay coach-private.
+        if (rtable === "program_drafts") scope += "&owner_type=eq.athlete";
       } else if (caller.role === "coach") {
         // The DB role (master/admin/regular) is the source of truth for breadth —
         // authCaller only proves the caller IS a coach, not which kind.
@@ -341,7 +389,11 @@ export default async function handler(req, res) {
           // admin → any athlete in their school; coach → only their own roster.
           ownFilter = isAdmin ? `&school_id=eq.${enc(sid)}` : `&coach_id=eq.${enc(caller.id)}`;
           assertRows((r) => (isAdmin ? String(r.school_id) === String(sid) : String(r.coach_id) === String(caller.id)));
-        } else if (table === "coach_context" || table === "coach_push_subscriptions" || table === "program_change_requests" || table === "proof_digests") {
+        } else if (table === "coach_context" || table === "coach_push_subscriptions" || table === "program_change_requests" || table === "proof_digests" || table === "program_drafts") {
+          // program_drafts: the coach writes their OWN drafts (coach_id = them).
+          // The athlete_id a draft targets isn't roster-asserted here — a draft is
+          // the coach's private workspace; APPLYING it goes through the athletes-
+          // table write above, which IS roster-scoped.
           // The coach's OWN data (context notes, push subs), their request inbox, and
           // their reports — all carry coach_id (per-athlete digests carry the owning
           // coach_id too, so this also lets a coach mark those read without widening).
