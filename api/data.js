@@ -239,6 +239,10 @@ export default async function handler(req, res) {
       let scope = "";
       if (caller.role === "athlete") {
         scope = `&${col}=eq.${enc(caller.id)}`;
+        // A coach's in-progress draft ABOUT an athlete carries the same athlete_id
+        // but may hold the coach's candid notes (team read, roster spread). The
+        // athlete sees only their OWN drafts; the coach's stay coach-private.
+        if (rtable === "program_drafts") scope += "&owner_type=eq.athlete";
       } else if (caller.role === "coach") {
         // The DB role (master/admin/regular) is the source of truth for breadth —
         // authCaller only proves the caller IS a coach, not which kind.
