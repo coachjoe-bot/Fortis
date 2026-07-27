@@ -17,7 +17,7 @@ globalThis.localStorage = {
 
 const { qlKey, qlStamp, qlLoad, qlSave, qlClear, QL_RESUME_MS, openerLoad, openerSave,
         looksLikeProgramText, findChatProgram, programSaveOfferAllowed, markProgramSaveOffered,
-        QL_PROGRAM_OFFER_MAX } = await import("../src/quicklog.js");
+        QL_PROGRAM_OFFER_MAX, markSupersededPrograms, QL_SUPERSEDED } = await import("../src/quicklog.js");
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { if(cond){ pass++; } else { fail++; console.log(`  ✗ ${name}`); } };
@@ -224,6 +224,49 @@ check("newest program wins", findChatProgram([
   {role:"user", content:"swap the incline for flat"},
   {role:"assistant", content:REVISED},
 ]) === REVISED);
+
+// ─── a rejected program must not survive into the draft ──────────────────────
+// Will's exact case: asked for an adjusted day, didn't like it, asked again, liked the
+// second — and Quick Log built the log out of BOTH. The rejected version's CONTENT has
+// to be gone, not merely labelled, because any line left behind is a line that can be
+// merged in.
+const REJECTED = "Bench Press 4x6 @ 185\nDips 3x10\nSkull Crusher 3x12 @ 65";
+const ACCEPTED = "Flat Bench 5x5 @ 195\nIncline DB Press 3x10 @ 60\nCable Fly 3x12 @ 40";
+const CONVO = [
+  {role:"user", content:"adjust today for me"},
+  {role:"assistant", content:REJECTED},
+  {role:"user", content:"nah do it again"},
+  {role:"assistant", content:ACCEPTED},
+];
+const marked = markSupersededPrograms(CONVO);
+check("the accepted version survives intact", marked[3].content === ACCEPTED);
+check("the rejected version's content is gone", marked[1].content === QL_SUPERSEDED);
+check("no exercise from the rejected version leaks", !marked.some(m=>/Skull Crusher|Dips/.test(m.content)));
+check("the rejected turn is kept so the revision still reads", marked.length === CONVO.length && marked[1].role === "assistant");
+check("the athlete's own turns are untouched", marked[0].content === "adjust today for me" && marked[2].content === "nah do it again");
+check("findChatProgram agrees on the winner", findChatProgram(CONVO) === ACCEPTED);
+
+// Three versions: only the last one lives.
+const three = markSupersededPrograms([
+  {role:"assistant", content:REJECTED},
+  {role:"assistant", content:"Squat 5x5 @ 225\nRDL 3x8 @ 185\nLeg Press 3x12 @ 270"},
+  {role:"assistant", content:ACCEPTED},
+]);
+check("only the last of three versions survives", three[0].content===QL_SUPERSEDED && three[1].content===QL_SUPERSEDED && three[2].content===ACCEPTED);
+
+// A single program, or none, must pass through completely unchanged — this runs on
+// EVERY draft, including the overwhelming majority with nothing to supersede.
+const single = [{role:"user",content:"what's today"},{role:"assistant",content:ACCEPTED}];
+check("a lone program is left alone", markSupersededPrograms(single)[1].content === ACCEPTED);
+const noProg = [{role:"assistant",content:"Nice work today."},{role:"user",content:"thanks"}];
+check("a conversation with no program is unchanged", markSupersededPrograms(noProg)[0].content === "Nice work today.");
+check("empty/garbage input doesn't crash", markSupersededPrograms([]).length===0 && markSupersededPrograms(null).length===0);
+// Joe's ordinary prose is never mistaken for a superseded program.
+const prose = [
+  {role:"assistant", content:"Get your bench 3x5 in first."},
+  {role:"assistant", content:ACCEPTED},
+];
+check("prose isn't wiped as a superseded program", markSupersededPrograms(prose)[0].content === "Get your bench 3x5 in first.");
 
 // ─── the save-to-program offer is rate limited ───────────────────────────────
 reset();

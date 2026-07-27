@@ -23,6 +23,7 @@ import {
   qlLoad, qlSave, qlClear, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
   findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
+  markSupersededPrograms,
 } from "./quicklog.js";
 // Coach change-request drafting/filing — single source of truth for the rule set
 // governing when Joe offers to loop the human coach in (see file header).
@@ -7238,7 +7239,10 @@ const buildQuickLogContext = (athlete, workoutHistory, manualRMs, messages, goal
   // they said they're on, any exercise they mentioned swapping / adding / dropping
   // today. Fed to the draft so it matches the conversation instead of re-guessing
   // the day from history. Last 16 turns, oldest→newest, both sides.
-  const chatLines = (messages||[])
+  // markSupersededPrograms FIRST: when Joe wrote today's session more than once (the
+  // athlete asked for a redo), only the last one may reach the model intact. Without
+  // it the draft merged the rejected version into the accepted one.
+  const chatLines = markSupersededPrograms(messages||[])
     .filter(m=>m && (m.role==="user"||m.role==="assistant") && typeof m.content==="string" && m.content.trim())
     .slice(-16)
     .map(m=>`${m.role==="user"?"Athlete":"Joe"}: ${m.content.trim()}`)
@@ -7367,6 +7371,7 @@ SECTION 2 — THE LOG (exactly what the athlete would type after the session):
   2. ADVANCE forward by the stated number of sessions, in program order. Crossing the last training day of a week wraps to the next week's first day AND steps the week up one (Week 2 → Week 3) — which changes that week's percentages/loads. Crossing the last week of a block moves into the next block.
   3. Do NOT compute the week from today's date against the program's printed block dates (e.g. "Weeks: Jun 30–Jul 25"). Those dates are only a guide; the athlete may be behind or ahead. Their real week is the logged one moved forward by ADVANCE — nothing else.
   Read every load/percentage from the column for the WEEK you land on (e.g. Wk2 vs Wk3). If the program has no day labels, use a short session name. If nothing has been logged yet, start at the program's first day, Week 1.
+- ONE SESSION, NEVER A MERGE: if the conversation contains MORE THAN ONE written session for today — the athlete asked for an adjustment and you wrote another version, or a turn is marked as a REJECTED/superseded version — only the LAST version counts. It replaces the earlier one outright. Never combine exercises from two versions into one log, and never carry a lift over from a rejected version because it "looks like it belongs". If the athlete rejected a version, every exercise in it is rejected with it.
 - CONVERSATION OVERRIDES INFERENCE: if the CONVERSATION THIS SESSION shows the athlete already said which day they're doing ("I'm on day 3", "doing legs today") or that they're changing an exercise today (swapping, adding, or dropping a movement, or a different weight/scheme), BUILD THE DRAFT AROUND WHAT THEY SAID — the stated day wins over your own inference, and reflect any stated swaps/adds/drops in the exercise list. Only fall back to inferring the day when the conversation doesn't state one.
 - Then a blank line, then ONE line per exercise: "Name SETSxREPS @ WEIGHT" — the resolved WEIGHT is an ACTUAL NUMBER, and when that number was derived from a percentage / RPE / last time, SHOW THE SOURCE in parentheses right after it so the athlete sees the program's own prescription, not just a bare number. Weighted bodyweight: "Weighted Pull-ups 3x8 +25". Plain bodyweight: "Push-ups 3x20". Timed holds: "Plank 3x60s".
 - WEIGHT HIERARCHY — check in this exact order and STOP at the first that applies. The PROGRAM always outranks both history and the 1RM cheat sheet. ALWAYS write the resolved pounds FIRST, then the source in parentheses (the number must lead so the log records the right weight):

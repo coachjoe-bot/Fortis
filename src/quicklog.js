@@ -187,6 +187,43 @@ export const findChatProgram = (messages) => {
   return null;
 };
 
+// ─── SUPERSEDED PROGRAMS IN THE TRANSCRIPT ───────────────────────────────────
+// "Adjust today for me" → Joe writes a session → "no, do it again" → Joe writes a
+// better one. The athlete has made a clear choice. But the draft prompt is handed the
+// last 16 turns VERBATIM and told to honor what the conversation says, so it saw both
+// sessions with equal authority and built today's log out of the two of them — the
+// rejected version's exercises merged into the one they actually wanted (Will,
+// 2026-07-27; it has bitten him more than once).
+//
+// Picking the newest as THE program isn't enough on its own: the loser is still
+// sitting in the conversation block being read. So its content is REPLACED here —
+// not just relabelled, because any surviving line of it is a line that can be merged
+// in. The turn itself stays so the exchange still reads as a back-and-forth, which is
+// what tells the model a revision happened at all.
+//
+// Applies whether or not the athlete has a saved program: the merge bug came from the
+// conversation block, which is built for everyone.
+export const QL_SUPERSEDED = "[an earlier version of today's session that the athlete REJECTED — superseded, do not use any part of it]";
+
+export const markSupersededPrograms = (messages) => {
+  const list = Array.isArray(messages) ? messages : [];
+  // Index of the LAST assistant message that reads as a written session: the only
+  // one that survives intact.
+  let keep = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m && m.role === "assistant" && typeof m.content === "string" && looksLikeProgramText(m.content)) { keep = i; break; }
+  }
+  if (keep < 0) return list;
+  return list.map((m, i) => {
+    if (i === keep) return m;
+    if (m && m.role === "assistant" && typeof m.content === "string" && looksLikeProgramText(m.content)) {
+      return { ...m, content: QL_SUPERSEDED };
+    }
+    return m;
+  });
+};
+
 // ─── "WANT ME TO KEEP THAT?" — OFFER RATE LIMIT ──────────────────────────────
 // A structured program is genuinely the difference between logging workouts and
 // making progress, and an athlete with an empty Program tab should hear that. Once.
