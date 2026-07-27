@@ -4943,13 +4943,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
     await tourWait(2900); if(!tourRef.current){ setPrStamp(null); return; }
     setLogStamp({n:TOUR_SCRIPT.session}); setTimeout(()=>setLogStamp(null),2200);
-    await tourWait(2500); if(!tourRef.current){ setLogStamp(null); return; }
-    setTourTyping(true); await tourWait(900); setTourTyping(false);
-    if(!tourRef.current) return;
-    setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.followup}]);
-    await tourWait(1800);
+    await tourWait(2600); if(!tourRef.current){ setLogStamp(null); return; }
     const t = tourRef.current; if(!t) return;
-    setTour({...t, idx:t.idx+1, part:0}); // → mylog
+    // "See that?…" is a TOUR CARD now, not a third chat bubble — the tutorial
+    // explains what just happened instead of Joe narrating his own mechanics.
+    setTour({...t, idx:t.idx+1, part:0}); // → logged
   };
   const finishTour = () => {
     const t = tourRef.current;

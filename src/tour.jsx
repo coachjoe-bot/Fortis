@@ -52,7 +52,6 @@ export const TOUR_SCRIPT = {
   pr: { exercise:"Bench Press", weight:190, unit:"lb" },
   session: 1,
   reply: "Logged it. 190 on bench is a new max — that's the standard now. Rows and pushdowns in the book too. That's how a session should end.",
-  followup: "See that? Sending it to chat logged the whole session and caught your PR. Anything else you tell me — injuries included — I take note of too.",
 };
 
 // ── COPY ─────────────────────────────────────────────────────────────────────
@@ -108,12 +107,18 @@ export const athleteTourSteps = ({ free }) => free ? [
 
   { key:"script", banner:null, target:null, script:true, parts:[] },
 
+  // What just happened, as a tour card rather than a third chat bubble (Will):
+  // the tutorial explains itself instead of putting teaching text in Joe's mouth.
+  // noDim so the workout they just sent and Joe's reply stay readable behind it.
+  { key:"logged", banner:"WILCO CHAT BOT", target:null, noDim:true, title:null,
+    parts:["See that? Sending it to chat logged the whole session and caught your PR. Anything else you tell me — injuries included — I take note of too."] },
+
   { key:"mylog", banner:"MY LOG", target:"mylog-btn", title:"MY LOG",
-    parts:["Every session you've logged lives here. And once a week, The Proof drops. The Proof is a news-feed overview of your training: you zoom out from the day to day, see which direction you're headed and how close you are to your goals, and have a conversation over any changes in them."] },
+    parts:["Every session you've logged lives here. And once a week, The Proof drops. The Proof is a news-feed overview of your training: you zoom out from the day to day, see which direction you're headed and how close you are to your goals, and have a conversation with WILCO over any changes you want to make."] },
 
   { key:"progress", banner:"PROGRESS", target:"progress-btn", title:"PROGRESS",
     parts:[
-      "Your numbers. Rankings, strength standards and personal records are all stored here. When your program calls for a percentage or an estimated weight, I work it off your true 1-rep max if you've entered one, or off my best estimate built from what you've actually logged.",
+      "Your numbers, rankings, strength standards and personal records are all stored here. When your program calls for a percentage or an estimated weight, I work it off your true 1-rep max if you've entered one, or off my best estimate built from what you've actually logged.",
       "The more you log, the sharper this gets.",
     ] },
 
