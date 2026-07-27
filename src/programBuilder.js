@@ -31,8 +31,8 @@ export const ATHLETE_CELLS = [
     hint: "Sleep, life/school stress, current sport practice hours per week. Practice load changes conditioning volume (core doctrine #1 sequencing mistake)." },
   { key: "prep", label: "Warm-up & Cool-down", why: "Every day I write comes with a warm-up. The only question is whose.",
     hint: "One standard routine vs day-specific vs paste-your-own vs minimal. Never zero — doctrine floor." },
-  { key: "handoff", label: "Last Block", why: "What you just finished tells me where to start.",
-    hint: "How the previous program went: what moved, what stalled, what they'd change. Pre-charged from block history when it exists." },
+  { key: "handoff", label: "Last Phase", why: "What you just finished tells me where to start.",
+    hint: "How the previous phase/program went: what moved, what stalled, what they'd change. Pre-charged from phase history when it exists. If they name a past phase to build off, its recap is already loaded here — confirm what to carry forward." },
 ];
 
 export const COACH_CELLS = [

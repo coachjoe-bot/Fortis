@@ -4519,28 +4519,36 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // planned end → the typed backfill ask (throttled every 3 days), inferred
   // from programPosition's week-of-weekCount read when it can be.
   useEffect(()=>{
-    if(!athlete?.id||!athlete.program_text||athlete.program_locked||athlete.temp_program_text) return;
+    if(!athlete?.id||athlete.program_locked||athlete.temp_program_text) return;
     let on=true;
     (async()=>{
       try{
-        const rows=await sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=id,ends_at,applied_at,completed_at`);
-        const open=(Array.isArray(rows)&&rows[0]&&!rows[0].completed_at)?rows[0]:null;
-        if(!on||!open) return;
         const stampKey=`wilcoBlockPrompt:${athlete.id}`;
         let last=""; try{ last=localStorage.getItem(stampKey)||""; }catch(_){}
         const today=new Date().toISOString().slice(0,10);
-        if(open.ends_at){
+        const stamp=(k)=>{ try{ localStorage.setItem(stampKey,`${k}:${today}`); }catch(_){} };
+        const [rows,dRows]=await Promise.all([
+          sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=id,ends_at,applied_at,completed_at`).catch(()=>[]),
+          sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.athlete&status=eq.draft&order=updated_at.desc&limit=1&select=id,title,draft_text,blueprint`).catch(()=>[]),
+        ]);
+        if(!on) return;
+        const open=(athlete.program_text&&Array.isArray(rows)&&rows[0]&&!rows[0].completed_at)?rows[0]:null;
+        const dRow=(Array.isArray(dRows)&&dRows[0]&&(dRows[0].draft_text||"").trim())?dRows[0]:null;
+        const draft=dRow?{id:dRow.id,title:dRow.title}:null;
+        const schedStart=dRow?parseTimeline(dRow.blueprint?.timeline?.value).start:null;
+        // Priority: the phase hitting its planned end (its card already offers the
+        // draft swap) > a scheduled program whose start date arrived (fires even
+        // with NO live program — e.g. right after a retire) > the typed backfill.
+        if(open&&open.ends_at){
           const state=blockPromptState({endsAt:open.ends_at});
           if(!state||last===`${state}:${today}`) return;
-          let draft=null;
-          try{
-            const d=await sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.athlete&status=eq.draft&order=updated_at.desc&limit=1&select=id,title,draft_text`);
-            if(Array.isArray(d)&&d[0]&&(d[0].draft_text||"").trim()) draft={id:d[0].id,title:d[0].title};
-          }catch(_){}
-          if(!on) return;
-          try{ localStorage.setItem(stampKey,`${state}:${today}`); }catch(_){}
+          stamp(state);
           setBlockPrompt({kind:state,endsAt:open.ends_at,draft,extendOpen:false});
-        } else {
+        } else if(dRow&&schedStart&&schedStart<=today){
+          if(last===`scheduled:${today}`) return;
+          stamp("scheduled");
+          setBlockPrompt({kind:"scheduled",draft,start:schedStart});
+        } else if(open&&!open.ends_at){
           if(last.startsWith("backfill:")&&(Date.parse(today)-Date.parse(last.slice(9)))<3*86400000) return;
           let est=null;
           try{
@@ -4552,7 +4560,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             }
           }catch(_){}
           if(!on) return;
-          try{ localStorage.setItem(stampKey,`backfill:${today}`); }catch(_){}
+          stamp("backfill");
           setBlockPrompt({kind:"backfill",est,blockId:open.id});
         }
       }catch(_){}
@@ -4772,6 +4780,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   },[workoutHistory]);
   const [goalCollectionActive,setGoalCollectionActive] = useState(false);
   const [athleteProgramText,setAthleteProgramText] = useState(athlete.program_text||"");
+  // Retire = one-tap phase change (Will, 07-27): ends the current phase at the
+  // LAST WORKOUT logged under it (not the moment of the tap), Joe writes the
+  // recap, the program clears, and the athlete lands on Phases.
+  const [retireArm,setRetireArm] = useState(false);
+  const [retiring,setRetiring] = useState(false);
   // Re-seed the Program-tab editor whenever the SAVED program changes underneath
   // it. It used to seed once at mount, so every chat-side writer (PR propagation,
   // replace-confirm, append, self-merge, program-create, check-in rewrite — all of
@@ -4862,6 +4875,30 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     } catch(e){ setAthleteProgramMsg("Couldn't save. Try again."); }
     setAthleteProgramSaving(false);
     setTimeout(()=>setAthleteProgramMsg(""),3000);
+  };
+
+  const retireProgram = async () => {
+    if(retiring) return;
+    setRetiring(true); setRetireArm(false); setAthleteProgramMsg("");
+    try {
+      // End date = the last workout logged while this program was live — most
+      // retirements happen days after the final session, and the phase record
+      // should say when training actually stopped.
+      let lastLog = null;
+      try {
+        const h = await sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=id,applied_at,completed_at`);
+        const open = (Array.isArray(h)&&h[0]&&!h[0].completed_at)?h[0]:null;
+        const from = open?.applied_at?`&created_at=gte.${encodeURIComponent(open.applied_at)}`:"";
+        const w = await sbRead("workouts",`?athlete_id=eq.${athlete.id}${from}&order=created_at.desc&limit=1&select=created_at`);
+        lastLog = (Array.isArray(w)&&w[0]?.created_at)||null;
+      } catch(_){}
+      await closeCurrentBlock({athleteId:athlete.id,completedAt:lastLog},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+      await sbUpdate("athletes",athlete.id,{program_text:null});
+      setAthlete(prev=>({...prev,program_text:null}));
+      setAthleteProgramText("");
+      setProgramTab("blocks");
+    } catch(e){ setAthleteProgramMsg("Couldn't retire that — try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
+    setRetiring(false);
   };
 
   const handleAthletePhotoProgram = async (e) => {
@@ -6893,7 +6930,8 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div style={{color:CA.text,fontSize:12.5,lineHeight:1.6,marginBottom:9}}>
             {blockPrompt.kind==="ending"&&<>Heads up — your program wraps up <b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Want to line up what's next so there's no dead week?</>}
             {blockPrompt.kind==="ended"&&<>Your program hit its planned finish (<b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>). Ready to move on to the next one?</>}
-            {blockPrompt.kind==="closed"&&<>Done — that chapter's in the books. I wrote up how it went under <b>Program → Past Blocks</b>. Want to build what's next?</>}
+            {blockPrompt.kind==="closed"&&<>Done — that phase is in the books. I wrote up how it went under <b>Program → Phases</b>. Want to build what's next?</>}
+            {blockPrompt.kind==="scheduled"&&<>{blockPrompt.draft?.title?<><b>{blockPrompt.draft.title}</b></>:"The program you built"} was planned to start <b>{new Date(`${blockPrompt.start}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Ready to run it?</>}
             {blockPrompt.kind==="backfill"&&<>Quick one so I can plan ahead: when does your current program wrap up?{blockPrompt.est?<> Reading your program, you look to be in week {blockPrompt.est.week} of {blockPrompt.est.weekCount} — that'd put the finish around <b>{new Date(`${blockPrompt.est.estEnd}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>.</>:null} Type it out — a date or something like "3 more weeks" works.</>}
           </div>
           {blockPrompt.kind==="backfill"?(
@@ -6912,6 +6950,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
                 style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>🏗️ Build the next program</button>
+              <button onClick={()=>setBlockPrompt(null)} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Later</button>
+            </div>
+          ):blockPrompt.kind==="scheduled"?(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+                style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap it in</button>
               <button onClick={()=>setBlockPrompt(null)} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Later</button>
             </div>
           ):blockPrompt.extendOpen?(
@@ -7163,11 +7207,13 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </div>
             {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
             <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0,overflowX:"auto"}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PAST BLOCKS"]].map(([k,label])=>(
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
                 <button key={k} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
-                  {k==="builder"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
+                  {/* The whole Builder system is beta — Builder, Drafts and Phases
+                      all ride on it, so all three carry the chip (Will, 07-27). */}
+                  {k!=="program"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
                 </button>
               ))}
             </div>
@@ -7197,8 +7243,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             )}
             {programTab==="blocks"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
-                <ProgramBlocksPane athlete={athlete} viewer="athlete"
-                  onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgramTab("builder"); }}/>
+                <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
               </div>
             )}
             {programTab==="program"&&(<>
@@ -7329,6 +7374,24 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   style={{background:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.navy3:CA.accent,color:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.muted:"#000",border:`1px solid ${athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.border:CA.accent}`,borderRadius:10,padding:"11px 20px",cursor:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?"not-allowed":"pointer",fontSize:14,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1}}>
                   {athleteProgramSaving?"Saving...":"Save Program →"}
                 </button>
+                {(athlete.program_text||"").trim()&&(retireArm?(
+                  <div style={{border:`1px solid ${CA.amber}55`,background:`${CA.amber}0d`,borderRadius:10,padding:"10px 12px"}}>
+                    <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6,marginBottom:8}}>
+                      Retire this program? The phase ends at your last logged workout, Joe writes its recap, and it moves to <b>Phases</b> — your program slot opens up for the next one.
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={retireProgram} disabled={retiring}
+                        style={{background:`${CA.amber}20`,border:`1px solid ${CA.amber}`,color:CA.amber,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600}}>{retiring?"Retiring…":"Yes — retire it"}</button>
+                      <button onClick={()=>setRetireArm(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Keep training</button>
+                    </div>
+                  </div>
+                ):(
+                  <button onClick={()=>setRetireArm(true)} disabled={retiring}
+                    title="Done with this program? Close out the phase with one tap — Joe writes the recap and the slot opens for your next one."
+                    style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:10,padding:"8px 16px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans'"}}>
+                    🏁 Retire this program → Phases
+                  </button>
+                ))}
               </div>
             )}
             </>)}
@@ -8825,30 +8888,38 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
   );
 }
 
-// The Past Blocks subtab — the athlete's training history at BLOCK altitude,
-// shared by the athlete modal and the coach AthleteDetail (exported, like
-// ProgramDraftsPane). One card per program_history row: date range, the one-line
-// summary, and — once a block closes — Joe's recap (logs + goal outcome
-// condensed by closeBlock in programHistory.js; a proof feed over a whole block
-// instead of a week). The open block carries "Start next block": the explicit
-// boundary for multi-block programs whose text doesn't change at the turn —
-// closes the chapter (recap and all) and opens a fresh row on the same program.
-// If the athlete has a live program but zero history (pre-fix accounts — the
-// applied_at 403 meant NO block ever recorded), the pane backfills the current
-// program as an open block on first view.
-export function ProgramBlocksPane({athlete, viewer="athlete", onRebuild}){
+// The Phases subtab — the athlete's training history at PHASE altitude ("phase"
+// is the user-facing word for a training block: same periodization concept,
+// plain-language label — Will, 07-27). Shared by the athlete modal and the
+// coach AthleteDetail (exported, like ProgramDraftsPane). Layout: the CURRENT
+// phase first and foremost, then Past phases beneath. One card per
+// program_history row: user-given name (pencil-editable), date range, weeks +
+// sessions-logged chips (computed from logs, never stored), the one-line
+// summary, and — once a phase closes — Joe's recap. NO program-text browsing
+// here (Will killed View/Rebuild: history is a record, not an archive to mine;
+// building off a past phase is an explicit ask in the Builder by name). The
+// current card carries "Start next phase". Zero-history accounts backfill their
+// live program as an open phase on first view.
+export function ProgramBlocksPane({athlete, viewer="athlete"}){
   const [blocks,setBlocks] = useState([]);
+  const [logs,setLogs] = useState([]);               // workout timestamps → per-phase session counts
   const [loaded,setLoaded] = useState(false);
-  const [openBlock,setOpenBlock] = useState(null);   // block id whose full text is expanded
-  const [nextArm,setNextArm] = useState(false);      // "Start next block" armed
+  const [nextArm,setNextArm] = useState(false);      // "Start next phase" armed
   const [busy,setBusy] = useState(false);
   const [err,setErr] = useState("");
+  const [editingName,setEditingName] = useState(null); // phase id being renamed
+  const [nameInput,setNameInput] = useState("");
   const backfilledRef = useRef(false);
 
-  const load = () => sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=24&select=id,block_summary,block_recap,source,applied_at,completed_at,ends_at,program_text`)
-    .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
-    .catch(()=>{})
-    .finally(()=>setLoaded(true));
+  const load = () => {
+    sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=24&select=id,block_name,block_summary,block_recap,source,applied_at,completed_at,ends_at,program_text`)
+      .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
+      .catch(()=>{})
+      .finally(()=>setLoaded(true));
+    sbRead("workouts",`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=500&select=created_at`)
+      .then(r=>{ if(Array.isArray(r)) setLogs(r.map(w=>Date.parse(w.created_at)).filter(Number.isFinite)); })
+      .catch(()=>{});
+  };
   useEffect(()=>{ load(); },[athlete.id]);
 
   // Backfill exactly once: current program exists but was never snapshotted.
@@ -8870,83 +8941,136 @@ export function ProgramBlocksPane({athlete, viewer="athlete", onRebuild}){
   const sub = {fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:8};
   const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10};
   const miniBtn = (active,color=CA.accent) => ({background:active?`${color}20`:"transparent",border:`1px solid ${active?color:CA.border}`,color:active?color:CA.muted,borderRadius:8,padding:"5px 11px",cursor:"pointer",fontSize:11.5,fontWeight:600,fontFamily:"'DM Sans'"});
+  const chip = {color:CA.muted2,fontSize:10.5,border:`1px solid ${CA.border}`,borderRadius:6,padding:"1px 8px"};
 
-  const advanceBlock = async () => {
+  // Stats are DERIVED, never stored: weeks from the date span, sessions from the
+  // logs that fall inside the phase's window. Current phase prefers the position
+  // engine's week-of-weekCount read when the program declares its weeks.
+  const sessionsIn = (b) => {
+    const s = Date.parse(b.applied_at||0);
+    const e = b.completed_at ? Date.parse(b.completed_at) : Date.now();
+    return logs.filter(t=>t>=s&&t<=e).length;
+  };
+  const weeksOf = (b) => {
+    const s = Date.parse(b.applied_at||0);
+    const e = b.completed_at ? Date.parse(b.completed_at) : Date.now();
+    return Math.max(1, Math.round((e-s)/6.048e8));
+  };
+  const weekChip = (b) => {
+    if(b.completed_at) return `${weeksOf(b)} week${weeksOf(b)!==1?"s":""}`;
+    try {
+      const pos = currentPosition({programText:b.program_text,startedOn:b.applied_at,sessions:[]});
+      if(pos.weekKnown&&pos.weekCount>0) return `week ${pos.week} of ${pos.weekCount}`;
+    } catch(_){}
+    return `week ${weeksOf(b)}`;
+  };
+  const nameOf = (b) => b.block_name || b.block_summary || firstLine(b.program_text) || "—";
+
+  const saveName = async (b) => {
+    const n = nameInput.trim().slice(0,80);
+    setEditingName(null);
+    if(!n || n===b.block_name) return;
+    try {
+      await sbUpdateWhere("program_history",`?id=eq.${b.id}`,{block_name:n});
+      setBlocks(prev=>prev.map(x=>x.id===b.id?{...x,block_name:n}:x));
+    } catch(e){ setErr("Couldn't save the name — try again."); }
+  };
+
+  const advancePhase = async () => {
     if(busy) return;
     setBusy(true); setErr(""); setNextArm(false);
     try {
-      // Closes the open block (Joe writes the recap from the logs) and opens the
-      // next one on the same program text — the athlete's explicit "block 1 is
-      // done, block 2 starts now" for programs with internal blocks.
+      // Closes the current phase (Joe writes the recap from the logs) and opens
+      // the next one on the same program text — the explicit "phase 1 is done,
+      // phase 2 starts now" for programs with internal phases.
       const did = await startNextBlock({athleteId:athlete.id,programText:athlete.program_text||""},{sbRead,sbInsert,sbUpdateWhere,askClaude});
       if(did) load();
-    } catch(e){ setErr("Couldn't close the block — try again in a sec."); }
+    } catch(e){ setErr("Couldn't close the phase — try again in a sec."); }
     setBusy(false);
   };
 
-  return (
-    <div>
-      <div style={sub}>Past blocks</div>
-      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
-      {loaded&&blocks.length===0&&(
-        <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
-          No block history yet. Every saved program is archived here as a block — with Joe's recap of what actually happened — so the next Builder interview starts with the receipts in hand.
+  const phaseCard = (b, isCurrent) => (
+    <div key={b.id} style={{...card,...(isCurrent?{border:`1px solid ${CA.accent}55`}:{})}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+        {isCurrent&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`,flexShrink:0}}/>}
+        {editingName===b.id?(
+          <span style={{display:"flex",gap:6,alignItems:"center",flex:1,minWidth:180}}>
+            <input value={nameInput} onChange={e=>setNameInput(e.target.value)} autoFocus
+              onKeyDown={e=>{ if(e.key==="Enter") saveName(b); if(e.key==="Escape") setEditingName(null); }}
+              placeholder="Name this phase"
+              style={{flex:1,background:CA.navy2,border:`1px solid ${CA.accent}66`,borderRadius:7,padding:"4px 9px",color:CA.text,fontSize:12.5,outline:"none",fontFamily:"'DM Sans'"}}/>
+            <button onClick={()=>saveName(b)} style={{...miniBtn(true),padding:"3px 9px",fontSize:10.5}}>Save</button>
+          </span>
+        ):(
+          <button onClick={()=>{setEditingName(b.id);setNameInput(b.block_name||"");}}
+            title="Name this phase — yours to call whatever you want"
+            style={{background:"none",border:"none",padding:0,cursor:"pointer",color:CA.text,fontSize:13,fontWeight:600,fontFamily:"'DM Sans'",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
+            {nameOf(b)}<span style={{color:CA.faint,fontSize:10}}>✎</span>
+          </button>
+        )}
+        <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
+      </div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+        <span style={chip}>{fmtD(b.applied_at||b.created_at)} → {b.completed_at?fmtD(b.completed_at):"now"}</span>
+        <span style={chip}>{weekChip(b)}</span>
+        <span style={chip}>{sessionsIn(b)} session{sessionsIn(b)!==1?"s":""} logged</span>
+        {isCurrent&&b.ends_at&&(
+          <span title="The planned end of this phase — Joe checks in when it arrives" style={chip}>wraps {fmtD(b.ends_at)}</span>
+        )}
+      </div>
+      {b.block_name&&(b.block_summary||firstLine(b.program_text))&&(
+        <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:b.block_recap?6:isCurrent?8:2}}>
+          {b.block_summary||firstLine(b.program_text)}
         </div>
       )}
-      {err&&<div style={{color:CA.red,fontSize:11.5,marginBottom:10}}>{err}</div>}
-      {blocks.map(b=>(
-        <div key={b.id} style={card}>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
-            <span style={{color:CA.text,fontSize:12.5,fontWeight:600}}>
-              {fmtD(b.applied_at||b.created_at)} → {b.completed_at?fmtD(b.completed_at):"current"}
-            </span>
-            {!b.completed_at&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`}}/>}
-            {!b.completed_at&&b.ends_at&&(
-              <span title="The planned end of this block — Joe checks in when it arrives"
-                style={{color:CA.muted,fontSize:10.5,border:`1px solid ${CA.border}`,borderRadius:6,padding:"1px 7px"}}>
-                wraps {fmtD(b.ends_at)}
-              </span>
-            )}
-            <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
-          </div>
-          <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:b.block_recap?6:8}}>
-            {b.block_summary||firstLine(b.program_text)||"—"}
-          </div>
-          {b.block_recap&&(
-            <div style={{border:`1px solid ${CA.border}`,borderLeft:`2px solid ${CA.accent}`,borderRadius:8,background:"rgba(58,123,255,0.05)",padding:"8px 11px",color:CA.muted2,fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap",marginBottom:8}}>
-              {b.block_recap}
-            </div>
-          )}
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide program":"View program"}</button>
-            {onRebuild?(
-              <button onClick={()=>onRebuild(b)} title="Start a Builder interview with this block as the starting point" style={miniBtn(false)}>Rebuild from this</button>
-            ):(
-              <button disabled title="Coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
-            )}
-            {!b.completed_at&&(nextArm?(
-              <>
-                <button onClick={advanceBlock} disabled={busy} style={miniBtn(true,CA.amber)}>{busy?"Closing…":"Yes — close it & start the next"}</button>
-                <button onClick={()=>setNextArm(false)} style={miniBtn(false)}>Not yet</button>
-              </>
-            ):(
-              <button onClick={()=>setNextArm(true)} disabled={busy}
-                title="Done with this phase of your program? Joe closes the chapter with a recap of what moved, and the next block starts fresh."
-                style={miniBtn(true,CA.accent)}>Start next block</button>
-            ))}
-          </div>
-          {!b.completed_at&&nextArm&&(
-            <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.6,marginTop:8}}>
-              This closes the current block: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh block starts on the same program. Do this when you're moving to the next phase — like block 1 → block 2 of a multi-block plan.
-            </div>
-          )}
-          {openBlock===b.id&&(
-            <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"10px 0 0",borderTop:`1px solid ${CA.border}`,paddingTop:10}}>
-              {b.program_text}
-            </pre>
+      {b.block_recap&&(
+        <div style={{border:`1px solid ${CA.border}`,borderLeft:`2px solid ${CA.accent}`,borderRadius:8,background:"rgba(58,123,255,0.05)",padding:"8px 11px",color:CA.muted2,fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap"}}>
+          {b.block_recap}
+        </div>
+      )}
+      {isCurrent&&(
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:2}}>
+          {nextArm?(
+            <>
+              <button onClick={advancePhase} disabled={busy} style={miniBtn(true,CA.amber)}>{busy?"Closing…":"Yes — close it & start the next"}</button>
+              <button onClick={()=>setNextArm(false)} style={miniBtn(false)}>Not yet</button>
+            </>
+          ):(
+            <button onClick={()=>setNextArm(true)} disabled={busy}
+              title="Done with this phase? Joe writes its recap from your logs, and the next phase starts fresh on the same program."
+              style={miniBtn(true,CA.accent)}>Start next phase</button>
           )}
         </div>
-      ))}
+      )}
+      {isCurrent&&nextArm&&(
+        <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.6,marginTop:8}}>
+          This closes the current phase: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh phase starts on the same program. Do this when you're moving on — like phase 1 → phase 2 of a bigger plan.
+        </div>
+      )}
+    </div>
+  );
+
+  const current = blocks.find(b=>!b.completed_at)||null;
+  const past = blocks.filter(b=>b.completed_at);
+
+  return (
+    <div>
+      <div style={sub}>Current phase</div>
+      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
+      {loaded&&!current&&(
+        <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
+          No active phase. Save a program — or build one with Joe — and it starts a fresh phase here, tracked from day one.
+        </div>
+      )}
+      {current&&phaseCard(current,true)}
+      {err&&<div style={{color:CA.red,fontSize:11.5,marginBottom:10}}>{err}</div>}
+      <div style={{...sub,marginTop:18}}>Past phases</div>
+      {loaded&&past.length===0&&(
+        <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
+          Nothing finished yet. When a phase wraps up, it lands here with Joe's recap of what actually happened — the receipts the next program gets built on.
+        </div>
+      )}
+      {past.map(b=>phaseCard(b,false))}
     </div>
   );
 }

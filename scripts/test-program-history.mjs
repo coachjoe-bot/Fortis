@@ -218,6 +218,29 @@ console.log("block dates:");
   ok(blockPromptState({ endsAt: "2026-08-24T12:00:00Z", now: "2026-08-25T12:00:00Z" }) === "ended", "past → ended");
 }
 
+// ── phase names + retire's completedAt override ──────────────────────────────
+console.log("phase names + retire:");
+{
+  const { calls, deps } = harness(null);
+  await snapshotProgramHistory({ athleteId: "a1", text: PROGRAM, source: "chat_save" }, deps);
+  ok(calls.inserts[0]?.data.block_name === "Week 1", "name defaults from the program header line");
+}
+{
+  const { calls, deps } = harness(null);
+  await snapshotProgramHistory({ athleteId: "a1", text: PROGRAM, source: "builder", blockName: "Summer Grind" }, deps);
+  ok(calls.inserts[0]?.data.block_name === "Summer Grind", "explicit name wins over the header");
+}
+{
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  await closeCurrentBlock({ athleteId: "a1", completedAt: "2026-07-20T12:00:00Z" }, deps);
+  ok(String(closes(calls)[0]?.data.completed_at || "").startsWith("2026-07-20"), "retire closes at the last-workout date, not now");
+}
+{
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  await closeCurrentBlock({ athleteId: "a1", completedAt: "garbage" }, deps);
+  ok(!!closes(calls)[0]?.data.completed_at && !String(closes(calls)[0].data.completed_at).startsWith("garbage"), "garbage override falls back to now");
+}
+
 // ── digestWorkouts formatting ────────────────────────────────────────────────
 console.log("digestWorkouts:");
 {

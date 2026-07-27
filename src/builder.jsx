@@ -148,6 +148,11 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const [resetArm, setResetArm] = useState(false);
   const [draftLine, setDraftLine] = useState(0);  // rotating status line while drafting
   const topicRef = useRef(initialDraft?.blueprint?.__topic || null); // locked at first pick (cache-identity)
+  // Build-off-a-named-phase (Will, 07-27): past phases aren't browsable UI —
+  // referencing one BY NAME in the interview ("base it on Summer Grind") loads
+  // its recap into the hand-off cell and its program text as the draft template.
+  const phasesRef = useRef([]);       // recent named phases {id, block_name, recap, summary, program_text}
+  const templateRef = useRef(null);   // the matched phase whose text seeds the draft
   const draftIdRef = useRef(initialDraft?.id || null);
   const parkChain = useRef(Promise.resolve());    // serializes parks → exactly one row per session
   const bootRef = useRef({ goals: [], lastBlock: null }); // kept for reset re-precharge
@@ -157,6 +162,20 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const numbers = useMemo(() => bestNumbersLine(workoutHistory), [workoutHistory]);
 
   useEffect(() => { const t = setTimeout(() => setGo(true), 80); return () => clearTimeout(t); }, []);
+  // Named-phase index for the resolver (non-blocking; also restores a parked
+  // session's template via the __templatePhase id stashed in the blueprint).
+  useEffect(() => {
+    let on = true;
+    sbRead("program_history", `?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=12&select=id,block_name,block_summary,block_recap,program_text`)
+      .then(r => {
+        if (!on || !Array.isArray(r)) return;
+        phasesRef.current = r.filter(p => (p.block_name || "").trim().length >= 4);
+        const tid = blueprint?.__templatePhase;
+        if (tid && !templateRef.current) templateRef.current = phasesRef.current.find(p => p.id === tid) || null;
+      })
+      .catch(() => {});
+    return () => { on = false; };
+  }, [athlete.id]);
   useEffect(() => { scrollRef.current?.scrollTo?.(0, 1e9); }, [transcript, phase]);
   useEffect(() => {
     if (phase !== "drafting") { setDraftLine(0); return; }
@@ -326,6 +345,14 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         }
       }
       if (ex.notes) bp.__notes = [...(Array.isArray(bp.__notes) ? bp.__notes : []), ex.notes].slice(-12);
+      // Named-phase resolver: mentioning a past phase by name loads it as the
+      // hand-off + draft template. Deterministic substring match — no AI guessing.
+      const named = phasesRef.current.find(p => msg.toLowerCase().includes(p.block_name.toLowerCase()));
+      if (named && templateRef.current?.id !== named.id) {
+        templateRef.current = named;
+        bp.__templatePhase = named.id;
+        bp.handoff = { value: `Building off the past phase "${named.block_name}": ${named.block_recap || named.block_summary || "on record"}. Its structure is the starting template — keep what worked, change what this interview surfaces.`, source: "interview" };
+      }
       setBlueprint(bp);
       const done = blueprintPct(bp, cells) === 100;
       if (done && !wasDone) {
@@ -357,9 +384,11 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const id = await park(blueprint, transcript, "interview", null);
       if (!id) throw new Error("no draft row");
       const sys = drafterSystem({ viewer });
-      // A rebuild carries the old block's full text as the starting template.
+      // A rebuild or a named-phase reference carries the old phase's full text
+      // as the starting template.
       let userPrompt = draftUser({ blueprint, cells, athlete, numbers });
-      if (rebuildFrom?.program_text) userPrompt += `\n\nPREVIOUS BLOCK (rebuild starting template — keep its working structure unless the blueprint says otherwise):\n${rebuildFrom.program_text.slice(0, 3000)}`;
+      const tmpl = rebuildFrom?.program_text || templateRef.current?.program_text;
+      if (tmpl) userPrompt += `\n\nPREVIOUS BLOCK (starting template — keep its working structure unless the blueprint says otherwise):\n${tmpl.slice(0, 3000)}`;
       startGeneration(id, { cached: doctrine(), sys, userPrompt, blueprint, cells });
       attachGen(id);
     } catch (e) { setErr("Draft didn't come through — try DRAFT IT again."); setPhase("interview"); }
@@ -503,11 +532,23 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         </div>
       </div>
 
+      {/* ── Scheduled state: future start date → parked, not applied ── */}
+      {phase === "scheduled" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ border: `1px solid ${CA.accent}55`, background: `${CA.accent}0d`, borderRadius: 12, padding: 16, color: CA.text, fontSize: 13, lineHeight: 1.7 }}>
+            📅 Scheduled — this program is parked in <b>Drafts</b>, planned for <b>{parseTimeline(blueprint?.timeline?.value).start}</b>. When the date comes (or your current phase wraps), Joe offers to swap it in with one tap. Want it sooner? Apply it any time from Drafts.
+          </div>
+          <div>
+            <button onClick={resetAll} style={priBtn}>START A NEW PROGRAM</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Saved state ── */}
       {phase === "saved" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ border: `1px solid ${CA.green}55`, background: `${CA.green}0d`, borderRadius: 12, padding: 16, color: CA.text, fontSize: 13, lineHeight: 1.7 }}>
-            ✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} — it drives every session from here. The old block is archived under Past Blocks.
+            ✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} — it drives every session from here. The old phase is archived under Phases.
           </div>
           <div>
             <button onClick={resetAll} style={priBtn}>START A NEW PROGRAM</button>
@@ -560,10 +601,26 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
               </div>
               {err && <div style={{ color: CA.red, fontSize: 11.5 }}>{err}</div>}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button onClick={() => setConfirmSave(lineDiff(athlete.program_text || "", draftText).filter(x => x.type !== "same" || x.text.trim()))}
-                  disabled={busy || !draftText.trim()} style={priBtn}>
-                  SAVE TO {viewer === "coach" ? "THEIR PROGRAM" : "MY PROGRAM"}
-                </button>
+                {(() => {
+                  // A future start date means this program isn't meant to run YET —
+                  // it schedules into Drafts instead of replacing the live program
+                  // (Will: never a future "current" phase). Early apply stays
+                  // possible from the Drafts tab, where the diff gate makes the
+                  // intent explicit.
+                  const st = parseTimeline(blueprint?.timeline?.value).start;
+                  const future = st && st > todayStr();
+                  return future ? (
+                    <button onClick={async () => { await park(blueprint, transcript, "draft", draftText); setPhase("scheduled"); }}
+                      disabled={busy || !draftText.trim()} style={priBtn}>
+                      📅 SCHEDULE FOR {st}
+                    </button>
+                  ) : (
+                    <button onClick={() => setConfirmSave(lineDiff(athlete.program_text || "", draftText).filter(x => x.type !== "same" || x.text.trim()))}
+                      disabled={busy || !draftText.trim()} style={priBtn}>
+                      SAVE TO {viewer === "coach" ? "THEIR PROGRAM" : "MY PROGRAM"}
+                    </button>
+                  );
+                })()}
                 <button onClick={async () => { await park(blueprint, transcript, "draft", draftText); onParked && onParked(); }} disabled={busy} style={miniBtn(false)}>Send to Drafts</button>
                 <button onClick={() => setPhase("interview")} disabled={busy} style={miniBtn(false)}>Back to interview</button>
               </div>

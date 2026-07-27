@@ -188,7 +188,7 @@ const ATHLETE_COL_ALLOW = {
     // applied_at was missing from this set at launch, which 403'd EVERY
     // athlete-side snapshot insert (snapshotProgramHistory sends it explicitly)
     // and left program_history empty on prod. Guard the value, allow the column.
-    cols: new Set(["program_text", "source", "block_summary", "block_recap", "completed_at", "applied_at", "ends_at"]),
+    cols: new Set(["program_text", "source", "block_summary", "block_recap", "block_name", "completed_at", "applied_at", "ends_at"]),
     values: {
       source: (v) => [
         "manual_edit", "chat_save", "chat_replace", "chat_append", "chat_create",
@@ -197,6 +197,7 @@ const ATHLETE_COL_ALLOW = {
       ].includes(v),
       applied_at: (v) => typeof v === "string" && !Number.isNaN(Date.parse(v)),
       ends_at: (v) => typeof v === "string" && !Number.isNaN(Date.parse(v)),
+      block_name: (v) => v === null || (typeof v === "string" && v.length <= 80),
     },
   },
 };

@@ -4091,11 +4091,12 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                 stay under My Program; Builder is the Phase C slot; Drafts shows
                 the coach's own drafts for this athlete + the block history. */}
             <div style={{display:"flex",gap:2,borderBottom:`1px solid ${CA.border}`,marginBottom:16}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PAST BLOCKS"]].map(([k,label])=>(
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
                 <button key={k} onClick={()=>setProgTab(k)}
                   style={{padding:"9px 14px",background:"none",border:"none",borderBottom:`2px solid ${progTab===k?CA.accent:"transparent"}`,color:progTab===k?CA.accent:CA.muted,cursor:"pointer",fontSize:11.5,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"inline-flex",alignItems:"center",gap:5}}>
                   {label}
-                  {k==="builder"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
+                  {/* Builder / Drafts / Phases are all one beta system. */}
+                  {k!=="program"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
                 </button>
               ))}
             </div>
@@ -4117,8 +4118,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                 onSaveToProgram={applyBuilderDraft}/>
             )}
             {progTab==="blocks"&&(
-              <ProgramBlocksPane athlete={athlete} viewer="coach"
-                onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgTab("builder"); }}/>
+              <ProgramBlocksPane athlete={athlete} viewer="coach"/>
             )}
             {progTab==="program"&&(<>
             {/* ── Staged program change (request card / brief hand-off) ── */}

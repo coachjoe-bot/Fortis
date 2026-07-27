@@ -80,9 +80,13 @@ export function digestWorkouts(rows) {
 // Close an open block row: stamp completed_at, then best-effort generate the
 // recap from the logs that fell inside the block. The stamp must land even when
 // the recap fails (recap is AI + extra reads; the close is the source of truth).
-async function closeBlock(athleteId, row, deps) {
+// completedAtOverride: "retire" ends a phase at the LAST WORKOUT logged under
+// it, not at the moment the button was tapped.
+async function closeBlock(athleteId, row, deps, completedAtOverride = null) {
   const { sbRead, sbUpdateWhere, askClaude } = deps;
-  const completedAt = new Date().toISOString();
+  const completedAt = (completedAtOverride && !Number.isNaN(Date.parse(completedAtOverride)))
+    ? new Date(completedAtOverride).toISOString()
+    : new Date().toISOString();
   await sbUpdateWhere("program_history", `?id=eq.${row.id}`, { completed_at: completedAt });
   try {
     const from = row.applied_at ? `&created_at=gte.${encodeURIComponent(row.applied_at)}` : "";
@@ -105,7 +109,7 @@ async function closeBlock(athleteId, row, deps) {
 // Fire-and-forget from every program_text save path (never await it on the save's
 // critical path, never let it throw into the caller). deps = {sbRead, sbInsert,
 // sbUpdateWhere, askClaude} from App.jsx.
-export async function snapshotProgramHistory({ athleteId, text, source, forceNewBlock = false, startsAt = null, endsAt = null }, deps) {
+export async function snapshotProgramHistory({ athleteId, text, source, forceNewBlock = false, startsAt = null, endsAt = null, blockName = null }, deps) {
   const { sbRead, sbInsert, askClaude } = deps;
   const t = (text || "").trim();
   const rows = await sbRead(
@@ -157,6 +161,10 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
     applied_at: startsAt || new Date().toISOString(),
   };
   if (endsAt) row.ends_at = endsAt;
+  // Phase name: caller-provided ("what are we calling it") or defaulted from the
+  // program's header line — the drafter's headers make decent names.
+  const name = (blockName || t.split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
+  if (name) row.block_name = name;
   await sbInsert("program_history", row);
 }
 
@@ -191,14 +199,14 @@ export async function startNextBlock({ athleteId, programText, source = "next_bl
 // Close the open block WITHOUT opening a successor — the athlete said "it's
 // done" at the end-of-program prompt. The next program save opens the next
 // chapter (the closed-latest rule guarantees it's a fresh row).
-export async function closeCurrentBlock({ athleteId }, deps) {
+export async function closeCurrentBlock({ athleteId, completedAt = null }, deps) {
   const rows = await deps.sbRead(
     "program_history",
     `?athlete_id=eq.${athleteId}&order=applied_at.desc&limit=1&select=id,program_text,block_summary,completed_at,applied_at`
   );
   const latest = (Array.isArray(rows) && rows[0]) || null;
   if (!latest || latest.completed_at) return false;
-  await closeBlock(athleteId, latest, deps);
+  await closeBlock(athleteId, latest, deps, completedAt);
   return true;
 }
 
