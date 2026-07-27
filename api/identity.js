@@ -159,13 +159,15 @@ async function resolveCoachCode(req, res, body) {
   await rateLimit(`resolve-coach-code:${clientIp(req)}`, { max: 30, windowMin: 15 });
   const found = await sbSelect(
     "coaches",
-    `?access_code=eq.${enc(code)}&select=id,school_id,name,role,coach_number,pin`
+    `?access_code=eq.${enc(code)}&select=id,school_id,name,role,coach_number,pin,tour_done_at`
   );
   if (!found.length) return res.status(200).json({ coach: null });
   const c = found[0];
-  // Never return the actual pin; expose only whether one is set.
+  // Never return the actual pin; expose only whether one is set. tour_done_at
+  // rides along so a first-time coach's dashboard entry knows the tour is owed
+  // (null) without waiting for the next full login read.
   return res.status(200).json({
-    coach: { id: c.id, school_id: c.school_id, name: c.name, role: c.role, coach_number: c.coach_number, pin_set: !!c.pin },
+    coach: { id: c.id, school_id: c.school_id, name: c.name, role: c.role, coach_number: c.coach_number, pin_set: !!c.pin, tour_done_at: c.tour_done_at ?? null },
   });
 }
 

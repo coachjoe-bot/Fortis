@@ -26,6 +26,9 @@ import { weekBounds } from "./coachAnalytics.js";
 // The Morning Brief — deterministic conversational beats (zero tokens to build;
 // Haiku only reacts when the coach free-types). See coach-dashboard-v2-spec §C.
 import { buildMorningBrief, decisionNote, briefWeekKey } from "./coachBrief.js";
+// First-run dashboard tour (highlight-only; the athlete side's interactive walk
+// lives in App.jsx). Offer re-appears each entry until resolved — tour.jsx header.
+import { TourOffer, TourSpotlight, coachTourSteps } from "./tour.jsx";
 // Staged program-edit loop: pure line-diff + placement lookup + merge-safety
 // guard backing the AthleteDetail "review & apply" flow below.
 import { lineDiff, diffStats, findPlacement, mergeGuard } from "./programDiff.js";
@@ -675,6 +678,39 @@ function CoachDashboard({coach,onLogout}) {
   const [allCoaches,setAllCoaches] = useState([]);
   const [loading,setLoading] = useState(true);
   const [activeTab,setActiveTab] = useState("overview"); // graphs-first home (coach-experience-vision §1)
+  // First-run dashboard tour. tour_done_at === null is the only owed state —
+  // undefined (a pre-column auth blob) is not, and every pre-feature coach was
+  // backfilled as done. Resolution persists via the coaches self-write path
+  // (notification_prefs + tour_done_at only — api/data.js).
+  const [tour,setTour] = useState(null); // {steps,idx,part}
+  const [tourOffer,setTourOffer] = useState(false);
+  const [tourResolved,setTourResolved] = useState(false); // session-local: server write is fire-and-forget
+  const tourRef = useRef(null); tourRef.current = tour;
+  const tourStep = tour ? tour.steps[tour.idx] : null;
+  useEffect(()=>{
+    if(tour||tourOffer||tourResolved||loading) return;
+    if(coach?.tour_done_at !== null) return;
+    setTourOffer(true);
+  },[coach?.tour_done_at,loading,tour,tourOffer,tourResolved]);
+  const resolveTourDone = () => {
+    setTourResolved(true);
+    sbUpdate("coaches",coach.id,{tour_done_at:new Date().toISOString()}).catch(()=>{});
+  };
+  const tapTour = () => {
+    const t = tourRef.current; if(!t) return;
+    const s = t.steps[t.idx];
+    if(t.part < s.parts.length-1){ setTour({...t, part:t.part+1}); return; }
+    if(t.idx >= t.steps.length-1){
+      setTour(null); resolveTourDone(); track("tour_complete","coach_dashboard",{role:"coach"});
+      return;
+    }
+    setTour({...t, idx:t.idx+1, part:0});
+  };
+  const skipTour = () => {
+    const t = tourRef.current;
+    setTour(null); resolveTourDone();
+    track("tour_skip","coach_dashboard",{role:"coach",step:t?.steps[t.idx]?.key||"?"});
+  };
   const [selected,setSelected] = useState(null);
   const [search,setSearch] = useState("");
   const [filterPain,setFilterPain] = useState(false);
@@ -1094,12 +1130,23 @@ function CoachDashboard({coach,onLogout}) {
       {/* Tabs — horizontally scrollable on narrow screens */}
       <div style={{background:CA.navy2,borderBottom:`1px solid ${CA.border}`,display:"flex",padding:isMobile?"0 8px":"0 20px",overflowX:"auto",WebkitOverflowScrolling:"touch",scrollbarWidth:"none"}}>
         {tabs.map(t=>(
-          <button key={t} onClick={()=>{setActiveTab(t);if(t!=="athletes")setSelected(null);}}
+          <button key={t} data-tour={`coach-tab-${t}`} onClick={()=>{setActiveTab(t);if(t!=="athletes")setSelected(null);}}
             style={{padding:isMobile?"12px 13px":"12px 18px",background:"none",border:"none",borderBottom:`2px solid ${activeTab===t?CA.accent:"transparent"}`,color:activeTab===t?CA.accent:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",whiteSpace:"nowrap",flexShrink:0}}>
             {t==="stats"?"Group Stats":t}
           </button>
         ))}
       </div>
+
+      {/* First-run dashboard tour (offer re-shows each entry until resolved) */}
+      {tourOffer&&!tour&&(
+        <TourOffer role="coach"
+          onStart={()=>{setTourOffer(false);setTour({steps:coachTourSteps(),idx:0,part:0});track("tour_start","coach_dashboard",{role:"coach"});}}
+          onDecline={()=>{setTourOffer(false);resolveTourDone();track("tour_skip","coach_dashboard",{role:"coach",at:"offer"});}}/>
+      )}
+      {tour&&tourStep&&(
+        <TourSpotlight step={tourStep} part={tour.part} stepIndex={tour.idx} stepCount={tour.steps.length}
+          onTap={tapTour} onCta={()=>{}} onSkip={skipTour}/>
+      )}
 
       <div style={{padding:isMobile?12:20,maxWidth:1400,margin:"0 auto"}}>
         {loading?(

@@ -33,6 +33,9 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
+// First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
+// display: fixtures never touch real data — see tour.jsx header.
+import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, TOUR_QL_FIXTURE, TOUR_SCRIPT } from "./tour.jsx";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -4805,6 +4808,17 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // PIN, phone in hand, just saw the install prompt) never offered the app's fastest
   // sign-in. Same biometricEnroll call, same enrollment record; it just happens here
   // too. Queued BEHIND the install prompt so the two never stack.
+  // Tour state is declared HERE — above the Face ID queue effect that reads it —
+  // but the offer/advance logic lives below, after closeInstall (see the tour
+  // block). Order matters: deps arrays evaluate at render, so hoisting only the
+  // state avoids a TDZ crash without splitting the readable flow.
+  const [tour,setTour] = useState(null); // {steps,idx,part,replay,free}
+  const [tourOffer,setTourOffer] = useState(false);
+  const [tourChat,setTourChat] = useState([]);   // scripted demo bubbles — display-only, never in `messages`
+  const [tourTyping,setTourTyping] = useState(false);
+  const [tourChips,setTourChips] = useState(false); // welcome quick-action chips after a first-run tour
+  const tourRef = useRef(null); tourRef.current = tour;
+  const tourStep = tour ? tour.steps[tour.idx] : null;
   const [bioOfferPending,setBioOfferPending] = useState(false);
   const [showBioOffer,setShowBioOffer] = useState(false);
   const [bioBusy,setBioBusy] = useState(false);
@@ -4821,8 +4835,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     })();
   },[]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{
-    if(bioOfferPending && !showInstall){ setBioOfferPending(false); setShowBioOffer(true); }
-  },[bioOfferPending,showInstall]);
+    if(bioOfferPending && !showInstall && !tourOffer && !tour){ setBioOfferPending(false); setShowBioOffer(true); }
+  },[bioOfferPending,showInstall,tourOffer,tour]); // eslint-disable-line react-hooks/exhaustive-deps
   const enableBioNow = async () => {
     if(bioBusy) return;
     setBioBusy(true); setBioErr("");
@@ -4850,6 +4864,113 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(showInstall==="auto") rememberInstallDismissed();
     setShowInstall(null);
   };
+
+  // ─── FIRST-RUN APP TOUR (see tour.jsx) ──────────────────────────────────────
+  // The offer re-appears every entry until RESOLVED (tour taken or "No thanks");
+  // backgrounding mid-offer doesn't count. tour_done_at === null is the only
+  // owed state — undefined means a stale snapshot/auth blob from before the
+  // column existed, and those accounts were all backfilled as done.
+  // (State lives above the Face ID block — see the hoist note there.)
+  useEffect(()=>{
+    if(tour||tourOffer) return;
+    if(athlete?.tour_done_at !== null) return;
+    // Queue behind the post-signup popups so the two never stack.
+    if(showInstall||bioOfferPending||showBioOffer) return;
+    setTourOffer(true);
+  },[athlete?.tour_done_at,showInstall,bioOfferPending,showBioOffer,tour,tourOffer]);
+
+  const resolveTourDone = () => {
+    const at = new Date().toISOString();
+    setAthlete(prev=>({...prev,tour_done_at:at}));
+    sbUpdate("athletes",athlete.id,{tour_done_at:at}).catch(()=>{});
+  };
+  const startTour = (replay) => {
+    const free = (athlete.tier||"free")==="free";
+    setTourOffer(false); setTourChips(false);
+    setTour({steps:athleteTourSteps({free}), idx:0, part:0, replay:!!replay, free});
+    track("tour_start","nav",{role:"athlete",replay:!!replay});
+  };
+  const declineTour = () => {
+    setTourOffer(false);
+    resolveTourDone();
+    track("tour_skip","nav",{role:"athlete",at:"offer"});
+  };
+  // Tap anywhere on a passive step: next text part, then next step.
+  const tapTour = () => {
+    const t = tourRef.current; if(!t) return;
+    const s = t.steps[t.idx];
+    if(s.interactive||s.script) return;
+    if(t.part < s.parts.length-1){ setTour({...t, part:t.part+1}); return; }
+    if(s.cta) return; // last part carries the CTA button — wait for it
+    if(t.idx >= t.steps.length-1){ finishTour(); return; }
+    setTour({...t, idx:t.idx+1, part:0});
+  };
+  // "Show me the builder →": open the Program pane (MY PROGRAM subtab, so the
+  // Builder doesn't mount and fire its AI interview mid-tour) and anchor the
+  // next card to the BUILDER tab itself.
+  const tourCta = () => {
+    const t = tourRef.current; if(!t) return;
+    setShowProgram(true); setProgramTab("program");
+    setTour({...t, idx:t.idx+1, part:0});
+  };
+  // Interactive advances: the athlete does the real motion, the tour follows.
+  useEffect(()=>{
+    const t = tourRef.current;
+    if(t && t.steps[t.idx]?.key==="programClose" && !showProgram) setTour({...t, idx:t.idx+1, part:0});
+  },[showProgram]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{
+    const t = tourRef.current;
+    if(t && t.steps[t.idx]?.key==="quicklog" && showQuickLog) setTour({...t, idx:t.idx+1, part:0});
+  },[showQuickLog]); // eslint-disable-line react-hooks/exhaustive-deps
+  // SEND TO CHAT on the sample workout: close the sheet and play the scripted
+  // exchange — the workout bubble, Joe's reply, the real NEW MAX stamp — with no
+  // AI call and no writes. Each stage re-checks the tour is still alive (skip).
+  const tourWait = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const tourQuickLogSend = async () => {
+    const t0 = tourRef.current; if(!t0) return;
+    setShowQuickLog(false);
+    setTour({...t0, idx:t0.idx+1, part:0}); // → script step (invisible blocker)
+    setTourChat([{role:"user",content:TOUR_QL_FIXTURE.draft}]);
+    await tourWait(700); if(!tourRef.current) return;
+    setTourTyping(true); await tourWait(1200); setTourTyping(false);
+    if(!tourRef.current) return;
+    setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.reply}]);
+    setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
+    await tourWait(3000); if(!tourRef.current) return;
+    setTourTyping(true); await tourWait(900); setTourTyping(false);
+    if(!tourRef.current) return;
+    setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.followup}]);
+    await tourWait(1600);
+    const t = tourRef.current; if(!t) return;
+    setTour({...t, idx:t.idx+1, part:0}); // → mylog
+  };
+  const finishTour = () => {
+    const t = tourRef.current;
+    setTour(null); setTourChat([]); setTourTyping(false);
+    if(!t || t.replay) return;
+    resolveTourDone();
+    track("tour_complete","nav",{role:"athlete"});
+    // Joe's first real message, on a clean slate — only when they haven't
+    // actually chatted yet (an account that skipped the tour for days keeps
+    // its real transcript).
+    if(!athlete.first_chat_complete){
+      const first = (athlete.name||"").trim().split(/\s+/)[0]||"there";
+      setMessages([{role:"assistant",content:tourWelcome(first, t.free)}]);
+      if(!t.free) setTourChips(true);
+    }
+  };
+  const skipTour = () => {
+    const t = tourRef.current;
+    const s = t?.steps[t.idx];
+    // Leave the app exactly as it was: close anything the tour itself opened.
+    if(s && (s.key==="builder"||s.key==="programClose")) setShowProgram(false);
+    if(s && s.key==="qlSend") setShowQuickLog(false);
+    setTour(null); setTourChat([]); setTourTyping(false);
+    if(t && !t.replay){ resolveTourDone(); }
+    track("tour_skip","nav",{role:"athlete",step:s?.key||"?",replay:!!t?.replay});
+  };
+  // The welcome chips are one-shot shortcuts; the first real message retires them.
+  useEffect(()=>{ if(tourChips && messages.length>1) setTourChips(false); },[messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveAthleteProgram = async () => {
     if(athleteProgramSaving) return;
@@ -4882,6 +5003,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   };
 
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[messages,loading,videoLoading]);
+  // Tour's scripted bubbles land below the real transcript — keep them in view.
+  useEffect(()=>{if(tourChat.length||tourTyping)bottomRef.current?.scrollIntoView({behavior:"smooth"});},[tourChat,tourTyping]);
 
   // Persist the day's transcript — debounced. This effect used to stringify and
   // write the FULL transcript on every messages change, i.e. once per streamed
@@ -6756,14 +6879,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             chat screen without opening anything, which is what makes closing it safe. */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:8}}>
         {(athlete.tier||"free")!=="free"&&(
-          <button onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
+          <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
             style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:"#02040c",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,fontFamily:"'Bebas Neue'",letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
             {quickLogParked?"⚡ RESUME LOG":"⚡ QUICK LOG"}
           </button>
         )}
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
           {(athlete.tier||"free")!=="free"&&(
-            <button onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
+            <button data-tour="program-btn" onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
               style={{background:athlete.temp_program_text?`${CA.amber}15`:athlete.program_text?"#0a0e1e":CA.navy3,border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:"4px 10px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
               {athlete.temp_program_text?"✈️ Temp Program":"📋 "+(athlete.program_text?"Program":"Add Program")}
             </button>
@@ -6773,14 +6896,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               LOG first. Same 6px accent dot, on the door instead of behind it —
               proofDigest is already in scope right here. */}
           {(athlete.tier||"free")!=="free"&&(
-            <button onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
+            <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
               style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,fontFamily:"'Bebas Neue'",letterSpacing:1}}>
               MY LOG
               {proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:-3,right:-3,width:8,height:8,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 6px ${CA.accent}`,display:"block"}}/>}
             </button>
           )}
-          {(athlete.tier||"free")!=="free"&&<button onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,fontFamily:"'Bebas Neue'",letterSpacing:1}}>PROGRESS</button>}
+          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,fontFamily:"'Bebas Neue'",letterSpacing:1}}>PROGRESS</button>}
           <button onClick={()=>setShowSettings(true)} title="Settings" style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:14,lineHeight:1}}>⚙</button>
           {!isMobile&&<button onClick={onLogout} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Log Out</button>}
         </div>
@@ -6829,7 +6952,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       )}
 
       {/* Messages */}
-      <div style={{flex:1,overflowY:"auto",padding:"16px 16px 8px"}}>
+      <div data-tour="chat" style={{flex:1,overflowY:"auto",padding:"16px 16px 8px"}}>
         {/* The skeleton is now only for a TRUE cold start. A warm reopen already
             has the greeting (or today's transcript) painted from the device, so
             showing "Syncing feed" over it would be a step backwards. */}
@@ -6869,6 +6992,39 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 </div>
               </div>
             ))}
+            {/* App-tour scripted exchange (display-only, never in `messages`): the
+                sample Quick Log send, Joe's fixed reply, the follow-up. Cleared the
+                moment the tour ends — same bubble styling as the real transcript. */}
+            {tourChat.map((m,i)=>(
+              <div key={`tour${i}`} className="fade-up" style={{marginBottom:12,display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                {m.role==="assistant"&&<div style={{width:28,height:28,borderRadius:"50%",background:CA_AVATAR,boxShadow:`0 0 12px ${CA_GLOW}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginRight:8,marginTop:2}}>J</div>}
+                <div style={{maxWidth:"80%",padding:"10px 14px",borderRadius:m.role==="user"?"15px 15px 4px 15px":"15px 15px 15px 4px",background:m.role==="user"?CA_BUBBLE:"rgba(10,18,38,.62)",backdropFilter:m.role==="assistant"?"blur(6px)":undefined,WebkitBackdropFilter:m.role==="assistant"?"blur(6px)":undefined,color:m.role==="user"?"#fff":"#dde5f2",fontSize:14,lineHeight:1.7,border:m.role==="assistant"?"1px solid rgba(120,150,210,.22)":"none",whiteSpace:"pre-wrap"}}>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {tourTyping&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                <div style={{width:28,height:28,borderRadius:"50%",background:CA_AVATAR,boxShadow:`0 0 12px ${CA_GLOW}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff"}}>J</div>
+                <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:"16px 16px 16px 4px",padding:"12px 16px"}}>
+                  <div className="ld-dots"><i/><i/><i/></div>
+                </div>
+              </div>
+            )}
+            {/* Post-tour welcome chips: one-tap doors into the two things Joe's first
+                message just offered. Retired on the first real message. */}
+            {tourChips&&!tour&&(
+              <div style={{display:"flex",gap:8,marginBottom:12,marginLeft:36}}>
+                <button onClick={()=>{setTourChips(false);track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}}
+                  style={{background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:"#02040c",borderRadius:10,padding:"9px 14px",cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1}}>
+                  ⚡ LOG A WORKOUT
+                </button>
+                <button onClick={()=>{setTourChips(false);track("screen_view","nav",{screen:"program"});setShowProgram(true);setProgramTab("builder");}}
+                  style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:10,padding:"9px 14px",cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1}}>
+                  📋 BUILD MY PROGRAM
+                </button>
+              </div>
+            )}
             {/* Standalone indicator only when no empty streaming placeholder is already
                 showing the dots (send() pushes one before the reply streams) — otherwise
                 two "J" bubbles stack during the wait. Video review has no placeholder. */}
@@ -7159,12 +7315,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div style={{flex:1,minHeight:0,width:"100%",display:"flex",flexDirection:"column"}}>
             <div style={{paddingTop:"calc(16px + env(safe-area-inset-top, 0px))",paddingBottom:"12px",paddingLeft:"20px",paddingRight:"20px",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
               <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:CA.cyan,letterSpacing:2}}>PROGRAM</div>
-              <button onClick={()=>setShowProgram(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕ Close</button>
+              <button data-tour="program-close" onClick={()=>setShowProgram(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕ Close</button>
             </div>
             {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
             <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0,overflowX:"auto"}}>
               {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PAST BLOCKS"]].map(([k,label])=>(
-                <button key={k} onClick={()=>setProgramTab(k)}
+                <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
                   {k==="builder"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
@@ -7345,9 +7501,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           messages={messages}
           goals={athleteGoals}
           contextNotes={athleteContext}
+          demo={tour?TOUR_QL_FIXTURE:null}
           onClose={()=>setShowQuickLog(false)}
           onAddProgram={()=>{setShowQuickLog(false);setShowProgram(true);}}
-          onSend={(text,focusNote,qlPrep)=>{
+          onSend={tour?tourQuickLogSend:(text,focusNote,qlPrep)=>{
             setShowQuickLog(false);
             quickLogPrep.current = qlPrep ? {text, warmup:!!qlPrep.warmup, cooldown:!!qlPrep.cooldown} : null;
             // Mark THIS draft text as a Quick Log log so send() can never route it
@@ -7385,11 +7542,21 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           onProofRefresh={(d)=>setProofDigest(d)}
           onLogout={onLogout}
           onInstallApp={()=>{setShowSettings(false);setShowInstall("manual");}}
+          onReplayTour={()=>{setShowSettings(false);startTour(true);}}
         />
       )}
 
       {/* Add-to-Home-Screen prompt (post-signup auto, or manual from Settings) */}
       {showInstall&&<InstallPrompt manual={showInstall==="manual"} milestone={showInstall==="milestone"?installMilestone:0} onClose={closeInstall}/>}
+
+      {/* First-run tour: the offer (re-shown every entry until resolved) and the
+          spotlight walk itself. Rendered last so the coach-marks sit above the
+          Program pane and Quick Log sheet they point into. */}
+      {tourOffer&&!tour&&<TourOffer free={(athlete.tier||"free")==="free"} onStart={()=>startTour(false)} onDecline={declineTour}/>}
+      {tour&&tourStep&&(
+        <TourSpotlight step={tourStep} part={tour.part} stepIndex={tour.idx} stepCount={tour.steps.length}
+          onTap={tapTour} onCta={tourCta} onSkip={skipTour}/>
+      )}
 
       {/* Face ID offer on the just-signed-up path (see the effect above). Same copy
           and same enrollment call as the post-PIN-login card in LoginScreen. */}
@@ -7772,16 +7939,20 @@ async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, 
   return { ctx, rest:false, notes: notes===null ? "" : notes, draft: log };
 }
 
-function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals, contextNotes, onClose, onAddProgram, onSend}) {
+function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals, contextNotes, onClose, onAddProgram, onSend, demo}) {
   // A session Joe wrote in chat counts as a program to draft from — same rule
   // buildQuickLogContext applies, kept in sync here because THIS is the gate that
   // decides whether the sheet drafts at all or shows the "add a program" wall.
   const savedProgram = !!(athlete.temp_program_text||athlete.program_text);
-  const hasProgram = savedProgram || !!findChatProgram(messages);
-  const [draft,setDraft] = useState("");
-  const [notes,setNotes] = useState(""); // Joe's focus note — read-only reference, never sent; AI-rebuilt ONLY on a day change
+  // `demo` = the app tour's sample workout (see tour.jsx). The sheet renders the
+  // fixture and NOTHING touches the athlete's real state: no draft generation, no
+  // qlSave/qlClear on their parked work, no history stamp. Every demo guard below
+  // is what makes "replay the tour" safe on a real account.
+  const hasProgram = !!demo || savedProgram || !!findChatProgram(messages);
+  const [draft,setDraft] = useState(demo?demo.draft:"");
+  const [notes,setNotes] = useState(demo?demo.notes:""); // Joe's focus note — read-only reference, never sent; AI-rebuilt ONLY on a day change
   const [showEditHelp,setShowEditHelp] = useState(false);
-  const [phase,setPhase] = useState(hasProgram?"loading":"noprogram"); // loading|ready|rest|error|noprogram
+  const [phase,setPhase] = useState(demo?"ready":(hasProgram?"loading":"noprogram")); // loading|ready|rest|error|noprogram
   const [instruction,setInstruction] = useState("");
   const [editBusy,setEditBusy] = useState(false);
   const [editErr,setEditErr] = useState("");
@@ -7822,7 +7993,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // resume a workout, so it's the one moment this must not get wrong.
   const booted = useRef(false);
   useEffect(()=>{
-    if(!hasProgram || booted.current || !historyLoaded) return;
+    if(demo || !hasProgram || booted.current || !historyLoaded) return;
     booted.current = true;
     const parked = qlLoad(athlete.id, workoutHistory);
     if(parked){
@@ -7845,8 +8016,9 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   };
 
   // Park the draft as it changes so a close — or an iOS kill — mid-workout keeps it.
+  // Never in demo mode: parking the tour's sample would overwrite real parked work.
   useEffect(()=>{
-    if(phase!=="ready") return;
+    if(demo||phase!=="ready") return;
     const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
     const t = setTimeout(flush, 400); // debounced: this runs per keystroke in the textarea
     // Backgrounding the PWA (music, camera, screen lock between sets) can kill it outright,
@@ -7859,7 +8031,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Closing is a save point, so flush synchronously — the debounce above may not have
   // fired yet and unmounting kills its timer.
   const closeSheet = () => {
-    if(phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
+    if(!demo && phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
     onClose();
   };
 
@@ -7920,6 +8092,9 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
       <style>{GS}</style>
       <div style={{paddingTop:"calc(16px + env(safe-area-inset-top, 0px))",paddingBottom:"12px",paddingLeft:"20px",paddingRight:"20px",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
         <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:CA.cyan,letterSpacing:2,flexShrink:0}}>⚡ QUICK LOG</div>
+        {demo&&(
+          <div style={{background:`${CA.amber}22`,border:`1px solid ${CA.amber}`,borderRadius:4,padding:"2px 8px",color:CA.amber,fontSize:10,fontWeight:700,letterSpacing:1,whiteSpace:"nowrap",flexShrink:0}}>SAMPLE</div>
+        )}
         {phase==="ready"&&dayLabel&&dayLabel.length<=36&&(
           <div style={{background:`${CA.blue}22`,border:`1px solid ${CA.blue}`,borderRadius:4,padding:"2px 8px",color:CA.blue,fontSize:10,fontWeight:700,letterSpacing:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dayLabel.toUpperCase()}</div>
         )}
@@ -8040,7 +8215,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           </div>
           {/* The focus note goes WITH the log — it's the record of why this session
               mattered, and it's already paid for. See parsed_data.focus_note. */}
-          <button onClick={()=>{qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep);}} disabled={!canSend}
+          <button data-tour="ql-send" onClick={()=>{if(!demo) qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep);}} disabled={!canSend}
             style={{background:canSend?CA.accent:CA.navy3,color:canSend?"#000":CA.muted,border:`1px solid ${canSend?CA.accent:CA.border}`,borderRadius:12,padding:"14px",fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:16,cursor:canSend?"pointer":"not-allowed"}}>
             SEND TO CHAT →
           </button>
@@ -9660,7 +9835,7 @@ function ProfileCompletionModal({athlete, onClose, onSave}) {
 }
 
 // ─── SETTINGS MODAL ───────────────────────────────────────────────────────────
-function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogout, onInstallApp}) {
+function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogout, onInstallApp, onReplayTour}) {
   const [coachName,setCoachName] = useState(athlete.coach_name||"");
   const [coachEmail,setCoachEmail] = useState(athlete.coach_email||"");
   const [weightUnit,setWeightUnit] = useState(athlete.weight_unit||"lbs");
@@ -9981,6 +10156,15 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
         {onInstallApp&&!isStandalone()&&(
           <button onClick={onInstallApp} style={btn("transparent",CA.accent,{border:`1px solid ${CA.accent}55`,fontSize:13,padding:"10px",letterSpacing:1,marginBottom:10})}>
             Install the App on Your Phone
+          </button>
+        )}
+
+        {/* Replay the first-run tour. Runs on the same display-only rails as the
+            first run: sample data overlays, real data untouched and back the
+            moment it ends. */}
+        {onReplayTour&&(
+          <button onClick={onReplayTour} style={btn("transparent",CA.muted2,{border:`1px solid ${CA.border}`,fontSize:13,padding:"10px",letterSpacing:1,marginBottom:10})}>
+            Replay the App Tour
           </button>
         )}
 
