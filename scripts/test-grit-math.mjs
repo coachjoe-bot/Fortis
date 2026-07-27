@@ -9,7 +9,7 @@
 // Run with: node scripts/test-grit-math.mjs
 
 import {
-  MAX_E1RM_REPS, epley1RM, effectiveDate, getExerciseSets, toLbs,
+  MAX_E1RM_REPS, epley1RM, effectiveDate, parseDbDate, getExerciseSets, toLbs,
   bestE1RMForExercise, tierForRatio, bwTierFactor, ageTierFactor,
   scaledThresholds, BENCH_THRESHOLDS, TIER_NAMES, TIER_POINTS,
   REF_BW, bwLoadLabel, computeGritSnapshot, resolveLift,
@@ -145,6 +145,36 @@ console.log("effectiveDate:");
   eq(bad.toISOString(), "2026-07-20T08:00:00.000Z", "malformed log_date falls back to created_at");
   const junk = effectiveDate({ created_at: "2026-07-20T08:00:00Z", parsed_data: "not json{" });
   eq(junk.toISOString(), "2026-07-20T08:00:00.000Z", "unparseable parsed_data falls back to created_at");
+}
+
+// ── parseDbDate: the day-shift guard ──────────────────────────────────────────
+// A Postgres `timestamp WITHOUT time zone` comes back with no offset, and JS parses
+// that space-separated form as LOCAL — so an 8:30 PM Eastern session read as the NEXT
+// DAY. The columns are timestamptz now, but the failure was silent and day-shifting,
+// so the rule keeps a permanent case. Run under a fixed TZ (see below) or these are
+// vacuous on a UTC machine.
+console.log("parseDbDate:");
+{
+  // The exact shape PostgREST returns for a naive column: 00:30 UTC = 8:30 PM Mon ET.
+  const naive = parseDbDate("2026-07-28 00:30:00.123456");
+  eq(naive.toISOString(), "2026-07-28T00:30:00.123Z", "offset-less DB timestamp is read as UTC, not local");
+  // Same instant, tz-aware form — the two must agree exactly.
+  eq(parseDbDate("2026-07-28T00:30:00.123456+00:00").getTime(), naive.getTime(), "naive and tz-aware forms agree");
+  eq(parseDbDate("2026-07-28T00:30:00.123Z").getTime(), naive.getTime(), "Z form agrees too");
+  // "T" separator without a zone is the same case.
+  eq(parseDbDate("2026-07-28T00:30:00").toISOString(), "2026-07-28T00:30:00.000Z", "T-separated, zone-less also read as UTC");
+  eq(parseDbDate("2026-07-28 00:30:00").toISOString(), "2026-07-28T00:30:00.000Z", "seconds-only precision handled");
+  // Explicit non-UTC offsets must be respected, never rewritten.
+  eq(parseDbDate("2026-07-27T20:30:00.123456-04:00").getTime(), naive.getTime(), "explicit -04:00 offset is honored (same instant as the UTC form)");
+  // Pass-throughs.
+  const d = new Date("2026-07-28T00:30:00Z");
+  eq(parseDbDate(d).getTime(), d.getTime(), "a Date passes through");
+  eq(parseDbDate(d.getTime()).getTime(), d.getTime(), "an epoch number passes through");
+  eq(Number.isNaN(parseDbDate(null).getTime()), true, "null is an invalid date, not a crash");
+  eq(Number.isNaN(parseDbDate(undefined).getTime()), true, "undefined is an invalid date, not a crash");
+  // And the reason it matters: effectiveDate must land on the right DAY.
+  const ed = effectiveDate({ created_at: "2026-07-28 00:30:00.123456", parsed_data: {} });
+  eq(ed.toISOString(), "2026-07-28T00:30:00.123Z", "effectiveDate reads a naive created_at as UTC");
 }
 
 // ── bwLoadLabel ───────────────────────────────────────────────────────────────

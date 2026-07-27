@@ -23,6 +23,31 @@ export const epley1RM = (weight, reps) => {
   return Math.round(weight * (1 + Math.min(reps, MAX_E1RM_REPS) / 30));
 };
 
+// ── Parsing a timestamp that came out of the database ────────────────────────
+// A Postgres `timestamp WITHOUT time zone` serializes with no offset marker —
+// "2026-07-28 00:30:00.123456" — and JavaScript parses that space-separated form as
+// LOCAL time. The database runs UTC, so on an Eastern device every such value landed
+// 4 hours late, which pushed anything logged after 8 PM onto the NEXT DAY. That is the
+// "internal clock is wrong" bug: an 8:30 PM Monday session read as Tuesday, in Joe's
+// replies, in MY LOG, and in the weekly streak. The server never saw it, because
+// Vercel runs UTC and the local parse was accidentally right there.
+//
+// The columns are timestamptz now (20260727_workouts_created_at_timestamptz), so this
+// is belt-and-braces — but it is cheap, and the failure mode is silent and
+// day-shifting, which is exactly the kind that earns a permanent guard. Anything
+// carrying an explicit offset (Z or ±HH:MM) or already a Date is passed straight
+// through untouched.
+export const parseDbDate = (v) => {
+  if (v instanceof Date) return v;
+  if (typeof v === "number") return new Date(v);
+  if (typeof v !== "string") return new Date(NaN);
+  const s = v.trim();
+  // "YYYY-MM-DD HH:MM:SS[.ffffff]" with NO zone → it came from a naive column, and the
+  // database that wrote it runs UTC. Normalise to ISO-with-Z so every runtime agrees.
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) return new Date(s.replace(" ", "T") + "Z");
+  return new Date(s);
+};
+
 // ── Effective workout date ────────────────────────────────────────────────────
 // The day a workout should be ATTRIBUTED to. Normally the insert time (created_at),
 // but when the athlete logs a PAST session ("that was Monday's workout", "did this
@@ -40,7 +65,7 @@ export const effectiveDate = (w) => {
     const d = new Date(ld + "T12:00:00");
     if (!isNaN(d.getTime())) return d;
   }
-  return new Date(w?.created_at);
+  return parseDbDate(w?.created_at);
 };
 
 // Expand a logged exercise entry into its individual sets. Handles both the new

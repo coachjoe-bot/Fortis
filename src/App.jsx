@@ -58,7 +58,7 @@ import {
 // BY NAME from "./App.jsx" (its lazy-loaded-chunk convention) — re-exporting here
 // keeps that import working unchanged while grit.js stays the single source of truth.
 import {
-  epley1RM, MAX_E1RM_REPS, getExerciseSets, bestE1RMForExercise, effectiveDate,
+  epley1RM, MAX_E1RM_REPS, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
   isRealSession, groupIntoSessions,
   normalizeExName, displayForKey, cleanerName, liftTier,
   resolveLift, displayForLift, bwLoadLabel, BW_LOADED_IDS,
@@ -67,7 +67,7 @@ import {
   sessionTonnage, sessionTopSet,
 } from "./grit.js";
 export {
-  epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate,
+  epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
   isRealSession, groupIntoSessions,
   normalizeExName, displayForKey, cleanerName, liftTier,
 };
@@ -8128,7 +8128,12 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
     if(loadingOlder||reachedEnd) return;
     setLoadingOlder(true);
     try {
-      const oldest = timelineWorkouts.reduce((m,w)=>(!m||w.created_at<m)?w.created_at:m,null);
+      // Compare INSTANTS, not the raw strings. Server rows now serialize with an
+      // offset ("…+00:00") while the optimistic row written on send uses toISOString
+      // ("…Z"), and those two formats don't sort lexically against each other — a
+      // string compare could pick the wrong "oldest" and silently skip a page of
+      // history. The value sent to PostgREST is still the original string.
+      const oldest = timelineWorkouts.reduce((m,w)=>(!m||parseDbDate(w.created_at)<parseDbDate(m))?w.created_at:m,null);
       const PAGE = 100;
       const rows = await sbRead("workouts",`?athlete_id=eq.${athlete.id}${oldest?`&created_at=lt.${encodeURIComponent(oldest)}`:""}&order=created_at.desc&limit=${PAGE}&select=*`);
       const batch = Array.isArray(rows)?rows:[];
