@@ -367,6 +367,75 @@ check("…and answering the week unlocks it", (() => {
   return w.ready === true && w.week === 4;
 })());
 
+// ─── "Week N of M": the header that names two numbers ────────────────────────
+// The one form where the biggest week number in the text is NOT the block length. It's
+// how most athletes label a program they're already partway through, and reading the N
+// as the count produced the exact false "your block is over" the rest of this file
+// exists to prevent — fired mid-block, every digest, with full confidence, and taking
+// the Past Blocks close-out offer (flags.block_ended) with it.
+const OF_FORMS = [
+  ["Week 3 of 12", 12, `HYPERTROPHY — Week 3 of 12
+
+DAY 1 — PUSH
+1. Bench Press 4x8
+
+DAY 2 — PULL
+1. Row 4x8`],
+  ["Wk 5 of 8", 8, `STRENGTH — Wk 5 of 8
+
+DAY 1 — UPPER
+1. Bench Press 4x5
+
+DAY 2 — LOWER
+1. Back Squat 4x5`],
+  ["Week 2 of 6", 6, `Week 2 of 6
+
+Day 1 – Full Body
+Back Squat 3x5 @ 245
+Day 2 – Full Body
+Deadlift 3x5 @ 315`],
+];
+
+for (const [name, weeks, text] of OF_FORMS) {
+  check(`"${name}": M is the block length, not N`, parseProgramShape(text).weekCount === weeks);
+  check(`"${name}": span reports ${weeks} weeks, stated not counted`, (() => {
+    const s = parseBlockSpan(text);
+    return s.known === true && s.weeks === weeks && s.source === "text_duration";
+  })());
+  // Two weeks in, with M-2 still to run. The whole point: nothing here says "done".
+  check(`"${name}": mid-block is not over`, (() => {
+    const w = weekAheadFor({ programText: text, startedOn: at("2026-07-13T08:00:00"), sessions: [], now: at("2026-07-28T09:00:00") });
+    return w.blockEnded === false && w.ready === true && w.weekCount === weeks && w.week === 4;
+  })());
+  // The number the athlete stated is still where they are, not a program length.
+  check(`"${name}": N never becomes the count`, parseProgramShape(text).weekCount !== parseInt(name.match(/\d+/)[0], 10));
+}
+// It still ends when it genuinely runs out — the fix must not make blocks immortal.
+check("Week 3 of 12: past week 12 the block does end", (() => {
+  const w = weekAheadFor({ programText: OF_FORMS[0][2], startedOn: at("2026-01-05T08:00:00"), sessions: [], now: at("2026-07-28T09:00:00") });
+  return w.blockEnded === true;
+})());
+// The days either side of it are unaffected — "of 12" is not a day, not an exercise.
+check("Week N of M: the header isn't read as a day", parseProgramShape(OF_FORMS[0][2]).dayTemplate.length === 2);
+
+// A lone week header states a POSITION, not a length. "Week 3" on its own can't mean a
+// three-week program — that reading ends the block the week the athlete reaches it.
+check("a single numbered week is not a block length", (() => {
+  const s = parseProgramShape("Week 3\nDay 1 – Push\nBench 4x6 @ 185\nDay 2 – Pull\nRow 4x8 @ 155");
+  return s.weekCount === 0 && s.hasWeeks === false;
+})());
+check("…so it's asked about, never guessed", (() => {
+  const w = weekAheadFor({ programText: "Week 3\nDay 1 – Push\nBench 4x6 @ 185\nDay 2 – Pull\nRow 4x8 @ 155", startedOn: at("2026-07-13T08:00:00"), sessions: [], now: at("2026-07-28T09:00:00") });
+  return w.needsSpan === true && w.blockEnded === false;
+})());
+// Two or more enumerated weeks still measure the block, exactly as before.
+check("two numbered weeks still measure the block", parseProgramShape(WEEK_SECTIONED).weekCount === 2);
+// "3 sets of 5" must not be mistaken for a span declaration.
+check("'of' in set/rep prose isn't a block length", (() => {
+  const s = parseBlockSpan("Push\nBench Press — week 1 of 3 sets @ 185\nRow 4x8 @ 155");
+  return s.weeks !== 3 || s.source !== "text_duration";
+})());
+
 // ─── the prompt block ────────────────────────────────────────────────────────
 const block = positionBlock(pos({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-07-28T09:00:00") }));
 check("block states the resolved day", /Week 1, Day 2/.test(block));

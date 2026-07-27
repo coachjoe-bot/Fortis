@@ -37,6 +37,21 @@
 
 const WEEK_HEADER_RE = /^\s*#{0,3}\s*(?:block\s+[^,\n]{1,20}[,\s]+)?(?:week|wk)\s*#?\s*(\d{1,2})\b/i;
 
+// "Week 3 of 12", "Wk 5 of 8". One phrase that states two DIFFERENT things: which week
+// the athlete is on (N) and how long the block runs (M). Only M is a length.
+//
+// This is the whole reason the two regexes below exist. Read plainly, "Week 3 of 12"
+// looks like every other week mention, so the highest-number-wins scan took 3 as the
+// block length, ignored the "of 12" entirely, and reported a finished three-week block
+// to someone with nine weeks left — the exact false "your block is over" that the rest
+// of this file was written to prevent, delivered with full confidence.
+//
+// The trailing lookahead keeps "3 sets of 5 reps" style prose out of it.
+const OF_TAIL = String.raw`\s+of\s+(\d{1,2})\b(?!\s*(?:sets?|reps?|rounds?)\b)`;
+const WEEK_OF_RE = new RegExp(String.raw`\b(?:week|wk)\s*#?\s*(\d{1,2})` + OF_TAIL, "i");
+// Every week mention in the text, with its "of M" tail captured when it has one.
+const WEEK_MENTION_RE = new RegExp(String.raw`\b(?:wk|week)\s*#?\s*(\d{1,2})(?:` + OF_TAIL + `)?`, "gi");
+
 // Day headers come in two strengths, and the distinction is load-bearing. Will's own
 // program is laid out as:
 //     MONDAY — PUSH A          <- the day
@@ -87,6 +102,10 @@ export const parseProgramShape = (programText) => {
       // being read as the start of a new section.
       const mentions = (t.match(/\b(?:wk|week)\s*#?\s*\d{1,2}\b/gi) || []).length;
       const n = parseInt(wm[1], 10);
+      // "Week 3 of 12" is a POSITION, not one of an enumerated set — it says nothing
+      // about how many week sections this program contains, so its N must never join
+      // them. Its M is a length and is picked up by the whole-text scan below.
+      if (WEEK_OF_RE.test(t)) continue;
       if (mentions === 1 && n >= 1 && n <= 52) { weeks.add(n); continue; }
     }
     if (SETS_REPS_RE.test(t)) continue;                 // an exercise line, never a header
@@ -106,20 +125,34 @@ export const parseProgramShape = (programText) => {
   // once and the loads carry a column per week ("Bench 3x5 (Wk1 65%, Wk2 70%, Wk3
   // 75%)"). Without this a 4-week block reports zero weeks, so nothing would tell the
   // draft which column to read and the block could never register as finished.
-  let weekCount = weeks.size ? Math.max(...weeks) : 0;
+  // Numbered week SECTIONS only measure the block when there are at least two of them
+  // to enumerate it. One header on its own — "Week 3", the header a coach writes on the
+  // week they hand the program over — states where the athlete is, not how long the
+  // program runs, and taking its number as the length ends the block the moment they
+  // reach it. Was: any single header set the count unless it happened to say "week 1".
+  let weekCount = weeks.size >= 2 ? Math.max(...weeks) : 0;
   // Layouts that declare their length INLINE rather than in headers also count —
   // a "Wk1 / Wk2 / Wk3 / Wk4" progression line says the block is four weeks just as
   // clearly as four section headers would. Taken as the max across the whole text so
   // it works whether the weeks are sections, columns, or both.
-  let inlineMax = 0;
-  for (const m of String(programText || "").matchAll(/\b(?:wk|week)\s*#?\s*(\d{1,2})\b/gi)) {
+  const inline = new Set();
+  // …and "Week 3 of 12" declares the length outright. It's the most explicit statement
+  // a program can make about its own span, so it outranks anything counted.
+  let declaredMax = 0;
+  for (const m of String(programText || "").matchAll(WEEK_MENTION_RE)) {
+    const of = m[2] ? parseInt(m[2], 10) : 0;
+    if (of >= 1 && of <= 52) { if (of > declaredMax) declaredMax = of; continue; }
     const n = parseInt(m[1], 10);
-    if (n >= 1 && n <= 52 && n > inlineMax) inlineMax = n;
+    if (n >= 1 && n <= 52) inline.add(n);
   }
-  // A single stray "week 1" is a sentence, not a structure — two or more distinct
-  // week numbers is a real block length.
-  if (inlineMax >= 2 && inlineMax > weekCount) weekCount = inlineMax;
-  if (weekCount === 1 && weeks.size <= 1) weekCount = 0;
+  // A single stray week mention is a sentence, not a structure — two or more DISTINCT
+  // week numbers is a real block length. Distinct, not merely a high one: "Week 3" on
+  // its own is where the athlete is, and reading it as a three-week program ends their
+  // block the week they arrive at it. (This is what the line has always claimed to do;
+  // it tested the highest number instead of how many there were.)
+  const inlineMax = inline.size >= 2 ? Math.max(...inline) : 0;
+  if (inlineMax > weekCount) weekCount = inlineMax;
+  if (declaredMax > weekCount) weekCount = declaredMax;
   return {
     dayTemplate: template,
     weekCount,
@@ -265,7 +298,11 @@ export const parseBlockSpan = (programText) => {
   // loop is repeating, and treating it as finite would end it every fourth week.
   if (REPEATING_RE.test(text)) return { known: true, repeating: true, weeks: null, source: "text_repeating" };
   const d = text.match(DURATION_RE);
-  const stated = d ? parseInt(d[1] || d[2] || d[3], 10) : null;
+  // "Week 3 of 12" states the length as plainly as "Duration: 12 weeks" does, so it's
+  // answered here rather than left to the counted-weeks fallback below — which reads
+  // the 3 and would call the block finished with nine weeks still to run.
+  const of = text.match(WEEK_OF_RE);
+  const stated = d ? parseInt(d[1] || d[2] || d[3], 10) : (of ? parseInt(of[2], 10) : null);
   if (stated && stated >= 1 && stated <= 52) return { known: true, repeating: false, weeks: stated, source: "text_duration" };
   // Numbered weeks that actually differ week to week — the program is visibly a block
   // and says how many weeks it runs. Two or more, because a lone "Week 1" is a label,
