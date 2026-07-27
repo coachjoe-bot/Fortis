@@ -106,6 +106,36 @@ First real-user pass (Will) surfaced three live defects + a UX wave. Shipped:
   their current program on first Past Blocks view. Full design + roadmap:
   `docs/program-builder-blocks-goals-design.md`.
 
+## 2026-07-27 wave 2: date-driven block boundaries (branch feat/block-dates)
+Will's decided design — blocks end BY DATE or explicitly, never by inference:
+- **Timeline blueprint cell** (athlete + coach, full + short scopes, not quick):
+  start + planned end, REQUIRED for 100%. Joe proposes concrete dates and must
+  sanity-check them against the goal gap using CURRENT NUMBERS (top-6 best e1RMs
+  computed from workoutHistory, passed into the pane — also feeds the drafter's
+  %1RM loading). Extractor resolves relative dates against a Today line.
+- **Save stamps the block**: timeline start → `applied_at` (programPosition's
+  preferred week-1 anchor — deliberate integration, athletes.program_started_on
+  stays untouched), end → `program_history.ends_at` (new column, migration
+  applied; gateway-guarded). Both athlete (applyBuilderText) and coach
+  (onProgramSave now takes snapOpts; Builder saves are forceNewBlock + source
+  "builder") paths, plus the Drafts-tab apply path.
+- **End-of-program chat card** (athlete, plain language, no "block" jargon):
+  open block ends within 7 days → "wraps up soon"; past → "hit its planned
+  finish". Chips: swap in parked draft (deep-links Drafts with the diff review
+  pre-opened via autoConfirmId), build next (Builder deep-link), extend +1/+2/+4
+  weeks (setBlockEnd), "it's done" (closeCurrentBlock — recap, NO successor row;
+  next save opens the next chapter). Throttled once/day/state via localStorage.
+- **Typed backfill ask**: open block with NO ends_at → card infers position via
+  currentPosition (week X of Y → estimated finish) and asks when the program
+  wraps — TYPED answer only (Will: this date matters, no tap-through), Haiku
+  parses "3 more weeks"/"Aug 24" → setBlockEnd. Throttled every 3 days.
+- Drafts cards show "planned for <start>"; the open Past Blocks card shows
+  "wraps <date>". Engine helpers (parseTimeline/dateToIso/setBlockEnd/
+  closeCurrentBlock/blockPromptState) live in programHistory.js — App imports
+  that module already; programBuilder.js stays interview-only.
+- Coach-side end-date nudges: NOT built (athlete-first per Will) — candidate for
+  the coach-experience overhaul.
+
 ## Likely tweak backlog (nothing committed, gather from Will/beta)
 - Interviewer voice/pacing tuning from real transcripts (check `program_drafts.transcript`
   of real interviews — remember they're user PII, read only what's needed).

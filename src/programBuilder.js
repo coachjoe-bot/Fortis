@@ -19,6 +19,8 @@ export const ATHLETE_CELLS = [
     hint: "SMART-gated: fills only when specific + measurable + timebound. Push for the number and the date, offer to help pick one if they're vague." },
   { key: "schedule", label: "Schedule", why: "The best program is the one that fits the week you actually have.",
     hint: "Days per week, minutes per session, and weeks until their season starts if they play a sport. Pre-charged from signup — confirm, don't re-ask." },
+  { key: "timeline", label: "Timeline", why: "A block without an end date never ends — and never gets judged.",
+    hint: "The block's START date and planned END date. ALWAYS propose concrete dates yourself so answering is one tap — anchor on the goal's date, season start, and doctrine block lengths (3-6 weeks). The end date must be REALISTIC for the size of the goal: check their current numbers — a 40 lb bench jump is not a 3-week block; say so and negotiate the date or the goal. Accept relative answers ('3 weeks from now', 'last week of August') and convert them to real dates. Cell value format: 'YYYY-MM-DD to YYYY-MM-DD'." },
   { key: "equipment", label: "Equipment", why: "No program survives contact with a gym that doesn't have the gear it's written for.",
     hint: "What they actually have access to. Pre-charged from signup — confirm, don't re-ask." },
   { key: "red_flags", label: "Red Flags", why: "I'd rather train around something than find out about it in week three.",
@@ -56,9 +58,12 @@ export const COACH_CELLS = [
 // no SMART gate, straight to draft (athlete quick-builds stay in chat/Field Mode).
 export const SCOPE_CELLS = {
   full:  null, // null = every cell for the viewer
-  short: ["goal", "schedule", "equipment", "red_flags", "handoff"],
-  quick: ["goal", "schedule", "equipment"],
+  short: ["goal", "schedule", "timeline", "equipment", "red_flags", "handoff"],
+  quick: ["goal", "schedule", "equipment"], // one-off session/week — no block timeline
 };
+// parseTimeline (timeline cell value → {start,end}) lives in programHistory.js —
+// App.jsx needs it at save time and already imports that module; this one stays
+// the interview-side engine.
 
 export function cellsFor(viewer, scope) {
   const all = viewer === "coach" ? COACH_CELLS : ATHLETE_CELLS;
@@ -125,6 +130,7 @@ export function extractorSystem(cells) {
   return `You extract training-interview facts into blueprint cells. Cells:
 ${cells.map(c => `- ${c.key}: ${c.label} — ${c.hint}`).join("\n")}
 Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>"}
+The timeline cell value MUST be formatted 'YYYY-MM-DD to YYYY-MM-DD' (start to end). Resolve relative dates ("3 weeks from now", "last week of August", "starting Monday") against the Today date given with the message; fill timeline only when the message actually pins the dates down.
 Rules: fill EVERY cell this message gives real information for (an expert dumping a full spec can fill many at once); omit cells the message says nothing about; "none"/"no injuries" style answers DO fill their cell with "None"; never invent facts; keep values short and operational. Some cells arrive PENDING — values from the user's profile awaiting confirmation. When the message CONFIRMS a pending value ("yes", "still true", "same as before", or confirms it with a correction), emit that cell with the pending value, updated with any correction they gave. When it REJECTS a pending value, emit the replacement they state (or omit if they gave none yet). goal_smart judges only the goal: ok=true requires specific + measurable (a number) + timebound (a date/timeframe). Include goal_smart ONLY when the message speaks to the goal. Use "notes" sparingly for real facts only (preferences, context the program should honor) — never restate cell values there.`;
 }
 
@@ -147,13 +153,14 @@ export function parseExtraction(raw) {
 
 // ── Interviewer (Sonnet, doctrine-cached) ────────────────────────────────────
 // Dynamic tail only — doctrine core (+ one topic) rides as the cached prefix.
-export function interviewerSystem({ cells, blueprint, scope, viewer, name = "", complete = false }) {
+export function interviewerSystem({ cells, blueprint, scope, viewer, name = "", complete = false, today = "", numbers = "" }) {
   const state = cells.map(c => {
     const b = blueprint[c.key];
     const st = b?.value ? `FILLED (${b.source}): ${b.value}` : b?.pending ? `PENDING (from their profile/history — NOT yet confirmed): ${b.pending}` : "EMPTY";
     return `- ${c.key} (${c.label}): ${st}\n  guidance: ${c.hint}`;
   }).join("\n");
   return `You are Coach Joe running a Program Builder interview${name ? ` with ${name}` : ""}${viewer === "coach" ? " (the user is a COACH building for their athlete/team)" : ""}. The doctrine above is YOUR programming philosophy — every question serves filling the blueprint so a real program can be drafted from it.
+${today ? `\nToday is ${today}. Every date you propose or accept must be a real calendar date reasoned from today.` : ""}${numbers ? `\nCURRENT NUMBERS (best estimated 1RMs from their actual logs — use these to judge whether a goal and a timeline are realistic together): ${numbers}` : ""}
 
 You are building their NEXT block — the program that comes AFTER whatever they're running now. Never assume it exists to serve the current block's goals: goals get hit, schedules change, focuses shift between blocks. Treat the last/current block as finished context (what worked, what to carry, what to retire). If it's genuinely unclear whether this replaces the current program now or starts when it ends, ask once.
 
@@ -164,6 +171,7 @@ Rules:
 - ONE question per turn, aimed at the most valuable EMPTY (or PENDING) cell. The cell checklist is the spine; the conversation is free — follow up naturally on what they just said before moving on.
 - PENDING cells hold what the app already knows — never re-interview from scratch, but never treat them as true either: confirm in passing ("you signed up saying 4 days — still true for this next block?"). You can confirm 2-3 pending cells in one natural question.
 - The goal cell is SMART-gated: don't accept a wish. Push warmly for the number and the date; offer a concrete suggestion if they're stuck. If their goal on file looks finished or stale, say so and ask whether to keep chasing it or set a new target.
+- The timeline cell is how the app knows when this block ENDS — treat it as first-class. Propose concrete start/end dates yourself (goal date, season, 3-6 week doctrine blocks) so answering is one tap. Sanity-check the pairing: if the goal's size doesn't fit the window given their current numbers (a 40 lb bench PR is not a 3-week block), say so plainly and negotiate either the date or the goal before accepting.
 - Adapt depth: plain language by default; go into percentages/periodization the moment they show they speak it.
 - Keep each turn under 60 words of prose.
 - End every turn with a line "CHIPS: option | option | option" — 2-4 short tappable answers for your question (omit the line only when chips make no sense).
@@ -195,13 +203,14 @@ ${viewer === "coach" ? "- This is a TEAM program: one shared program scaled per 
 - 3-6 weeks of content: write week 1 fully, then progression notes per week ("Week 2: +5 lbs on mains", deload trigger per doctrine).`;
 }
 
-export function draftUser({ blueprint, cells, athlete = {} }) {
+export function draftUser({ blueprint, cells, athlete = {}, numbers = "" }) {
   const lines = cells.map(c => `${c.label}: ${blueprint[c.key]?.value || "(not specified)"}`);
   const who = [athlete.name, athlete.sport, athlete.age ? `${athlete.age} y/o` : "", athlete.weight_lbs ? `${athlete.weight_lbs} lbs` : ""].filter(Boolean).join(", ");
   // Post-100% conversation lands here: facts that fit no cell still shape the draft.
   const notes = Array.isArray(blueprint.__notes) && blueprint.__notes.length
     ? `\nEXTRA NOTES (honor these too):\n${blueprint.__notes.map(n => `- ${n}`).join("\n")}` : "";
-  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${notes}\n\nWrite the program.`;
+  const nums = numbers ? `\nCURRENT NUMBERS (best estimated 1RMs from logs — base %1RM loading on these): ${numbers}` : "";
+  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${nums}${notes}\n\nWrite the program.`;
 }
 
 // ── Deterministic draft validation ───────────────────────────────────────────

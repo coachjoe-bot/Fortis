@@ -18,9 +18,11 @@
 // - Draft generation runs in a MODULE-scope registry (GEN): it keeps writing
 //   after the pane unmounts and parks the finished draft straight to the DB, so
 //   leaving the tab never loses a draft.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { CA, CA_BTN, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
+import { epley1RM, normalizeExName, toLbs } from "./grit.js";
 import { lineDiff, mergeGuard } from "./programDiff.js";
+import { parseTimeline } from "./programHistory.js";
 import {
   cellsFor, blueprintPct, filledCount, precharge, pickTopic,
   extractorSystem, parseExtraction, interviewerSystem, parseInterviewerReply,
@@ -93,6 +95,27 @@ function startGeneration(id, { cached, sys, userPrompt, blueprint, cells }) {
   return entry;
 }
 
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+// Compact "CURRENT NUMBERS" line from logged history: best estimated 1RM per
+// lift, top 6. This is what lets Joe judge whether a goal and a timeline are
+// realistic together (275→315 bench is not a 3-week block) and base %1RM loads
+// on real numbers instead of vibes.
+function bestNumbersLine(rows) {
+  const best = {};
+  for (const w of Array.isArray(rows) ? rows : []) {
+    for (const e of w?.parsed_data?.exercises || []) {
+      if (!e?.name || !e.weight || !e.reps) continue;
+      const est = epley1RM(toLbs(Number(e.weight), e.unit), Number(e.reps));
+      if (!est || !Number.isFinite(est)) continue;
+      const k = normalizeExName(e.name);
+      if (!best[k] || est > best[k].est) best[k] = { name: e.name, est };
+    }
+  }
+  return Object.values(best).sort((a, b) => b.est - a.est).slice(0, 6)
+    .map(x => `${x.name} ~${Math.round(x.est)} lb`).join(", ");
+}
+
 const DRAFTING_LINES = [
   "Reading your blueprint…",
   "Checking the schedule against the doctrine…",
@@ -103,7 +126,7 @@ const DRAFTING_LINES = [
   "Final pass — checking the details…",
 ];
 
-export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, onSaveToProgram, onParked }) {
+export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, workoutHistory = [], onSaveToProgram, onParked }) {
   // Individuals get ONE version — the full interview. short/quick are coach
   // tools (draft today's session / a one-week plan fast for a roster).
   const scopes = viewer === "coach" ? ["full", "short", "quick"] : ["full"];
@@ -131,6 +154,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const scrollRef = useRef(null);
   const cells = cellsFor(viewer, scope);
   const pct = blueprint ? blueprintPct(blueprint, cells) : 0;
+  const numbers = useMemo(() => bestNumbersLine(workoutHistory), [workoutHistory]);
 
   useEffect(() => { const t = setTimeout(() => setGo(true), 80); return () => clearTimeout(t); }, []);
   useEffect(() => { scrollRef.current?.scrollTo?.(0, 1e9); }, [transcript, phase]);
@@ -262,7 +286,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const openInterview = async (bp, sc) => {
     setBusy(true); setErr("");
     try {
-      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name });
+      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name, today: todayStr(), numbers });
       const raw = await askClaude({ cached: doctrine(), dynamic: sys }, "Open the interview: greet in one short line, then your first question.", 400, [], "claude-sonnet-5", "program_build");
       const { text, chips: ch } = parseInterviewerReply(raw);
       const t1 = [{ role: "assistant", content: text }];
@@ -287,7 +311,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const pendings = Object.fromEntries(cells.map(c => [c.key, blueprint[c.key]?.pending || null]).filter(([, v]) => v));
       const ex = parseExtraction(await askClaude(
         extractorSystem(cells),
-        `Current blueprint (JSON): ${JSON.stringify(Object.fromEntries(cells.map(c => [c.key, blueprint[c.key]?.value || null])))}\nPending values awaiting confirmation (JSON): ${JSON.stringify(pendings)}\nMessage: "${msg}"`,
+        `Today: ${todayStr()}\nCurrent blueprint (JSON): ${JSON.stringify(Object.fromEntries(cells.map(c => [c.key, blueprint[c.key]?.value || null])))}\nPending values awaiting confirmation (JSON): ${JSON.stringify(pendings)}\nMessage: "${msg}"`,
         500, [], "claude-haiku-4-5", "program_build"
       ));
       const bp = { ...blueprint };
@@ -311,7 +335,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         park(bp, t2, "interview", null);
       } else {
         // 2) interviewer — next question (or, at 100%, a brief "noted" ack).
-        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done });
+        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done, today: todayStr(), numbers });
         const raw = await askClaude({ cached: doctrine(), dynamic: sys }, `Conversation so far:\n${transcriptText(t1)}\n\nContinue with your next single question.`, 400, [], "claude-sonnet-5", "program_build");
         const { text, chips: ch } = parseInterviewerReply(raw);
         const t2 = [...t1, { role: "assistant", content: text }];
@@ -334,7 +358,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       if (!id) throw new Error("no draft row");
       const sys = drafterSystem({ viewer });
       // A rebuild carries the old block's full text as the starting template.
-      let userPrompt = draftUser({ blueprint, cells, athlete });
+      let userPrompt = draftUser({ blueprint, cells, athlete, numbers });
       if (rebuildFrom?.program_text) userPrompt += `\n\nPREVIOUS BLOCK (rebuild starting template — keep its working structure unless the blueprint says otherwise):\n${rebuildFrom.program_text.slice(0, 3000)}`;
       startGeneration(id, { cached: doctrine(), sys, userPrompt, blueprint, cells });
       attachGen(id);
@@ -364,7 +388,9 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
     if (busy || !confirmSave) return;
     setBusy(true); setErr("");
     try {
-      await onSaveToProgram(draftText);
+      // The blueprint's timeline rides along so the save can stamp the new
+      // block's start (applied_at) and planned end (ends_at).
+      await onSaveToProgram(draftText, parseTimeline(blueprint?.timeline?.value));
       if (draftIdRef.current) await sbUpdateWhere("program_drafts", `?id=eq.${draftIdRef.current}`, { status: "applied", updated_at: nowIso() }).catch(() => {});
       track("builder_draft_applied", "ai");
       setConfirmSave(null);

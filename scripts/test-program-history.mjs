@@ -3,7 +3,7 @@
 // deps. Deterministic, no network. Part of the Program Builder Phase B ship gate
 // (docs/program-builder-build-handoff.md).
 
-import { snapshotProgramHistory, startNextBlock, digestWorkouts, changedRatio, NEW_BLOCK_RATIO } from "../src/programHistory.js";
+import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso, digestWorkouts, changedRatio, NEW_BLOCK_RATIO } from "../src/programHistory.js";
 
 let fail = 0;
 const bad = (msg) => { fail++; console.error("  ✗ " + msg); };
@@ -173,6 +173,49 @@ console.log("startNextBlock:");
   const { calls, deps } = harness(openBlock(PROGRAM));
   await startNextBlock({ athleteId: "a1", programText: PROGRAM, source: "goal_change" }, deps);
   ok(calls.inserts[0]?.data.source === "goal_change", "goal-switch boundary carries its own source");
+}
+
+// ── block dates: timeline parse + snapshot stamping + end management ─────────
+console.log("block dates:");
+{
+  ok(JSON.stringify(parseTimeline("2026-08-01 to 2026-09-12")) === JSON.stringify({ start: "2026-08-01", end: "2026-09-12" }), "start-to-end parses");
+  ok(JSON.stringify(parseTimeline("wraps 2026-09-12")) === JSON.stringify({ start: null, end: "2026-09-12" }), "single date reads as END");
+  ok(JSON.stringify(parseTimeline("no dates here")) === JSON.stringify({ start: null, end: null }), "no dates → nulls");
+  ok(dateToIso("2026-08-01") === "2026-08-01T12:00:00Z" && dateToIso("garbage") === null, "dateToIso guards its input");
+}
+{
+  const { calls, deps } = harness(null);
+  await snapshotProgramHistory({ athleteId: "a1", text: PROGRAM, source: "builder", forceNewBlock: true, startsAt: "2026-08-01T12:00:00Z", endsAt: "2026-09-12T12:00:00Z" }, deps);
+  ok(calls.inserts[0]?.data.applied_at === "2026-08-01T12:00:00Z", "timeline start stamps applied_at (the week-1 anchor)");
+  ok(calls.inserts[0]?.data.ends_at === "2026-09-12T12:00:00Z", "timeline end stamps ends_at");
+}
+{
+  const { calls, deps } = harness(null);
+  await snapshotProgramHistory({ athleteId: "a1", text: PROGRAM, source: "chat_save" }, deps);
+  ok(!("ends_at" in (calls.inserts[0]?.data || {})), "no timeline → no ends_at field");
+}
+{
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  const did = await setBlockEnd({ athleteId: "a1", endsAt: "2026-08-24T12:00:00Z" }, deps);
+  ok(did === true && String(calls.updates[0]?.data.ends_at || "").startsWith("2026-08-24"), "setBlockEnd stamps the open block");
+  ok(await setBlockEnd({ athleteId: "a1", endsAt: "not a date" }, deps) === false, "garbage end date refused");
+}
+{
+  const closed = { ...openBlock(PROGRAM), completed_at: "2026-07-20T00:00:00Z" };
+  const { deps } = harness(closed);
+  ok(await setBlockEnd({ athleteId: "a1", endsAt: "2026-08-24T12:00:00Z" }, deps) === false, "closed block gets no end date");
+}
+{
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  const did = await closeCurrentBlock({ athleteId: "a1" }, deps);
+  ok(did === true && closes(calls).length === 1 && recaps(calls).length === 1, "closeCurrentBlock closes + recaps");
+  ok(calls.inserts.length === 0, "…and opens NOTHING (next save starts the next chapter)");
+}
+{
+  ok(blockPromptState({ endsAt: null }) === null, "no end date → no prompt");
+  ok(blockPromptState({ endsAt: "2026-08-24T12:00:00Z", now: "2026-08-01T12:00:00Z" }) === null, "far out → quiet");
+  ok(blockPromptState({ endsAt: "2026-08-24T12:00:00Z", now: "2026-08-20T12:00:00Z" }) === "ending", "inside 7 days → ending");
+  ok(blockPromptState({ endsAt: "2026-08-24T12:00:00Z", now: "2026-08-25T12:00:00Z" }) === "ended", "past → ended");
 }
 
 // ── digestWorkouts formatting ────────────────────────────────────────────────
