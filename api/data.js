@@ -193,7 +193,7 @@ const ATHLETE_COL_ALLOW = {
       source: (v) => [
         "manual_edit", "chat_save", "chat_replace", "chat_append", "chat_create",
         "self_change", "checkin_change", "pr_propagation", "correction_reversal",
-        "builder", "coach_save", "next_block", "backfill",
+        "builder", "coach_save", "next_block", "backfill", "goal_change",
       ].includes(v),
       applied_at: (v) => typeof v === "string" && !Number.isNaN(Date.parse(v)),
     },

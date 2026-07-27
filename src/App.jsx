@@ -2624,7 +2624,22 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     try{ if(ex.weight_lbs && ex.weight_lbs>50 && ex.weight_lbs<600) await sbUpdate("athletes",athlete.id,{weight_lbs:Math.round(ex.weight_lbs)}); }catch(_){}
     try{ if(ex.set_height_finalized && athlete.height_finalized===false) await sbUpdate("athletes",athlete.id,{height_finalized:true}); }catch(_){}
     try{ if(ex.stop_asking_weight) await sbUpdate("athletes",athlete.id,{ask_weight:false}); }catch(_){}
-    try{ if(ex.goal_update && ex.goal_update.length>3) await sbInsert("athlete_goals",{athlete_id:athlete.id,goal_text:ex.goal_update}); }catch(_){}
+    try{
+      if(ex.goal_update && ex.goal_update.length>3){
+        // Prior goal read BEFORE the insert (this modal doesn't hold goals state).
+        const prevRows=await sbRead("athlete_goals",`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=1`).catch(()=>[]);
+        const prevGoal=(((Array.isArray(prevRows)&&prevRows[0])&&(prevRows[0].goal_text||prevRows[0].text))||athlete.goal||"").trim().toLowerCase();
+        await sbInsert("athlete_goals",{athlete_id:athlete.id,goal_text:ex.goal_update});
+        // A goal SWITCH is a block boundary — the strongest organic signal that
+        // one training chapter ended and another began (no one has to know what
+        // a "block" is). Only fires when a DIFFERENT goal replaces a real prior
+        // one: restating the same goal in a check-in must not churn history.
+        if(prevGoal && ex.goal_update.trim().toLowerCase()!==prevGoal){
+          startNextBlock({athleteId:athlete.id,programText:athlete.program_text||"",source:"goal_change"},{sbRead,sbInsert,sbUpdateWhere,askClaude})
+            .catch(e=>console.error("[history] goal-change boundary failed:",e?.message||e));
+        }
+      }
+    }catch(_){}
 
     // Optional injury-protective program tweak (respects program_locked). Skipped when a
     // coach request was already filed this session for the same pain — the coach now

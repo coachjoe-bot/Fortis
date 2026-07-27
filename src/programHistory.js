@@ -155,12 +155,16 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
   });
 }
 
-// "Start next block": the athlete (or coach) declares the CURRENT block done
-// without changing the program text — e.g. a 12-week program with two internal
-// blocks, moving from block 1 to block 2. Closes the open row (recap and all)
-// and opens a fresh row on the same text, so each block gets its own date
-// range, logs window, and recap. Returns true when a transition happened.
-export async function startNextBlock({ athleteId, programText }, deps) {
+// "Start next block": the CURRENT block is done without the program text
+// changing — e.g. a 12-week program with two internal blocks, moving from block
+// 1 to block 2. Closes the open row (recap and all) and opens a fresh row on
+// the same text, so each block gets its own date range, logs window, and recap.
+// Returns true when a transition happened. Two callers, two sources:
+// - "next_block": the explicit Past Blocks button (user declared the boundary)
+// - "goal_change": the check-in surfaced a NEW goal — the strongest organic
+//   boundary signal there is (a shifted goal means a shifted chapter), and it
+//   costs the user nothing: no one has to know what a "block" is.
+export async function startNextBlock({ athleteId, programText, source = "next_block" }, deps) {
   const { sbRead, sbInsert } = deps;
   const rows = await sbRead(
     "program_history",
@@ -172,7 +176,7 @@ export async function startNextBlock({ athleteId, programText }, deps) {
   await sbInsert("program_history", {
     athlete_id: athleteId,
     program_text: (programText || latest.program_text || "").trim() || latest.program_text,
-    source: "next_block",
+    source,
     block_summary: latest.block_summary || null,
     applied_at: new Date().toISOString(),
   });

@@ -169,6 +169,11 @@ console.log("startNextBlock:");
   const did = await startNextBlock({ athleteId: "a1", programText: PROGRAM }, deps);
   ok(did === false && calls.inserts.length === 0 && calls.updates.length === 0, "no open block → no-op");
 }
+{
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  await startNextBlock({ athleteId: "a1", programText: PROGRAM, source: "goal_change" }, deps);
+  ok(calls.inserts[0]?.data.source === "goal_change", "goal-switch boundary carries its own source");
+}
 
 // ── digestWorkouts formatting ────────────────────────────────────────────────
 console.log("digestWorkouts:");

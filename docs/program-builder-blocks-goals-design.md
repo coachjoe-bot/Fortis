@@ -35,6 +35,27 @@ a block was hit or missed. Nothing tucked old-block context away when focus shif
 - **Backfill**: accounts with a live program but zero history (everyone, thanks to the
   applied_at 403 bug) get their current program opened as a block on first view of the
   Past Blocks tab (source `backfill`).
+- **Goal-switch boundary** (Will's call, and the right one): when a check-in surfaces a
+  goal_update that DIFFERS from the goal on file, the open block closes (recap and all)
+  and a new one opens on the same text, source `goal_change` (ProofChatModal, App.jsx).
+  A shifted goal is the strongest organic signal a chapter turned — and it costs the
+  user nothing; nobody has to know what a "block" is. Restating the same goal is a
+  guarded no-op (case-insensitive compare against the latest athlete_goals row).
+
+### How boundaries actually get detected (the layered answer)
+No single detector survives the variety of training styles, so blocks never depend on
+one. Four signals, cheapest-first, each catching a lazy-user case the others miss:
+1. **Text-diff magnitude** (deterministic, free): section swap/tweak → same block;
+   ≥50% rewrite or outright replacement → new block. Handles "edited one day" and
+   "pasted a whole new program without telling anyone".
+2. **Goal switch** (organic, shipped): catches "same program for months, new focus".
+3. **Explicit** ("Start next block" / the Builder, which always forceNewBlocks):
+   for people who DO think in blocks.
+4. **Log-pattern drift** (NOT built — v2): propose-only nudge when logged training
+   stops matching the open block's recap trajectory. Proposal, never silent action —
+   a wrong auto-boundary poisons history silently; a missed one just makes a longer
+   block whose recap still covers everything. That asymmetry is why 1–3 act
+   automatically and 4 may only ever suggest.
 
 ## Deliberately NOT in v1
 

@@ -305,7 +305,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       setBlueprint(bp);
       const done = blueprintPct(bp, cells) === 100;
       if (done && !wasDone) {
-        const closing = "That's everything I need — the blueprint's at 100%. Hit ⚡ DRAFT IT when you're ready, or keep talking: anything else you tell me gets factored into the draft.";
+        const closing = "That's everything I need — the blueprint's at 100%. Hit ⚡ DRAFT IT when you're ready. Or keep going: I hold onto everything you tell me, and the more you give me about how you want this block to look and feel, the better it comes out.";
         const t2 = [...t1, { role: "assistant", content: closing }];
         setTranscript(t2); setChips([]);
         park(bp, t2, "interview", null);
