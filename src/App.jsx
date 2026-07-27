@@ -35,7 +35,7 @@ import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
 // display: fixtures never touch real data — see tour.jsx header.
-import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, TOUR_QL_FIXTURE, TOUR_SCRIPT } from "./tour.jsx";
+import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, tourInteractiveAt, TOUR_QL_FIXTURE, TOUR_SCRIPT } from "./tour.jsx";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -4899,25 +4899,27 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const tapTour = () => {
     const t = tourRef.current; if(!t) return;
     const s = t.steps[t.idx];
-    if(s.interactive||s.script) return;
+    if(s.script||tourInteractiveAt(s,t.part)) return;
     if(t.part < s.parts.length-1){ setTour({...t, part:t.part+1}); return; }
     if(s.cta) return; // last part carries the CTA button — wait for it
     if(t.idx >= t.steps.length-1){ finishTour(); return; }
     setTour({...t, idx:t.idx+1, part:0});
   };
-  // "Show me the builder →": open the Program pane (MY PROGRAM subtab, so the
-  // Builder doesn't mount and fire its AI interview mid-tour) and anchor the
-  // next card to the BUILDER tab itself.
+  // CTA buttons. "Show me the builder →" opens the Program pane on the MY
+  // PROGRAM subtab (so the Builder doesn't mount and fire its AI interview
+  // mid-tour) and the next card anchors to the BUILDER tab itself; Continue on
+  // the hand-off step closes the pane FOR them (Will: no tap-the-X step); Finish
+  // ends the tour from the thanks card.
   const tourCta = () => {
     const t = tourRef.current; if(!t) return;
-    setShowProgram(true); setProgramTab("program");
+    const key = t.steps[t.idx]?.key;
+    if(key==="thanks"){ finishTour(); return; }
+    if(key==="program"){ setShowProgram(true); setProgramTab("program"); }
+    if(key==="programClose"){ setShowProgram(false); }
     setTour({...t, idx:t.idx+1, part:0});
   };
-  // Interactive advances: the athlete does the real motion, the tour follows.
-  useEffect(()=>{
-    const t = tourRef.current;
-    if(t && t.steps[t.idx]?.key==="programClose" && !showProgram) setTour({...t, idx:t.idx+1, part:0});
-  },[showProgram]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The one place the athlete drives: opening Quick Log themselves. The tour
+  // follows into the sheet.
   useEffect(()=>{
     const t = tourRef.current;
     if(t && t.steps[t.idx]?.key==="quicklog" && showQuickLog) setTour({...t, idx:t.idx+1, part:0});
@@ -4935,12 +4937,17 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setTourTyping(true); await tourWait(1200); setTourTyping(false);
     if(!tourRef.current) return;
     setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.reply}]);
+    // Both stamps, in the real send()'s order and timing: NEW MAX (2600ms), 300ms
+    // of clear air, then WORKOUT #N (2200ms). The tour was firing only the PR
+    // stamp, so the count stamp a real PR day shows never appeared here.
     setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
-    await tourWait(3000); if(!tourRef.current) return;
+    await tourWait(2900); if(!tourRef.current){ setPrStamp(null); return; }
+    setLogStamp({n:TOUR_SCRIPT.session}); setTimeout(()=>setLogStamp(null),2200);
+    await tourWait(2500); if(!tourRef.current){ setLogStamp(null); return; }
     setTourTyping(true); await tourWait(900); setTourTyping(false);
     if(!tourRef.current) return;
     setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.followup}]);
-    await tourWait(1600);
+    await tourWait(1800);
     const t = tourRef.current; if(!t) return;
     setTour({...t, idx:t.idx+1, part:0}); // → mylog
   };
@@ -4962,9 +4969,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const skipTour = () => {
     const t = tourRef.current;
     const s = t?.steps[t.idx];
-    // Leave the app exactly as it was: close anything the tour itself opened.
+    // Leave the app exactly as it was: close anything the tour itself opened,
+    // and drop any stamp mid-flight so it can't outlive the overlay.
     if(s && (s.key==="builder"||s.key==="programClose")) setShowProgram(false);
-    if(s && s.key==="qlSend") setShowQuickLog(false);
+    if(s && s.key==="qlSheet") setShowQuickLog(false);
+    setPrStamp(null); setLogStamp(null);
     setTour(null); setTourChat([]); setTourTyping(false);
     if(t && !t.replay){ resolveTourDone(); }
     track("tour_skip","nav",{role:"athlete",step:s?.key||"?",replay:!!t?.replay});
@@ -7253,7 +7262,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           the "safety space" Will has had removed 3× now (47941e6). The textbook
           iOS pattern is wrong for this app; leave it flat. Same rule for every
           bottom bar / modal footer below. */}
-      <div style={{padding:"6px 14px 8px",flexShrink:0,borderTop:"1px solid rgba(120,150,210,.16)",background:"rgba(4,6,12,.5)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)"}}>
+      <div data-tour="chat-input" style={{padding:"6px 14px 8px",flexShrink:0,borderTop:"1px solid rgba(120,150,210,.16)",background:"rgba(4,6,12,.5)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)"}}>
         <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
           {/* Video upload button */}
           <input ref={videoInputRef} type="file" accept="video/*" style={{display:"none"}} onChange={handleVideoUpload}/>
@@ -7552,9 +7561,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* First-run tour: the offer (re-shown every entry until resolved) and the
           spotlight walk itself. Rendered last so the coach-marks sit above the
           Program pane and Quick Log sheet they point into. */}
-      {tourOffer&&!tour&&<TourOffer free={(athlete.tier||"free")==="free"} onStart={()=>startTour(false)} onDecline={declineTour}/>}
+      {tourOffer&&!tour&&<TourOffer onStart={()=>startTour(false)} onDecline={declineTour}/>}
       {tour&&tourStep&&(
-        <TourSpotlight step={tourStep} part={tour.part} stepIndex={tour.idx} stepCount={tour.steps.length}
+        <TourSpotlight step={tourStep} part={tour.part} steps={tour.steps} stepIndex={tour.idx}
           onTap={tapTour} onCta={tourCta} onSkip={skipTour}/>
       )}
 

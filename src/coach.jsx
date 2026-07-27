@@ -696,14 +696,15 @@ function CoachDashboard({coach,onLogout}) {
     setTourResolved(true);
     sbUpdate("coaches",coach.id,{tour_done_at:new Date().toISOString()}).catch(()=>{});
   };
+  const finishTour = () => {
+    setTour(null); resolveTourDone(); track("tour_complete","coach_dashboard",{role:"coach"});
+  };
   const tapTour = () => {
     const t = tourRef.current; if(!t) return;
     const s = t.steps[t.idx];
     if(t.part < s.parts.length-1){ setTour({...t, part:t.part+1}); return; }
-    if(t.idx >= t.steps.length-1){
-      setTour(null); resolveTourDone(); track("tour_complete","coach_dashboard",{role:"coach"});
-      return;
-    }
+    if(s.cta) return;                                   // thanks card — wait for Finish
+    if(t.idx >= t.steps.length-1){ finishTour(); return; }
     setTour({...t, idx:t.idx+1, part:0});
   };
   const skipTour = () => {
@@ -1144,8 +1145,8 @@ function CoachDashboard({coach,onLogout}) {
           onDecline={()=>{setTourOffer(false);resolveTourDone();track("tour_skip","coach_dashboard",{role:"coach",at:"offer"});}}/>
       )}
       {tour&&tourStep&&(
-        <TourSpotlight step={tourStep} part={tour.part} stepIndex={tour.idx} stepCount={tour.steps.length}
-          onTap={tapTour} onCta={()=>{}} onSkip={skipTour}/>
+        <TourSpotlight step={tourStep} part={tour.part} steps={tour.steps} stepIndex={tour.idx}
+          onTap={tapTour} onCta={finishTour} onSkip={skipTour}/>
       )}
 
       <div style={{padding:isMobile?12:20,maxWidth:1400,margin:"0 auto"}}>
