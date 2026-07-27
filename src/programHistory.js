@@ -105,7 +105,7 @@ async function closeBlock(athleteId, row, deps) {
 // Fire-and-forget from every program_text save path (never await it on the save's
 // critical path, never let it throw into the caller). deps = {sbRead, sbInsert,
 // sbUpdateWhere, askClaude} from App.jsx.
-export async function snapshotProgramHistory({ athleteId, text, source, forceNewBlock = false }, deps) {
+export async function snapshotProgramHistory({ athleteId, text, source, forceNewBlock = false, startsAt = null, endsAt = null }, deps) {
   const { sbRead, sbInsert, askClaude } = deps;
   const t = (text || "").trim();
   const rows = await sbRead(
@@ -144,15 +144,20 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
     summary = (line || "").trim().split("\n")[0].slice(0, 120) || null;
   } catch (_) {}
 
-  await sbInsert("program_history", {
+  // applied_at doubles as the block's START (programPosition.js reads it as the
+  // preferred week-1 anchor), so a Builder timeline start lands here. ends_at is
+  // the PLANNED end — the date the whole boundary system keys off.
+  const row = {
     athlete_id: athleteId,
     program_text: t,
     source,
     block_summary: summary,
     // Explicit rather than relying on the DB default: the demo's mock store has
     // no column defaults, and ordering/date-ranges key off this everywhere.
-    applied_at: new Date().toISOString(),
-  });
+    applied_at: startsAt || new Date().toISOString(),
+  };
+  if (endsAt) row.ends_at = endsAt;
+  await sbInsert("program_history", row);
 }
 
 // "Start next block": the CURRENT block is done without the program text
@@ -181,4 +186,59 @@ export async function startNextBlock({ athleteId, programText, source = "next_bl
     applied_at: new Date().toISOString(),
   });
   return true;
+}
+
+// Close the open block WITHOUT opening a successor — the athlete said "it's
+// done" at the end-of-program prompt. The next program save opens the next
+// chapter (the closed-latest rule guarantees it's a fresh row).
+export async function closeCurrentBlock({ athleteId }, deps) {
+  const rows = await deps.sbRead(
+    "program_history",
+    `?athlete_id=eq.${athleteId}&order=applied_at.desc&limit=1&select=id,program_text,block_summary,completed_at,applied_at`
+  );
+  const latest = (Array.isArray(rows) && rows[0]) || null;
+  if (!latest || latest.completed_at) return false;
+  await closeBlock(athleteId, latest, deps);
+  return true;
+}
+
+// Stamp (or move) the open block's planned end — from the Builder timeline,
+// a typed chat confirmation, or an "extend N weeks" tap.
+export async function setBlockEnd({ athleteId, endsAt }, deps) {
+  if (!endsAt || Number.isNaN(Date.parse(endsAt))) return false;
+  const rows = await deps.sbRead(
+    "program_history",
+    `?athlete_id=eq.${athleteId}&order=applied_at.desc&limit=1&select=id,completed_at`
+  );
+  const latest = (Array.isArray(rows) && rows[0]) || null;
+  if (!latest || latest.completed_at) return false;
+  await deps.sbUpdateWhere("program_history", `?id=eq.${latest.id}`, { ends_at: new Date(endsAt).toISOString() });
+  return true;
+}
+
+// Timeline cell value ("YYYY-MM-DD to YYYY-MM-DD") → {start, end} (either may
+// be null). Tolerant: grabs the ISO dates in order; a single date is read as
+// the END — the part the boundary system actually needs.
+export function parseTimeline(value) {
+  const dates = String(value || "").match(/\d{4}-\d{2}-\d{2}/g) || [];
+  if (dates.length === 0) return { start: null, end: null };
+  if (dates.length === 1) return { start: null, end: dates[0] };
+  return { start: dates[0], end: dates[dates.length - 1] };
+}
+
+// A bare YYYY-MM-DD from parseTimeline → a full timestamp the DB can hold.
+// Noon UTC so the calendar day survives every timezone's rendering.
+export const dateToIso = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T12:00:00Z` : null);
+
+// Pure eligibility for the end-of-program chat prompt. 'ending' = inside the
+// heads-up window before the planned end; 'ended' = the date has passed and the
+// block is still open. null = nothing to say.
+export function blockPromptState({ endsAt, now = null, soonDays = 7 } = {}) {
+  if (!endsAt) return null;
+  const end = Date.parse(endsAt);
+  if (Number.isNaN(end)) return null;
+  const t = now ? Date.parse(now) : Date.now();
+  if (t >= end) return "ended";
+  if (end - t <= soonDays * 86400000) return "ending";
+  return null;
 }

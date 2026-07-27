@@ -15,11 +15,12 @@ const ok = (cond, msg) => { if (!cond) bad(msg); };
 
 // ── cells & scopes ───────────────────────────────────────────────────────────
 console.log("cells & scopes:");
-ok(ATHLETE_CELLS.length === 8, "athlete set has 8 cells");
+ok(ATHLETE_CELLS.length === 9, "athlete set has 9 cells (timeline joined 07-27)");
+ok(ATHLETE_CELLS.some(c => c.key === "timeline") && COACH_CELLS.some(c => c.key === "timeline"), "timeline cell exists for both viewers");
 ok(COACH_CELLS.some(c => c.key === "team_destination") && COACH_CELLS.some(c => c.key === "house_rules"), "coach set adds team cells");
-ok(cellsFor("athlete", "full").length === 8, "athlete full = all cells");
-ok(cellsFor("athlete", "short").every(c => ["goal","schedule","equipment","red_flags","handoff"].includes(c.key)), "short scope trims to block cells");
-ok(cellsFor("coach", "quick").length === 3, "quick scope = 3 cells");
+ok(cellsFor("athlete", "full").length === 9, "athlete full = all cells");
+ok(cellsFor("athlete", "short").every(c => ["goal","schedule","timeline","equipment","red_flags","handoff"].includes(c.key)), "short scope trims to block cells");
+ok(cellsFor("coach", "quick").length === 3 && !cellsFor("coach", "quick").some(c => c.key === "timeline"), "quick scope = 3 cells, no timeline (one-off work)");
 
 // ── blueprint % ──────────────────────────────────────────────────────────────
 console.log("blueprint pct:");

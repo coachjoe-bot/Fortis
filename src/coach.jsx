@@ -1253,11 +1253,12 @@ function CoachDashboard({coach,onLogout}) {
                         await sbUpdate("program_change_requests",req.id,{status,resolved_at:new Date().toISOString()});
                         setChangeRequests(prev=>prev.filter(r=>r.id!==req.id));
                       }}
-                      onProgramSave={async (text)=>{
+                      onProgramSave={async (text, snapOpts)=>{
                         await sbUpdate("athletes",selected.id,{program_text:text});
                         // Program Builder Phase B: block-history snapshot on every
                         // coach save (edit, merge apply, undo, restore — all land here).
-                        snapshotProgram(selected.id,text,"coach_save");
+                        // Builder saves pass snapOpts {forceNewBlock, source, startsAt, endsAt}.
+                        snapshotProgram(selected.id,text,snapOpts?.source||"coach_save",snapOpts||{});
                         setAthletes(prev=>prev.map(a=>a.id===selected.id?{...a,program_text:text}:a));
                         setSelected(prev=>({...prev,program_text:text}));
                         // parse-at-save: the program is gradeable immediately, no
@@ -3393,9 +3394,11 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
   // Builder/Drafts apply: the same gated path as every other coach save —
   // notification enqueue, parse-at-save, undo capture, and the Phase B history
   // snapshot all live behind onProgramSave.
-  const applyBuilderDraft = async (text)=>{
+  const applyBuilderDraft = async (text, tl)=>{
     setProgramUndo({prev:athlete.program_text||"",at:Date.now()});
-    await onProgramSave((text||"").trim());
+    // A Builder save is always a new block; the blueprint timeline stamps the
+    // block's start (applied_at anchor) and planned end (ends_at).
+    await onProgramSave((text||"").trim(), {forceNewBlock:true, source:"builder", startsAt:tl?.start?`${tl.start}T12:00:00Z`:null, endsAt:tl?.end?`${tl.end}T12:00:00Z`:null});
     setProgramText((text||"").trim());
   };
   const [programText,setProgramText] = useState(athlete.program_text||"");
@@ -4100,6 +4103,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
               <div style={{minHeight:420,display:progTab==="builder"?"flex":"none",flexDirection:"column"}}>
                 <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
                   <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="coach" coachId={coachId}
+                    workoutHistory={workouts}
                     initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
                     rebuildFrom={builderDraft?.__rebuildFrom||null}
                     onParked={()=>setProgTab("drafts")}

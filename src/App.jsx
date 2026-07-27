@@ -32,7 +32,7 @@ import { currentPosition, positionBlock } from "./programPosition.js";
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
-import { snapshotProgramHistory, startNextBlock } from "./programHistory.js";
+import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -4462,6 +4462,18 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // inline slop. {msg, reply} kept so "Just write it here" can still run the old
   // inline path. Typing dismisses, like every other pending chip.
   const [builderRedirectPending,setBuilderRedirectPending] = useState(null);
+  // End-of-program moment (date-driven block boundaries — Will, 07-27). One card
+  // at a time, plain language, never the word "block" without context:
+  //  {kind:'ending'|'ended', endsAt, draft:{id,title}|null, extendOpen}
+  //  {kind:'backfill', est:{week,weekCount,estEnd}|null, blockId}  — typed answer required
+  //  {kind:'closed'} — post-"it's done" ack offering the Builder
+  const [blockPrompt,setBlockPrompt] = useState(null);
+  const [blockPromptBusy,setBlockPromptBusy] = useState(false);
+  const [blockDateInput,setBlockDateInput] = useState("");
+  const [blockDateErr,setBlockDateErr] = useState("");
+  // Deep-link: chat's "Swap in my draft" lands on the Drafts tab with the diff
+  // review already open for this draft id.
+  const [draftsAutoConfirm,setDraftsAutoConfirm] = useState(null);
   // Pending AI log-correction plan awaiting the athlete's confirm tap:
   // {plan:<resolveLogCorrection result>, targetId:<workouts row id>}
   const [correctionPending,setCorrectionPending] = useState(null);
@@ -4493,16 +4505,112 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   useEffect(()=>{ if(programTab==="builder") setBuilderMounted(true); },[programTab]);
   // Reset on CLOSE (not open) so a deep link may set the subtab before opening —
   // the chat redirect's "Open the Builder" needs to land ON the Builder.
-  useEffect(()=>{ if(!showProgram){ setProgramTab("program"); setBuilderDraft(null); setBuilderMounted(false); } },[showProgram]);
+  useEffect(()=>{ if(!showProgram){ setProgramTab("program"); setBuilderDraft(null); setBuilderMounted(false); setDraftsAutoConfirm(null); } },[showProgram]);
   // A parked Builder session being resumed from the Drafts tab (Phase C). Keyed
   // into the pane so resuming a different draft remounts a fresh interview.
   const [builderDraft,setBuilderDraft] = useState(null);
   // Builder/Drafts "save to program": the same write as every other athlete save
   // path, with the builder-source history snapshot (always its own block).
-  const applyBuilderText = async (text) => {
+  // ── End-of-program prompt: the date-driven boundary check ──────────────────
+  // Runs once per app open. If the open block has a planned end that's near or
+  // past → the "what's next" card (throttled once/day per state). If it has NO
+  // planned end → the typed backfill ask (throttled every 3 days), inferred
+  // from programPosition's week-of-weekCount read when it can be.
+  useEffect(()=>{
+    if(!athlete?.id||!athlete.program_text||athlete.program_locked||athlete.temp_program_text) return;
+    let on=true;
+    (async()=>{
+      try{
+        const rows=await sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=1&select=id,ends_at,applied_at,completed_at`);
+        const open=(Array.isArray(rows)&&rows[0]&&!rows[0].completed_at)?rows[0]:null;
+        if(!on||!open) return;
+        const stampKey=`wilcoBlockPrompt:${athlete.id}`;
+        let last=""; try{ last=localStorage.getItem(stampKey)||""; }catch(_){}
+        const today=new Date().toISOString().slice(0,10);
+        if(open.ends_at){
+          const state=blockPromptState({endsAt:open.ends_at});
+          if(!state||last===`${state}:${today}`) return;
+          let draft=null;
+          try{
+            const d=await sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.athlete&status=eq.draft&order=updated_at.desc&limit=1&select=id,title,draft_text`);
+            if(Array.isArray(d)&&d[0]&&(d[0].draft_text||"").trim()) draft={id:d[0].id,title:d[0].title};
+          }catch(_){}
+          if(!on) return;
+          try{ localStorage.setItem(stampKey,`${state}:${today}`); }catch(_){}
+          setBlockPrompt({kind:state,endsAt:open.ends_at,draft,extendOpen:false});
+        } else {
+          if(last.startsWith("backfill:")&&(Date.parse(today)-Date.parse(last.slice(9)))<3*86400000) return;
+          let est=null;
+          try{
+            const pos=currentPosition({programText:athlete.program_text,startedOn:open.applied_at,sessions:[],now:new Date()});
+            if(pos.weekKnown&&pos.weekCount>0){
+              const remaining=Math.max(0,pos.weekCount-pos.week)+1;
+              const end=new Date(); end.setDate(end.getDate()+remaining*7);
+              est={week:pos.week,weekCount:pos.weekCount,estEnd:end.toISOString().slice(0,10)};
+            }
+          }catch(_){}
+          if(!on) return;
+          try{ localStorage.setItem(stampKey,`backfill:${today}`); }catch(_){}
+          setBlockPrompt({kind:"backfill",est,blockId:open.id});
+        }
+      }catch(_){}
+    })();
+    return ()=>{on=false;};
+  },[athlete?.id]);
+
+  const blockPromptAck=(text)=>setMessages(prev=>[...prev,{role:"assistant",content:text}]);
+  const blockExtend=async(weeks)=>{
+    if(blockPromptBusy||!blockPrompt?.endsAt) return;
+    setBlockPromptBusy(true);
+    const next=new Date(Math.max(Date.now(),Date.parse(blockPrompt.endsAt))+weeks*7*86400000);
+    try{
+      await setBlockEnd({athleteId:athlete.id,endsAt:next.toISOString()},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+      blockPromptAck(`Done — pushed your program's finish to ${next.toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check back in when it gets close.`);
+      setBlockPrompt(null);
+    }catch(_){}
+    setBlockPromptBusy(false);
+  };
+  const blockDone=async()=>{
+    if(blockPromptBusy) return;
+    setBlockPromptBusy(true);
+    try{
+      await closeCurrentBlock({athleteId:athlete.id},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+      setBlockPrompt({kind:"closed"});
+    }catch(_){}
+    setBlockPromptBusy(false);
+  };
+  // Typed backfill answer → Haiku turns "3 more weeks" / "Aug 24" into a date.
+  // Deliberately typed, not tapped (Will): this date drives the whole boundary
+  // system, so the athlete states it in their own words.
+  const blockDateSubmit=async()=>{
+    const t=blockDateInput.trim();
+    if(!t||blockPromptBusy) return;
+    setBlockPromptBusy(true); setBlockDateErr("");
+    try{
+      const today=new Date().toISOString().slice(0,10);
+      const raw=await askClaude(
+        `Convert a statement of when a training program ends into a date. Today is ${today}. Return ONLY JSON {"date":"YYYY-MM-DD"|null} — null when the message doesn't actually state a timeframe. "3 more weeks" means 3 weeks from today; "last week of August" means that week's Friday.`,
+        t,60,[],"claude-haiku-4-5","program_build");
+      let date=null;
+      try{ date=JSON.parse((String(raw).match(/\{[\s\S]*\}/)||["{}"])[0]).date||null; }catch(_){}
+      if(!date||Number.isNaN(Date.parse(date))||Date.parse(date)<Date.parse(today)){
+        setBlockDateErr("Couldn't pin a future date from that — try a date like Aug 24, or \"3 more weeks\".");
+      } else {
+        await setBlockEnd({athleteId:athlete.id,endsAt:`${date}T12:00:00Z`},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+        blockPromptAck(`Locked in — your program wraps up ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check in when it gets close so the next one's ready before this one runs out.`);
+        setBlockPrompt(null); setBlockDateInput("");
+      }
+    }catch(_){ setBlockDateErr("Couldn't reach Joe — try again in a sec."); }
+    setBlockPromptBusy(false);
+  };
+
+  const applyBuilderText = async (text, tl) => {
     const t=(text||"").trim();
     await sbUpdate("athletes",athlete.id,{program_text:t||null});
-    snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true});
+    // tl = the blueprint's timeline: start stamps the block's applied_at (the
+    // week-1 anchor programPosition reads), end stamps ends_at (what the
+    // end-of-program prompt keys off).
+    snapshotProgram(athlete.id,t||null,"builder",{forceNewBlock:true,startsAt:dateToIso(tl?.start),endsAt:dateToIso(tl?.end)});
     setAthlete(prev=>({...prev,program_text:t||null}));
     // Phase D coach summary card: a coached (but unlocked) athlete saved a
     // Builder program — give the coach eyes on it. Distinct source "builder"
@@ -6733,6 +6841,58 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         <div ref={bottomRef}/>
       </div>
 
+      {/* ── End-of-program moment: the date-driven boundary, in plain words ── */}
+      {blockPrompt&&(
+        <div style={{margin:"0 14px 8px",border:`1px solid ${CA.accent}45`,background:`${CA.accent}0d`,borderRadius:12,padding:"11px 13px",flexShrink:0}}>
+          <div style={{color:CA.text,fontSize:12.5,lineHeight:1.6,marginBottom:9}}>
+            {blockPrompt.kind==="ending"&&<>Heads up — your program wraps up <b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Want to line up what's next so there's no dead week?</>}
+            {blockPrompt.kind==="ended"&&<>Your program hit its planned finish (<b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>). Ready to move on to the next one?</>}
+            {blockPrompt.kind==="closed"&&<>Done — that chapter's in the books. I wrote up how it went under <b>Program → Past Blocks</b>. Want to build what's next?</>}
+            {blockPrompt.kind==="backfill"&&<>Quick one so I can plan ahead: when does your current program wrap up?{blockPrompt.est?<> Reading your program, you look to be in week {blockPrompt.est.week} of {blockPrompt.est.weekCount} — that'd put the finish around <b>{new Date(`${blockPrompt.est.estEnd}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>.</>:null} Type it out — a date or something like "3 more weeks" works.</>}
+          </div>
+          {blockPrompt.kind==="backfill"?(
+            <>
+              <div style={{display:"flex",gap:6}}>
+                <input value={blockDateInput} onChange={e=>setBlockDateInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")blockDateSubmit();}}
+                  placeholder='e.g. "Aug 24" or "3 more weeks"'
+                  style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:9,padding:"8px 11px",color:CA.text,fontSize:12.5,outline:"none",fontFamily:"'DM Sans'"}}/>
+                <button onClick={blockDateSubmit} disabled={blockPromptBusy||!blockDateInput.trim()}
+                  style={{background:blockDateInput.trim()?`${CA.accent}20`:"transparent",border:`1px solid ${blockDateInput.trim()?CA.accent:CA.border}`,color:blockDateInput.trim()?CA.accent:CA.muted,borderRadius:9,padding:"8px 14px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>{blockPromptBusy?"…":"Set it"}</button>
+                <button onClick={()=>setBlockPrompt(null)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:9,padding:"8px 10px",cursor:"pointer",fontSize:12}}>Later</button>
+              </div>
+              {blockDateErr&&<div style={{color:CA.red,fontSize:11.5,marginTop:6}}>{blockDateErr}</div>}
+            </>
+          ):blockPrompt.kind==="closed"?(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
+                style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>🏗️ Build the next program</button>
+              <button onClick={()=>setBlockPrompt(null)} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Later</button>
+            </div>
+          ):blockPrompt.extendOpen?(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{color:CA.muted,fontSize:11.5}}>Push the finish out:</span>
+              {[1,2,4].map(w=>(
+                <button key={w} onClick={()=>blockExtend(w)} disabled={blockPromptBusy}
+                  style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"6px 14px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>+{w} week{w>1?"s":""}</button>
+              ))}
+              <button onClick={()=>setBlockPrompt(p=>({...p,extendOpen:false}))} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:20,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Back</button>
+            </div>
+          ):(
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {blockPrompt.draft&&(
+                <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+                  style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap in the one I drafted</button>
+              )}
+              <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
+                style={{background:blockPrompt.draft?CA.navy3:`${CA.accent}20`,border:`1px solid ${blockPrompt.draft?CA.border:CA.accent}`,color:blockPrompt.draft?CA.muted2:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>🏗️ Build the next program</button>
+              <button onClick={()=>setBlockPrompt(p=>({...p,extendOpen:true}))} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Extend a few weeks</button>
+              <button onClick={blockDone} disabled={blockPromptBusy} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>{blockPromptBusy?"…":"It's done — wrap it up"}</button>
+              <button onClick={()=>setBlockPrompt(null)} style={{background:"none",border:"none",color:CA.muted,borderRadius:20,padding:"7px 8px",cursor:"pointer",fontSize:12}}>Later</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Quick replies scroll as a continuous "recommendations" ticker — phrases
           split by a glowing blue divider, auto-scrolling, tap a phrase to load it
           (pauses on hover). The session-check prompt stays a static two-button row. */}
@@ -6973,6 +7133,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
                   <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
                     locked={!!athlete.program_locked}
+                    workoutHistory={workoutHistory}
                     initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
                     rebuildFrom={builderDraft?.__rebuildFrom||null}
                     onParked={()=>setProgramTab("drafts")}
@@ -6983,6 +7144,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {programTab==="drafts"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
+                  autoConfirmId={draftsAutoConfirm}
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
               </div>
@@ -8455,7 +8617,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 // the confirmed text to onSaveToProgram, which is the caller's own gated save
 // path (athlete: sbUpdate + snapshot; coach: onProgramSave — so the coach
 // notification + parse-at-save ride along free).
-export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume}){
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume, autoConfirmId=null}){
   const [drafts,setDrafts] = useState([]);
   const [loaded,setLoaded] = useState(false);
   const [confirming,setConfirming] = useState(null); // {draft, diff} → replace-confirm view
@@ -8475,6 +8637,14 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       .finally(()=>setLoaded(true));
   };
   useEffect(load,[athlete.id]);
+  // Deep-link from the end-of-program chat card: land with the diff review for
+  // this draft already open ("Swap in the one I drafted" is one decision, not a hunt).
+  const autoConfirmedRef = useRef(false);
+  useEffect(()=>{
+    if(!loaded||!autoConfirmId||autoConfirmedRef.current) return;
+    const d=drafts.find(x=>x.id===autoConfirmId&&x.status==="draft"&&(x.draft_text||"").trim());
+    if(d){ autoConfirmedRef.current=true; startConfirm(d); }
+  },[loaded,autoConfirmId,drafts]);
 
   const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
 
@@ -8486,7 +8656,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     if(!confirming||busy) return;
     setBusy(true); setErr("");
     try {
-      await onSaveToProgram(confirming.draft.draft_text);
+      await onSaveToProgram(confirming.draft.draft_text, parseTimeline(confirming.draft.blueprint?.timeline?.value));
       await sbUpdateWhere("program_drafts",`?id=eq.${confirming.draft.id}`,{status:"applied",updated_at:new Date().toISOString()});
       setConfirming(null);
       load();
@@ -8557,6 +8727,12 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
             <span style={{background:d.status==="interview"?`${CA.amber}18`:`${CA.accent}18`,border:`1px solid ${d.status==="interview"?CA.amber:CA.accent}55`,color:d.status==="interview"?CA.amber:CA.accent,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
               {d.status==="interview"?"Parked":"Ready"}
             </span>
+            {d.status==="draft"&&parseTimeline(d.blueprint?.timeline?.value).start&&(
+              <span title="The start date this draft was planned for — Joe offers to swap it in when the current block wraps"
+                style={{color:CA.muted,fontSize:10.5,border:`1px solid ${CA.border}`,borderRadius:6,padding:"1px 7px"}}>
+                planned for {fmtD(parseTimeline(d.blueprint?.timeline?.value).start)}
+              </span>
+            )}
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
           </div>
           {d.status==="draft"&&(
@@ -8618,7 +8794,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete", onRebuild}){
   const [err,setErr] = useState("");
   const backfilledRef = useRef(false);
 
-  const load = () => sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=24&select=id,block_summary,block_recap,source,applied_at,completed_at,program_text`)
+  const load = () => sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=24&select=id,block_summary,block_recap,source,applied_at,completed_at,ends_at,program_text`)
     .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
     .catch(()=>{})
     .finally(()=>setLoaded(true));
@@ -8674,6 +8850,12 @@ export function ProgramBlocksPane({athlete, viewer="athlete", onRebuild}){
               {fmtD(b.applied_at||b.created_at)} → {b.completed_at?fmtD(b.completed_at):"current"}
             </span>
             {!b.completed_at&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`}}/>}
+            {!b.completed_at&&b.ends_at&&(
+              <span title="The planned end of this block — Joe checks in when it arrives"
+                style={{color:CA.muted,fontSize:10.5,border:`1px solid ${CA.border}`,borderRadius:6,padding:"1px 7px"}}>
+                wraps {fmtD(b.ends_at)}
+              </span>
+            )}
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
           </div>
           <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:b.block_recap?6:8}}>
