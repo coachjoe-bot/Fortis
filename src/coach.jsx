@@ -678,20 +678,27 @@ function CoachDashboard({coach,onLogout}) {
   const [allCoaches,setAllCoaches] = useState([]);
   const [loading,setLoading] = useState(true);
   const [activeTab,setActiveTab] = useState("overview"); // graphs-first home (coach-experience-vision §1)
-  // First-run dashboard tour. tour_done_at === null is the only owed state —
-  // undefined (a pre-column auth blob) is not, and every pre-feature coach was
-  // backfilled as done. Resolution persists via the coaches self-write path
-  // (notification_prefs + tour_done_at only — api/data.js).
+  // First-run dashboard tour. OFF (Will, 2026-07-27): every coach is onboarded
+  // personally for now, so a self-serve tour has nothing to do. Built and working
+  // — flip this to true to turn it back on, no other change needed. While it's
+  // off no coach is ever offered the tour and tour_done_at is never written, so
+  // whoever signs up meanwhile is still owed it if we do enable it later.
+  const COACH_TOUR_ENABLED = false;
+  // tour_done_at === null is the only owed state — undefined (a pre-column auth
+  // blob) is not, and every pre-feature coach was backfilled as done. Resolution
+  // persists via the coaches self-write path (notification_prefs + tour_done_at
+  // only — api/data.js).
   const [tour,setTour] = useState(null); // {steps,idx,part}
   const [tourOffer,setTourOffer] = useState(false);
   const [tourResolved,setTourResolved] = useState(false); // session-local: server write is fire-and-forget
   const tourRef = useRef(null); tourRef.current = tour;
   const tourStep = tour ? tour.steps[tour.idx] : null;
   useEffect(()=>{
+    if(!COACH_TOUR_ENABLED) return;
     if(tour||tourOffer||tourResolved||loading) return;
     if(coach?.tour_done_at !== null) return;
     setTourOffer(true);
-  },[coach?.tour_done_at,loading,tour,tourOffer,tourResolved]);
+  },[coach?.tour_done_at,loading,tour,tourOffer,tourResolved]); // eslint-disable-line react-hooks/exhaustive-deps
   const resolveTourDone = () => {
     setTourResolved(true);
     sbUpdate("coaches",coach.id,{tour_done_at:new Date().toISOString()}).catch(()=>{});
