@@ -140,6 +140,89 @@ export const qlMarkPrebuilt = (athleteId, now) => {
 
 export const qlClear = (athleteId) => { try{ localStorage.removeItem(qlKey(athleteId)); }catch(_){} };
 
+// ─── A PROGRAM WRITTEN IN THE CONVERSATION ───────────────────────────────────
+// Quick Log used to gate purely on the athlete's SAVED program (program_text /
+// temp_program_text). No saved program meant the "Add My Program" wall — even when
+// Joe had just written them a session in chat two messages earlier. Plenty of
+// athletes work exactly that way: they never fill the Program tab, they ask for
+// something on the day and train off the answer (Will, 2026-07-27). For them the
+// program genuinely exists; it just lives in the transcript.
+//
+// So this finds it there. Deliberately narrow, because the cost of a false positive
+// is real — mistaking a workout the athlete already FINISHED for a plan would have
+// Quick Log prescribe the session they just did:
+//   • ASSISTANT messages only. Joe writing a session is the signal we want; the
+//     athlete's own messages are usually LOGS, and a Quick Log draft is formatted
+//     exactly like a program. Athlete-pasted programs already have their own home
+//     (the is_program_update flow saves those to the Program tab).
+//   • Callers only reach for this when there's NO saved program, so an athlete with
+//     a real program in the tab is never affected by anything decided here.
+// A single day counts — "write me something for chest today" is the exact case this
+// exists for, so requiring a multi-week block would miss the point.
+
+// "Bench Press 4x6", "Incline DB Press 3 x 10 @ 60", "- Squat 5x5", "2. RDL 3x8".
+// The lift name has to carry a letter, so a bare "3x8" or a date line can't qualify.
+const QL_EX_LINE_RE = /^\s*(?:[-*•]|\d+[.)])?\s*[A-Za-z][A-Za-z0-9 '’&/()+.,-]{2,}?\s+\d+\s*(?:x|×|\s+sets?\s+of\s+)\s*\d+/i;
+
+// A run of exercise lines is what makes something a session rather than a sentence
+// mentioning a lift. Three is the floor — two can appear in ordinary coaching prose
+// ("get your bench 3x5 in before the 5x10 accessory work").
+export const QL_PROGRAM_MIN_EX_LINES = 3;
+
+export const countProgramLines = (text) =>
+  String(text || "").split("\n").filter((l) => QL_EX_LINE_RE.test(l)).length;
+
+export const looksLikeProgramText = (text) =>
+  countProgramLines(text) >= QL_PROGRAM_MIN_EX_LINES;
+
+// The most recent program Joe wrote in this conversation, or null. Newest-first so a
+// revision ("actually swap the incline for flat") wins over the version it replaced.
+export const findChatProgram = (messages) => {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (!m || m.role !== "assistant" || typeof m.content !== "string") continue;
+    if (looksLikeProgramText(m.content)) return m.content.trim();
+  }
+  return null;
+};
+
+// ─── "WANT ME TO KEEP THAT?" — OFFER RATE LIMIT ──────────────────────────────
+// A structured program is genuinely the difference between logging workouts and
+// making progress, and an athlete with an empty Program tab should hear that. Once.
+// Joe writes sessions in chat constantly for these athletes, so an ungated offer
+// would attach a pitch to nearly every reply — and a nudge that shows up every day
+// stops being a nudge and becomes something you learn to swipe past.
+//
+// Two limits, both required: at most ONE offer per local calendar day, and at most
+// THREE across the athlete's lifetime. After that Joe drops it entirely — they've
+// heard the case and declined it three times, which is an answer.
+// LOCAL day, never UTC — same rollover trap as qlLocalDay.
+export const QL_PROGRAM_OFFER_MAX = 3;
+const qlProgOfferKey = (athleteId) => `wilco_prog_offer_${athleteId}`;
+
+const readProgOffer = (athleteId) => {
+  try{
+    const d = JSON.parse(localStorage.getItem(qlProgOfferKey(athleteId))||"null");
+    return d && typeof d==="object" ? {day: d.day||"", count: Number(d.count)||0} : {day:"", count:0};
+  }catch(_){ return {day:"", count:0}; }
+};
+
+export const programSaveOfferAllowed = (athleteId, now) => {
+  if(!athleteId) return false;
+  const {day, count} = readProgOffer(athleteId);
+  if(count >= QL_PROGRAM_OFFER_MAX) return false;
+  return day !== qlLocalDay(now);
+};
+
+export const markProgramSaveOffered = (athleteId, now) => {
+  try{
+    if(!athleteId) return;
+    const {count} = readProgOffer(athleteId);
+    localStorage.setItem(qlProgOfferKey(athleteId), JSON.stringify({day: qlLocalDay(now), count: count+1}));
+  }catch(_){}
+};
+
 // ─── THE "===" REPLY SPLITTER ────────────────────────────────────────────────
 // Both Quick Log AI calls answer in two sections — the TODAY'S FOCUS note, then a
 // "===" line, then the log itself. Three call sites parse that (draft, edit, and

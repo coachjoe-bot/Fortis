@@ -22,6 +22,7 @@ import { ConsentFlow, LEGAL_VERSION } from "./legal.jsx";
 import {
   qlLoad, qlSave, qlClear, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
+  findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
 } from "./quicklog.js";
 // Coach change-request drafting/filing — single source of truth for the rule set
 // governing when Joe offers to loop the human coach in (see file header).
@@ -4441,6 +4442,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [movementLabel,setMovementLabel] = useState("");
   const [sessionCheckPending,setSessionCheckPending] = useState(null);
   const [programReplacePending,setProgramReplacePending] = useState(null);
+  // Joe wrote a session in chat for someone with an empty Program tab → offer to keep
+  // it. Rate-limited hard (see offerProgramSave): the value of a structured program is
+  // worth saying, and worth saying ONCE. Repeating it every time Joe writes a session
+  // turns a good nudge into nagging, which is the fastest way to get it tuned out.
+  const [programSavePending,setProgramSavePending] = useState(null);
   // Phase D chat redirect: "make me a program" from a Builder-eligible athlete
   // (pro+, unlocked, not in Field Mode) offers the Builder instead of generating
   // inline slop. {msg, reply} kept so "Just write it here" can still run the old
@@ -4524,13 +4530,16 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // qlLoad's expiry/staleness rules, history actually loaded, and a program still on file —
   // so the button can never advertise a draft the sheet would then refuse to resume.
   useEffect(()=>{
-    if(!athlete?.id || !historyLoaded || !(athlete.temp_program_text||athlete.program_text)){ setQuickLogParked(false); return; }
+    // Same "has a program" test the sheet uses — an athlete drafting off a session
+    // Joe wrote in chat can park that draft mid-workout like anyone else, so the
+    // RESUME LOG label has to be reachable for them too.
+    if(!athlete?.id || !historyLoaded || !(athlete.temp_program_text||athlete.program_text||findChatProgram(messages))){ setQuickLogParked(false); return; }
     const parked = qlLoad(athlete.id, workoutHistory);
     // A PRE-BUILT draft is not "the workout you started" — nobody started it. It
     // opens instantly, but the button keeps saying QUICK LOG so RESUME LOG stays a
     // true statement about the athlete's own unfinished work.
     setQuickLogParked(!!parked && !parked.prebuilt);
-  },[athlete?.id, athlete?.program_text, athlete?.temp_program_text, historyLoaded, workoutHistory, showQuickLog]);
+  },[athlete?.id, athlete?.program_text, athlete?.temp_program_text, historyLoaded, workoutHistory, showQuickLog, messages]);
   // A12: fire a queued Quick Log send the moment the in-flight reply finishes.
   // The closure is fresh from the render where loading flipped, so send() sees
   // current state. Re-assert the pure-log flag — the in-flight send consumed it.
@@ -4837,7 +4846,18 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   snapRef.current = {athlete, workoutHistory, goals:athleteGoals, context:athleteContext, digest:proofDigest};
   useEffect(()=>{
     if(!historyLoaded||!athlete?.id) return;
-    const t = setTimeout(()=>saveSnapshot(athlete.id, snapRef.current), 1200);
+    const t = setTimeout(()=>{
+      saveSnapshot(athlete.id, snapRef.current);
+      // Re-persist the sign-in record alongside the snapshot. persistAuthSession only
+      // ran at sign-in, so the record restoreAuthSession hands the next boot was frozen
+      // at login-time values — total_sessions_logged, program_text, tier and the rest
+      // all went stale the moment anything changed them. The boot re-read above is the
+      // authority, but it lands a beat AFTER first paint; a current record is what makes
+      // that first paint right instead of briefly wrong. (Re-arming the rolling trust
+      // window here is the same thing touchAuthSession already does on foreground —
+      // active use extends it by design.)
+      try{ persistAuthSession(athlete); }catch(_){}
+    }, 1200);
     return ()=>clearTimeout(t);
   },[historyLoaded,athlete,workoutHistory,athleteGoals,athleteContext,proofDigest]);
   // iOS kills a backgrounded PWA without warning, so the debounce above can lose
@@ -4869,10 +4889,24 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           setMessages(storedMsgs);
           // Even when we restore today's cached chat, still load the workout history
           // and latest proof digest (in parallel) so the log + Proof tab aren't empty.
-          const [logs,dr] = await Promise.all([
+          // get-athlete rides along for the same reason it does on the cold path: the
+          // athlete object this view booted from is the record PERSISTED AT SIGN-IN
+          // (restoreAuthSession), and nothing refreshes it between logins. Skipping it
+          // here meant a warm reopen painted a stale total_sessions_logged — the
+          // Total Workouts hero and the header count both read
+          // Math.max(stored, grouped-window), and for any athlete whose history spans
+          // more than the 100-row window the window count is far LOWER (Will: 24 vs 31),
+          // so the stale stored number is the one on screen. Log workout 31, reopen,
+          // and the counter reads 30 again. Re-reading makes the server the authority
+          // on every open, warm or cold.
+          const [fa,logs,dr] = await Promise.all([
+            idApi("get-athlete",{athleteId:athlete.id,pin:athlete.pin}).catch(()=>null),
             tier!=="free" ? sbRead("workouts",`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=100&select=*`).catch(()=>[]) : Promise.resolve([]),
             sbRead("proof_digests",`?athlete_id=eq.${athlete.id}&digest_type=in.(weekly,monthly)&order=generated_at.desc&limit=1`).catch(()=>[]),
           ]);
+          // Keep the local pin (get-athlete never returns it) so the refreshed record
+          // stays usable for the authenticated reads that follow.
+          if(fa?.athlete) setAthlete(prev=>({...prev,...fa.athlete,pin:prev.pin}));
           if(logs&&logs.length>0) setWorkoutHistory(logs);
           if(Array.isArray(dr)&&dr.length>0) setProofDigest(dr[0]);
           setHistoryLoaded(true);
@@ -5128,6 +5162,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // Auto PR detection (estimated 1RM, from any logged set — handles variable weight/reps via set_details)
       const newPRs = [];
       let manualMap = {};
+      // When the NEW MAX stamp will be off screen. Drives the hand-off to the
+      // WORKOUT #N stamp below so the two never overlap — the PR ack in between is
+      // an awaited model call of unpredictable length, so a fixed delay would
+      // either collide with the PR stamp or leave dead air after it.
+      let prStampClearsAt = 0;
       if(parsed.exercises?.length>0 || parsed.pr_attempts?.length>0){
         const [existingPRs, existingManual] = await Promise.all([
           sbRead("prs",`?athlete_id=eq.${updatedAthlete.id}`),
@@ -5166,6 +5205,45 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             return e > epley1RM(toLbs(best.weight, ex.unit), best.reps) ? s : best;
           }, {weight:ex.weight??0, reps:ex.reps||1});
           const prE1RM = prMap[k] ? epley1RM(toLbs(prMap[k].weight, prMap[k].unit), prMap[k].reps||1) : 0;
+
+          // ── TRUE SINGLE → ACTUAL 1RM ────────────────────────────────────────
+          // A completed rep at a weight IS that lift's max — it is not an estimate,
+          // and it shouldn't be filed as one. epley1RM already returns the bare
+          // weight at reps=1, so the NUMBER was right, but it only ever landed in
+          // `prs` (the estimated ladder). manual_one_rms — the actual-1RM store that
+          // every surface labels "(actual 1RM)" and that outranks estimates in the
+          // Quick Log cheat sheet — was written ONLY from parsed.pr_attempts, i.e.
+          // when the athlete FRAMED it as a max ("hit a 315 bench max"). Someone who
+          // just logs the single as part of their session ("Bench 1x1 @ 315") got an
+          // estimate. Same lift, same bar weight, different bookkeeping.
+          //
+          // Guarded so this can only ever RAISE a max: the single must beat what we
+          // already believe (an existing actual 1RM, else the best estimate on
+          // record), which is what keeps a submaximal speed single or an Olympic
+          // ramp-up from overwriting a real max. Warm-up sets are excluded outright.
+          const exSets = getExerciseSets(ex);
+          const workingSets = exSets.some(s=>!s.warmup) ? exSets.filter(s=>!s.warmup) : exSets;
+          const bestSingle = workingSets
+            .filter(s=>s.reps===1 && s.weight>0)
+            .reduce((best,s)=>(!best || toLbs(s.weight,ex.unit) > toLbs(best.weight,ex.unit)) ? s : best, null);
+          const knownBestLbs = manualMap[k] ? toLbs(manualMap[k].weight, manualMap[k].unit) : prE1RM;
+          if(bestSingle && toLbs(bestSingle.weight, ex.unit) > knownBestLbs){
+            const unit = ex.unit==="kg" ? "kg" : "lbs";
+            const newLbs = toLbs(bestSingle.weight, unit);
+            const kNorm = normalizeExName(ex.name);
+            const existing = manualMap[k];
+            if(existing?.id){
+              await sbUpdate("manual_one_rms", existing.id, {weight:bestSingle.weight, unit, source:"workout", updated_at:new Date().toISOString()});
+            } else {
+              await sbInsert("manual_one_rms", {athlete_id:updatedAthlete.id, exercise:ex.name, normalized_exercise:kNorm, weight:bestSingle.weight, unit, source:"workout"});
+            }
+            // Seed the map so the pr_attempts pass below treats this as the standing
+            // actual 1RM (a declaration of the SAME single then no-ops instead of
+            // celebrating it twice), and so the estimated-PR push is skipped.
+            manualMap[k] = {...(existing||{}), athlete_id:updatedAthlete.id, exercise:ex.name, normalized_exercise:kNorm, weight:bestSingle.weight, unit, source:"workout"};
+            newPRs.push({exercise:ex.name, weight:bestSingle.weight, unit, reps:1, e1rm:newLbs, prevE1RM:knownBestLbs, diff:newLbs-knownBestLbs, old1RM:knownBestLbs, isActual1RM:true});
+          }
+
           if(!prMap[k]){
             prInsertRows.push({athlete_id:updatedAthlete.id,exercise:ex.name,weight:topSet.weight,reps:topSet.reps||1,estimated_1rm:exE1RM,unit:ex.unit||"lbs"});
           } else if(exE1RM > prE1RM){
@@ -5279,7 +5357,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // pressed on (aStamp), auto-clears. Fires with the congrats haptic.
         {
           const topPR=[...newPRs].sort((a,b)=>b.diff-a.diff)[0];
-          if(topPR){ setPrStamp({exercise:topPR.exercise,weight:topPR.weight,unit:topPR.unit}); setTimeout(()=>setPrStamp(null),2600); }
+          if(topPR){ setPrStamp({exercise:topPR.exercise,weight:topPR.weight,unit:topPR.unit}); prStampClearsAt = Date.now()+2600; setTimeout(()=>setPrStamp(null),2600); }
         }
         try {
           const prCallout = newPRs.map(pr=>pr.isActual1RM
@@ -5302,14 +5380,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           ).join("\n")+propagationNote}]);
         }
       }
-      // Total Workouts stamp — a normal logged session presses its lifetime number
-      // onto the chat, NEW MAX-style. A PR in the same log outranks it (one
-      // celebration at a time), so this fires on ordinary training days — which is
-      // the whole point: showing up is the win, a PR is the bonus on top.
-      if(loggedSessionNumber && newPRs.length===0){
-        setLogStamp({n:loggedSessionNumber});
-        haptic(30);
-        setTimeout(()=>setLogStamp(null),2200);
+      // Total Workouts stamp — a logged session presses its lifetime number onto the
+      // chat, NEW MAX-style. A PR day now shows BOTH (Will, 2026-07-27): the max
+      // first, then the workout number behind it. It used to be suppressed entirely
+      // whenever a PR landed, which meant the athletes having their best days were
+      // the ones who never saw their count move.
+      if(loggedSessionNumber){
+        const showLogStamp = ()=>{
+          setLogStamp({n:loggedSessionNumber});
+          haptic(30);
+          setTimeout(()=>setLogStamp(null),2200);
+        };
+        // 300ms of clear air between the two so they read as a sequence rather than
+        // one stamp mutating into another. The PR ack above is awaited, so on a slow
+        // model call the NEW MAX stamp is already long gone and this fires straight
+        // away — the max() is what keeps that case from waiting for nothing.
+        const wait = Math.max(0, prStampClearsAt + 300 - Date.now());
+        if(wait>0) setTimeout(showLogStamp, wait); else showLogStamp();
       }
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Hit a snag saving that. Try again."}]);
@@ -5510,6 +5597,26 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     }
   };
 
+  // Joe just wrote a session in chat and the athlete has no saved program. Keep it, or
+  // don't — either way the offer is spent for the day (stamped by the caller).
+  const confirmProgramSave = async (apply) => {
+    const pending = programSavePending;
+    setProgramSavePending(null);
+    if(!pending) return;
+    if(!apply){
+      setMessages(prev=>[...prev,{role:"assistant",content:"👍 No problem — it's still right here in the chat if you want it."}]);
+      return;
+    }
+    try {
+      await sbUpdate("athletes",athlete.id,{program_text:pending.text});
+      snapshotProgram(athlete.id,pending.text,"chat_save",{forceNewBlock:true});
+      setAthlete(prev=>({...prev,program_text:pending.text}));
+      setMessages(prev=>[...prev,{role:"assistant",content:"📋 Saved to your Program tab. Now every Quick Log builds off it, and I'll track your progress against it session to session."}]);
+    } catch(e){
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that one — try again in a sec."}]);
+    }
+  };
+
   // "Just write it here" on the Builder redirect: run the pre-redirect inline
   // generation with the captured request + reply. Same guards, same replace-
   // confirm gate, same snapshot as the legacy chat_create path.
@@ -5694,6 +5801,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // chose NOT to use the chips. Drop the proposal (never switch without an explicit
     // tap) and process this new message normally.
     if(programReplacePending) setProgramReplacePending(null);
+    // Same for the save-to-Program-tab offer: typing past it is a decline. The day is
+    // already stamped, so it won't re-ask on the next message.
+    if(programSavePending) setProgramSavePending(null);
     // Typing over the Builder-redirect offer = declined; process the message normally.
     if(builderRedirectPending) setBuilderRedirectPending(null);
     // Same rule for a pending log correction: typing instead of tapping = declined.
@@ -5976,6 +6086,21 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             }
           }
         } catch(e){}
+      } else if(!fromQuickLog && !hasProgram && !updatedAthlete.program_locked && !updatedAthlete.temp_program_text
+                && looksLikeProgramText(reply) && programSaveOfferAllowed(updatedAthlete.id)){
+        // Joe wrote a session in ordinary conversation — no "build me a program"
+        // request, so none of the branches above fired and nothing was saved. The
+        // athlete trains off it and the Program tab stays empty forever, which is
+        // also why Quick Log now reads the transcript (findChatProgram).
+        //
+        // Offer to keep it. The nudge names the ACTUAL benefit (progression you can
+        // see) rather than scolding them for not having a program — and it fires at
+        // most once a day, only when the tab is genuinely empty, and never when
+        // another chip is already asking them something. If they say no, that's an
+        // answer; the day is stamped either way.
+        markProgramSaveOffered(updatedAthlete.id);
+        setProgramSavePending({text: reply.trim()}); chipSetThisSend = true;
+        followUp("Want me to keep that in your Program tab? Training off something structured is what turns single workouts into progress you can actually see — and it means I can prep this for you every session instead of writing it fresh each time.");
       }
 
       // Coach-request / self-change offers (pain / plateau / equipment) — additive,
@@ -6636,6 +6761,18 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             Just write it here
           </button>
         </div>
+      ):programSavePending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={()=>confirmProgramSave(true)}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            📋 Save to my program
+          </button>
+          <button onClick={()=>confirmProgramSave(false)}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Not now
+          </button>
+        </div>
       ):programReplacePending?(
         <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
           <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
@@ -7088,7 +7225,14 @@ const dayLabelFromRaw = (raw) => {
 // regardless of parse success, so day-sequencing shouldn't be hostage to the parser.
 
 const buildQuickLogContext = (athlete, workoutHistory, manualRMs, messages, goals, contextNotes) => {
-  const program = athlete.temp_program_text || athlete.program_text || "";
+  // Saved program first, always. Only when there's nothing in the Program tab do we
+  // fall back to a session Joe wrote in this conversation — see findChatProgram for
+  // why that's narrowed to Joe's own messages. An athlete WITH a saved program takes
+  // the identical path they always did.
+  const savedProgram = athlete.temp_program_text || athlete.program_text || "";
+  const chatProgram = savedProgram ? null : findChatProgram(messages);
+  const program = savedProgram || chatProgram || "";
+  const programFromChat = !savedProgram && !!chatProgram;
   const bodyweight = athlete.weight_lbs;
   // What the athlete has already told Joe in THIS chat session — which program day
   // they said they're on, any exercise they mentioned swapping / adding / dropping
@@ -7202,7 +7346,7 @@ const buildQuickLogContext = (athlete, workoutHistory, manualRMs, messages, goal
       const day = effectiveDate(w).toLocaleDateString("en-US",{month:"short",day:"numeric"});
       return `(${day}) ${w.bot_reply.replace(/\s+/g," ").trim().slice(0,300)}`;
     }).join("\n\n");
-  return { program, sessionLines, rmLines, chatLines, goalLines, injury, ctxNotes, formReviews, whereYouAre };
+  return { program, programFromChat, sessionLines, rmLines, chatLines, goalLines, injury, ctxNotes, formReviews, whereYouAre };
 };
 
 const QL_DRAFT_SYS = `You prefill workout logs for an athlete in a fitness app. Based on their training program, recent logged sessions, known 1RMs, goals, saved context, injuries, and form reviews, produce (1) a SHORT focus note explaining the point of today's session, then (2) the log message itself.
@@ -7260,7 +7404,9 @@ Rules:
 // (see streamQuickLogReply) — the focus note renders while the log is still being
 // written. Omit it for the background pre-build, which has nothing to paint.
 const qlTodayStr = () => new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
-const qlCtxBlock = (ctx) => `PROGRAM:\n${ctx.program||"(none)"}\n\nCONVERSATION THIS SESSION (what the athlete already told Joe today — HONOR any program day or exercise change stated here over your own inference):\n${ctx.chatLines||"(nothing said yet)"}\n\nWHERE YOU ARE (pick today's session from THIS — the athlete's real position is where they last logged, moved forward; do NOT compute the week from today's date against the program's printed block dates):\n${ctx.whereYouAre||"(nothing logged yet — start at the program's first day, Week 1)"}\n\nRECENT SESSIONS (newest first):\n${ctx.sessionLines||"(none logged yet)"}\n\n1RM CHEAT SHEET:\n${ctx.rmLines||"(none known)"}\n\nGOALS (for the focus note — cite only if a goal maps to a lift in today's session):\n${ctx.goalLines||"(none stated)"}\n\nSAVED CONTEXT (preferences/history worth knowing — use only if relevant to today's lifts):\n${ctx.ctxNotes||"(none)"}\n\nINJURY HISTORY (guard the affected areas; note it only if today's lifts touch them):\n${ctx.injury||"(none)"}\n\nRECENT FORM REVIEWS (past video-check cues — cite one only if it names a movement in today's session):\n${ctx.formReviews||"(none)"}`;
+const qlCtxBlock = (ctx) => `${ctx.programFromChat
+  ? `PROGRAM (NOT a saved program — this is what Joe wrote for the athlete in the conversation below, and it is usually a SINGLE session for today rather than a multi-week block. Build today's log from it AS WRITTEN. Do NOT try to place it in a week/block, do NOT advance it forward by any number of sessions, and do NOT invent later days for it — the WHERE YOU ARE block below is history for context only, not a position inside this):\n${ctx.program}`
+  : `PROGRAM:\n${ctx.program||"(none)"}`}\n\nCONVERSATION THIS SESSION (what the athlete already told Joe today — HONOR any program day or exercise change stated here over your own inference):\n${ctx.chatLines||"(nothing said yet)"}\n\nWHERE YOU ARE (pick today's session from THIS — the athlete's real position is where they last logged, moved forward; do NOT compute the week from today's date against the program's printed block dates):\n${ctx.whereYouAre||"(nothing logged yet — start at the program's first day, Week 1)"}\n\nRECENT SESSIONS (newest first):\n${ctx.sessionLines||"(none logged yet)"}\n\n1RM CHEAT SHEET:\n${ctx.rmLines||"(none known)"}\n\nGOALS (for the focus note — cite only if a goal maps to a lift in today's session):\n${ctx.goalLines||"(none stated)"}\n\nSAVED CONTEXT (preferences/history worth knowing — use only if relevant to today's lifts):\n${ctx.ctxNotes||"(none)"}\n\nINJURY HISTORY (guard the affected areas; note it only if today's lifts touch them):\n${ctx.injury||"(none)"}\n\nRECENT FORM REVIEWS (past video-check cues — cite one only if it names a movement in today's session):\n${ctx.formReviews||"(none)"}`;
 
 // ─── "BUILD ME A PROGRAM" ────────────────────────────────────────────────────
 // The saved program is the athlete's single most-referenced artifact — it's
@@ -7354,7 +7500,11 @@ async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, 
 }
 
 function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals, contextNotes, onClose, onAddProgram, onSend}) {
-  const hasProgram = !!(athlete.temp_program_text||athlete.program_text);
+  // A session Joe wrote in chat counts as a program to draft from — same rule
+  // buildQuickLogContext applies, kept in sync here because THIS is the gate that
+  // decides whether the sheet drafts at all or shows the "add a program" wall.
+  const savedProgram = !!(athlete.temp_program_text||athlete.program_text);
+  const hasProgram = savedProgram || !!findChatProgram(messages);
   const [draft,setDraft] = useState("");
   const [notes,setNotes] = useState(""); // Joe's focus note — read-only reference, never sent; AI-rebuilt ONLY on a day change
   const [showEditHelp,setShowEditHelp] = useState(false);
@@ -7510,7 +7660,10 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px",gap:14,textAlign:"center"}}>
           <div style={{fontSize:32}}>📋</div>
           <div style={{color:CA.text,fontSize:15,lineHeight:1.6}}>Quick Log preps today's workout from your program — but I don't have a program on file for you yet.</div>
-          <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>Add it once and every log after that is one tap.</div>
+          {/* The one place the case for a structured program belongs: an empty state
+              the athlete opened themselves. It's not a nudge attached to something
+              else they were doing, so it can say the real reason without nagging. */}
+          <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>Training to a plan is what turns workouts into progress you can measure — and it makes every log after this one tap. Or just ask me in chat for today's session and I'll build the log off that.</div>
           <button onClick={onAddProgram} style={{background:CA.accent,color:"#000",border:"none",borderRadius:10,padding:"12px 28px",fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:15,cursor:"pointer"}}>Add My Program →</button>
         </div>
       ):phase==="loading"?(

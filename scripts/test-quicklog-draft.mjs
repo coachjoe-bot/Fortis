@@ -15,7 +15,9 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 
-const { qlKey, qlStamp, qlLoad, qlSave, qlClear, QL_RESUME_MS, openerLoad, openerSave } = await import("../src/quicklog.js");
+const { qlKey, qlStamp, qlLoad, qlSave, qlClear, QL_RESUME_MS, openerLoad, openerSave,
+        looksLikeProgramText, findChatProgram, programSaveOfferAllowed, markProgramSaveOffered,
+        QL_PROGRAM_OFFER_MAX } = await import("../src/quicklog.js");
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { if(cond){ pass++; } else { fail++; console.log(`  ✗ ${name}`); } };
@@ -181,6 +183,64 @@ reset();
 openerSave(ATH, "morning session", MORNING);
 openerSave(ATH, "re-generated same day", LATER);   // a later save overwrites the day's opener
 check("a later same-day save overwrites", openerLoad(ATH, LATER) === "re-generated same day");
+
+// ─── a program written in the conversation ───────────────────────────────────
+// The false-positive direction is the dangerous one: treating Joe's prose (or a
+// workout the athlete already finished) as "the program" makes Quick Log prescribe
+// the wrong session. So the NEGATIVE cases carry the weight here.
+const CHAT_PROGRAM = `Here's today:
+
+Bench Press 4x6 @ 185
+Incline DB Press 3x10 @ 60
+Cable Fly 3x12 @ 40
+Tricep Pushdown 3x12 @ 70`;
+
+check("a written session is a program", looksLikeProgramText(CHAT_PROGRAM));
+check("3 exercise lines is the floor", looksLikeProgramText("Squat 5x5 @ 225\nRDL 3x8 @ 185\nLeg Press 3x12 @ 270"));
+check("2 exercise lines is not a program", !looksLikeProgramText("Squat 5x5 @ 225\nRDL 3x8 @ 185"));
+check("prose mentioning lifts is not a program", !looksLikeProgramText("Get your bench 3x5 in before the 5x10 accessory work and you'll be fine."));
+check("empty text is not a program", !looksLikeProgramText(""));
+check("null doesn't crash", !looksLikeProgramText(null));
+check("bare numbers with no lift name don't count", !looksLikeProgramText("4x6\n3x10\n3x12"));
+check("dash/numbered lists still count", looksLikeProgramText("- Back Squat 5x5\n- Bench Press 5x5\n- Barbell Row 5x5"));
+check("'sets of' phrasing counts", looksLikeProgramText("Back Squat 5 sets of 5\nBench Press 3 sets of 8\nBarbell Row 3 sets of 8"));
+
+// Joe's messages only — an athlete's own pasted log is NOT the program (a Quick Log
+// draft is formatted exactly like one, and re-prescribing it would double the day).
+check("finds Joe's program", findChatProgram([
+  {role:"user", content:"what should I do today"},
+  {role:"assistant", content:CHAT_PROGRAM},
+]) === CHAT_PROGRAM.trim());
+check("ignores an athlete-written session", findChatProgram([{role:"user", content:CHAT_PROGRAM}]) === null);
+check("no program in chat → null", findChatProgram([
+  {role:"assistant", content:"Nice work today."},
+  {role:"user", content:"thanks"},
+]) === null);
+check("empty/garbage message lists → null", findChatProgram([]) === null && findChatProgram(null) === null);
+// Newest wins, so a revision supersedes the version it replaced.
+const REVISED = "Flat Bench 4x6 @ 185\nIncline DB Press 3x10 @ 60\nCable Fly 3x12 @ 40";
+check("newest program wins", findChatProgram([
+  {role:"assistant", content:CHAT_PROGRAM},
+  {role:"user", content:"swap the incline for flat"},
+  {role:"assistant", content:REVISED},
+]) === REVISED);
+
+// ─── the save-to-program offer is rate limited ───────────────────────────────
+reset();
+const D1 = new Date("2026-07-27T09:00:00").getTime();
+const D1_LATER = new Date("2026-07-27T20:00:00").getTime();
+const D2 = new Date("2026-07-28T09:00:00").getTime();
+const D3 = new Date("2026-07-29T09:00:00").getTime();
+const D4 = new Date("2026-07-30T09:00:00").getTime();
+check("first offer is allowed", programSaveOfferAllowed(ATH, D1));
+markProgramSaveOffered(ATH, D1);
+check("no second offer the same day", !programSaveOfferAllowed(ATH, D1_LATER));
+check("allowed again the next day", programSaveOfferAllowed(ATH, D2));
+markProgramSaveOffered(ATH, D2);
+markProgramSaveOffered(ATH, D3);
+check(`spent after ${QL_PROGRAM_OFFER_MAX} lifetime offers`, !programSaveOfferAllowed(ATH, D4));
+check("offers are scoped per athlete", programSaveOfferAllowed("ath-other", D4));
+check("missing athlete id is never offered", !programSaveOfferAllowed("", D1));
 
 console.log(`\n${fail===0?"✓":"✗"} quick log draft: ${pass} passed, ${fail} failed`);
 process.exit(fail===0?0:1);
