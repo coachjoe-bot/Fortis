@@ -184,6 +184,11 @@ export const currentPosition = ({ programText, startedOn, override, sessions, no
   // A program that has run out of weeks holds on its last one rather than inventing
   // a Week 9 of an 8-week block. `blockComplete` is the honest signal to act on.
   const blockComplete = weekKnown && shape.weekCount > 0 && week > shape.weekCount;
+  // Keep the pre-clamp number: `week` holds at the block's last week so nothing
+  // displays "Week 6 of 4", but the week-ahead check needs to know by HOW MUCH they've
+  // run past the end. Clamping both would make an athlete two weeks beyond their block
+  // look like one still sitting in its final week.
+  const weekRaw = week;
   if (blockComplete) week = shape.weekCount;
 
   // ── DAY WITHIN THE WEEK ──
@@ -218,6 +223,7 @@ export const currentPosition = ({ programText, startedOn, override, sessions, no
 
   return {
     week,
+    weekRaw,
     weekKnown,
     day,
     label: dayCount > 0 ? (shape.dayTemplate[day - 1] || "") : "",
@@ -229,6 +235,49 @@ export const currentPosition = ({ programText, startedOn, override, sessions, no
     loggedLastWeek,
     missedLastWeek,
     weekStart,
+  };
+};
+
+// ─── THE WEEK AHEAD ──────────────────────────────────────────────────────────
+// What the Proof Feed and the Coach's Edition look forward to. Two outcomes, and the
+// difference matters more than the contents of either:
+//   • There IS programming for the coming week → the sessions in it, so the digest can
+//     highlight the top sets worth turning up for.
+//   • There ISN'T — they've finished the last week of the block → say so, and open the
+//     conversation about what comes next instead of inventing a week that doesn't exist.
+//
+// WHICH week is "ahead" depends on when the digest runs, which is per-athlete
+// (proof_schedule_dow). Fire it ON Sunday and the week has already turned — the week
+// ahead is the one that just started. Fire it on a Friday and it's the next one. Both
+// are handled here rather than in the caller, because getting it wrong means previewing
+// a week the athlete is already halfway through.
+export const weekAheadFor = ({ programText, startedOn, override, sessions, now } = {}) => {
+  const t = now ? new Date(now) : new Date();
+  const pos = currentPosition({ programText, startedOn, override, sessions, now: t });
+  if (!pos.dayTemplate.length) return null;
+
+  // Sunday, with nothing logged yet → the week that just began IS the week ahead.
+  const startedThisWeek = t.getDay() === 0 && pos.loggedThisWeek === 0;
+  // From weekRaw, not the clamped week: someone two weeks past the end of their block
+  // must still read as finished, and the clamp would present them as sitting in its
+  // final week forever.
+  const week = pos.weekRaw + (startedThisWeek ? 0 : 1);
+
+  // Only claimable when we know which week they're on AND the program declares a
+  // length. Without either, the honest answer is "there are more sessions coming" —
+  // never "your block is over", which would prompt an athlete mid-block to bin it.
+  const blockEnded = pos.weekKnown && pos.weekCount > 0 && week > pos.weekCount;
+
+  return {
+    week: blockEnded ? null : week,
+    weekKnown: pos.weekKnown,
+    weekCount: pos.weekCount || null,
+    hasWeeks: pos.hasWeeks,
+    blockEnded,
+    // Next week runs the full template — the Sunday rule resets to day 1 regardless of
+    // how much of last week got logged.
+    days: pos.dayTemplate,
+    missedLastWeek: pos.missedLastWeek,
   };
 };
 

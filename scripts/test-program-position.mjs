@@ -10,7 +10,7 @@
 // All dates are LOCAL and deliberately anchored to real 2026 calendar weeks:
 //   Sun Jul 26 · Mon Jul 27 … Sat Aug 1 · Sun Aug 2 · Sun Aug 9
 
-const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock }
+const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock, weekAheadFor }
   = await import("../src/programPosition.js");
 
 let pass = 0, fail = 0;
@@ -264,6 +264,49 @@ check("an unknown week can't complete a block", (() => {
 const unknownBlock = positionBlock(currentPosition({ programText: WILLARD, sessions: [], now: at("2026-07-27T09:00:00") }));
 check("block says the week is unknown and asks", /is NOT known/.test(unknownBlock) && /Do NOT assume Week 1/.test(unknownBlock));
 check("block still states the day confidently", /Day 1/.test(unknownBlock) && !/Week 1, Day/.test(unknownBlock));
+
+// ─── the week ahead ──────────────────────────────────────────────────────────
+// Which week counts as "ahead" depends on the day the digest runs (proof_schedule_dow
+// is per-athlete). On Sunday the week has already turned; midweek it hasn't. Getting
+// this wrong previews a week the athlete is already halfway through.
+const wa = (o) => weekAheadFor({ programText: WEEK_COLUMNS, startedOn: at("2026-07-27T08:00:00"), ...o });
+
+check("run on Sunday → the week that just began", (() => {
+  const w = wa({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-08-02T09:00:00") });
+  return w.week === 2;                       // Sunday Aug 2, nothing logged yet
+})());
+check("run midweek → the NEXT week", (() => {
+  const w = wa({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-07-31T09:00:00") });
+  return w.week === 2;                       // Friday of week 1 → looking at week 2
+})());
+check("Sunday with a session already logged → next week", (() => {
+  const w = wa({ sessions: [at("2026-08-02T08:00:00")], now: at("2026-08-02T20:00:00") });
+  return w.week === 3;                       // trained Sunday already → week 2 is underway
+})());
+check("the week ahead runs the full template", (() => {
+  const w = wa({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-07-31T09:00:00") });
+  return w.days.length === 2 && !w.blockEnded;
+})());
+
+// Past the last week of a 4-week block → no programming ahead.
+check("past the final week → blockEnded", (() => {
+  const w = wa({ sessions: [], now: at("2026-08-30T09:00:00") });
+  return w.blockEnded === true && w.week === null;
+})());
+check("the final week itself is NOT blockEnded", (() => {
+  const w = wa({ sessions: [], now: at("2026-08-16T09:00:00") });
+  return w.blockEnded === false && w.week === 4;
+})());
+// The dangerous false positive: telling someone mid-block to bin their program.
+check("an unknown week never claims the block ended", (() => {
+  const w = weekAheadFor({ programText: WEEK_COLUMNS, sessions: [], now: at("2026-12-01T09:00:00") });
+  return w.blockEnded === false;
+})());
+check("a program with no week structure never ends", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], now: at("2026-12-01T09:00:00") });
+  return w.blockEnded === false && w.days.length === 3;
+})());
+check("no program → nothing to look ahead to", weekAheadFor({ programText: "", sessions: [] }) === null);
 
 // ─── the prompt block ────────────────────────────────────────────────────────
 const block = positionBlock(pos({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-07-28T09:00:00") }));

@@ -122,6 +122,19 @@ export function buildQuestionBank(brief, athlete, opts = {}) {
   if (gapLifts.length) {
     q.push({ id: "volume", kind: "context", deeper: false, meta: { lifts: gapLifts }, text: `Those light set counts on ${gapLifts.join(" and ")} — intentional recovery, or short on time/gas?` });
   }
+  // 4b. block finished — the one week where "what's next" outranks everything except
+  // the goal it serves. Asked as a real question rather than left as prose, so the
+  // answer comes back as an ANSWER the app can act on (close the block out, start the
+  // next one) instead of a line the athlete reads and forgets.
+  if (brief.weekAhead?.blockEnded) {
+    q.push({
+      id: "block_done", kind: "block_done", deeper: false,
+      meta: { weeks: brief.weekAhead.weekCount || null },
+      text: brief.weekAhead.weekCount
+        ? `That's the last week of this ${brief.weekAhead.weekCount}-week block done. Are you finished with it, and do you want me to build the next one?`
+        : `That's the end of this block. Are you finished with it, and do you want me to build the next one?`,
+    });
+  }
   // 5. goal check — ALWAYS a top (non-deeper) question so it's never buried behind
   // "Go deeper" where athletes skip it. The goal is the spine of the check-in.
   const goal = brief.goals[0]?.goal;
@@ -198,7 +211,7 @@ export async function generateWeekly(athlete, brief, deps) {
 
   const system = `${COACH_VOICE}
 You are writing this week's Proof Feed digest. Return ONLY JSON with these keys (string or null — null when there's nothing real to say):
-{"week_vs_week":..,"volume_headline":..,"program_load":..,"prs_progress":..,"rank_movement":..,"injury_plan":..,"injury_focus":..,"injury_change":..,"goal_progress":..,"focus_next_week":..}
+{"week_vs_week":..,"volume_headline":..,"program_load":..,"prs_progress":..,"rank_movement":..,"injury_plan":..,"injury_focus":..,"injury_change":..,"goal_progress":..,"week_ahead":..,"focus_next_week":..}
 - week_vs_week: punchy — lifts that moved, est-1RM deltas, block context. Weave in the raw set-volume trend (VOLUME TREND note in the brief) if it's notable — more or fewer sets logged than last week is real signal even for athletes with no structured program. If they logged FEWER sessions than their program calls for (sessions.thisWeek vs sessions.programDaysPerWeek), name that gap plainly — "3 of your 6 days" — even when injury or a deliberate skip explains it; missing half the week is the single most important fact about it.
 - volume_headline: ONLY if the structured PROGRAM volume gap is material — make it the headline, name the set/rep shortfall by lift, allow that it may be intentional auto-regulation but name it. Else null. (This is different from the raw volume trend above — only fire this for an actual program-adherence gap.)
 - program_load: where loads track vs prescribed %. null if no program. If the brief has a "prep" object (warm-up/cool-down check-offs from Quick Log), fold ONE short clause about the habit into week_vs_week or program_load when it's notable either way — "warmed up 5 of 5, that's pro behavior" or "warm-ups checked on 1 of 4 — that's how tweaks happen" — never a whole section, never mentioned when prep is null.
@@ -208,6 +221,10 @@ You are writing this week's Proof Feed digest. Return ONLY JSON with these keys 
 - injury_focus: if an injury is active, the SINGLE body area you are addressing (e.g. "left pec", "right knee"). MUST be the same area injury_plan and focus_next_week talk about — pick one and stay consistent across all three. Else null.
 - injury_change: if an injury is active, the SPECIFIC change you'd make, concrete enough to apply verbatim — name exercises, sets/reps, and where it slots in (which day / what it replaces). Keep it PROPORTIONATE to the pain (see injury_plan) — the smallest change that protects the area, not the biggest. No vague "a small tweak", and no floating swap without a home. Else null.
 - goal_progress: vs stated goals. Compare each goal ONLY to the matching lift — never measure one lift's number against a different lift's target (a deadlift number is not progress toward a squat goal). State progress in the SAME unit the goal is written in; if you convert kg↔lb, convert correctly (1 kg = 2.205 lb) and show ONE unit, never a confusing kg/lb mix. If a goal has no matching logged lift this window, say so plainly rather than forcing a comparison. Keep it clear enough that the athlete instantly understands where they stand. null if no goals.
+- week_ahead: what's COMING, from the brief's "weekAhead" object. null when weekAhead is null (no program on file — never invent a week for someone without one).
+  • When weekAhead.blockEnded is FALSE: a SHORT look forward at the week's programming. HIGHLIGHTS ONLY — the two or three things genuinely worth turning up for: the heavy day's top set with its actual number ("Thursday's bench tops out at 93% — 265"), a max-out or test day, a first attempt at a new load. Read those numbers out of weekAhead.programText for the week named in weekAhead.week; if the program states a percentage, resolve it against their known 1RM and give the POUNDS, because "93%" means nothing at a glance. Do NOT list every session, do NOT restate the full schedule, and do NOT mention ordinary accessory work. Then tie it to their GOALS in one clause — why this week moves them toward the thing they said they want. If nothing in the week is genuinely notable, say what the week's shape is in one line and leave it there rather than manufacturing excitement.
+  • When weekAhead.blockEnded is TRUE: they have finished the LAST week of this block, so there is NO programming ahead of them. Do NOT invent one and do NOT preview sessions. Instead: tell them the block is done, name in one clause what it built (use their PRs, lift deltas and goal progress from this brief — the concrete evidence of the block, not a platitude), then ASK the two questions plainly — are they finished with this block, and do they want to build the next one. That question IS the section; keep it short and direct.
+  • If weekAhead.weekKnown is FALSE, you do NOT know which week of the program they're on — do not name a week number and do not claim the block is over. Talk about the sessions coming up generically and ask which week they're on.
 - focus_next_week: REQUIRED, never null. End on exactly ONE concrete, specific directive for next week — ideally a progression tied to their program or goal (a lift + a number: weight, sets/reps, or %), or, if they logged fewer sessions than their program calls for (compare sessions.thisWeek to sessions.programDaysPerWeek), a session-count / adherence target. Aspire UP toward the goal — do NOT make the whole focus about managing an injury; an active injury can shape HOW they train next week but the headline directive should still move them forward. Never a vague "keep it up."
 
 ${LOAD_TOLERANCE}
@@ -229,6 +246,10 @@ Adapt to WHATEVER program the athlete runs — do not assume a long, multi-week 
     { key: "rank_movement", label: "GRIT RANK" },
     { key: "injury_plan", label: "INJURY WATCH + PLAN", flag: "warn" },
     { key: "goal_progress", label: "GOAL PROGRESS" },
+    // Sits before FOCUS NEXT WEEK deliberately: look at what's coming, THEN get the
+    // one directive for it. The label changes when the block is done because the
+    // section stops being a preview and becomes a question.
+    { key: "week_ahead", label: brief.weekAhead?.blockEnded ? "BLOCK COMPLETE — WHAT'S NEXT" : "THE WEEK AHEAD" },
     { key: "focus_next_week", label: "FOCUS NEXT WEEK" },
   ]);
 
@@ -252,7 +273,10 @@ Adapt to WHATEVER program the athlete runs — do not assume a long, multi-week 
       sections,
       questions: buildQuestionBank(brief, athlete, { activeInjury, injuryChange }),
       charts: null,
-      flags: { has_plateau: brief.plateaus.length > 0, has_pain: (brief.injuries.active || []).length > 0, has_missed: brief.sessions.thisWeek === 0, volume_gap: !!v?.material, rank_up: !!r?.rankUp },
+      // block_ended is what the Past Blocks work keys off to offer closing this block
+      // out and starting the next — the digest is where the athlete is told, so it's
+      // the honest place for the flag to originate.
+      flags: { has_plateau: brief.plateaus.length > 0, has_pain: (brief.injuries.active || []).length > 0, has_missed: brief.sessions.thisWeek === 0, volume_gap: !!v?.material, rank_up: !!r?.rankUp, block_ended: !!brief.weekAhead?.blockEnded },
     },
     has_plateau: brief.plateaus.length > 0,
     has_pain: (brief.injuries.active || []).length > 0,
@@ -328,6 +352,7 @@ export async function generateCoach(coach, perAthlete, deps, type = "weekly_coac
     injuryClusters: team.injuryClusters, sharpestInjuries: team.sharpInjuries,
     quietAthletes: team.quiet, adherenceStrugglers: team.strugglers,
     rawSetVolume: team.volumeTrend,
+    weekAhead: team.weekAhead,
   };
 
   // Prior context the coach gave us in past editions (season phase, block goal,
@@ -341,13 +366,14 @@ You are writing THE COACH'S EDITION — a ${isMonthly ? "monthly" : "weekly"} te
 The numbers are pre-computed and shown to the coach in the layout — do NOT restate raw stats; turn them into a read. Cite specific lifts/areas/names from the data, invent nothing. Lean and direct.
 
 Return ONLY JSON with these keys (string or null — null when there's nothing real to say):
-{"week_on_floor":..,"program_read":..,"winning":..,"people_to_watch":..,"the_drift":..,${isMonthly ? `"month_read":..,` : ``}"team_focus":..}
+{"week_on_floor":..,"program_read":..,"winning":..,"people_to_watch":..,"the_drift":..,${isMonthly ? `"month_read":..,` : ``}"week_ahead":..,"team_focus":..}
 - week_on_floor: the team's ${isMonthly ? "month" : "week"} — attendance, momentum (are sessions holding/rising or sliding), how the room feels. One tight paragraph.
 - program_read: what the PROGRAM is building well vs where it's light, from the team's benchmark tiers. Name the lagging lift(s) and, if the data shows it, the 1-2 athletes stuck there. This is about the programming, not individuals.
 - winning: where the team is genuinely progressing — team est-1RM movement + the standout PRs by name. null if nothing real.
 - people_to_watch: injuries as a TEAM pattern first (a shared area worth a warm-up emphasis), then the sharpest individual by name. null if no injuries.
 - the_drift: athletes slipping — quiet (no session) or adherence dropping — by name. Frame as who to keep an eye on. Do NOT tell the coach to message them (the app has no messaging); a reach-out is the coach's own call. null if none.${isMonthly ? `
 - month_read: the multi-week arc the weekly can't see — is the block working, are they pacing toward the goal. null if not enough data.` : ``}
+- week_ahead: what's coming for the squad, from weekAhead in the team read. This is the coach's PREP section, not a schedule — only what they'd act on. In priority order: (1) weekAhead.blockEnded — these athletes have RUN OUT of programming and need a new block written; name them, because it's the one item here with a deadline. (2) weekAhead.finalWeek — athletes going into the LAST week of their block, which is usually the heavy/test week worth being in the room for; name them and say why it matters. (3) weekAhead.weekSpread — one clause on whether the squad is moving through their blocks together or scattered, only if it's actually notable. Never list every athlete's sessions. null if weekAhead has nothing in any of the three.
 - team_focus: REQUIRED. End on ONE clear directive for the team this ${isMonthly ? "block" : "week"} (a programming move tied to the weak spot or the momentum), plus the handful of named individual actions worth taking. Aspire forward — an injury or a quiet athlete shapes HOW, but the headline is where the team goes next.
 ${ctx ? `\nWHAT THE COACH TOLD YOU (weigh this heavily — season, goals, how they're holding up):\n${ctx}` : ``}`;
 
@@ -362,6 +388,7 @@ ${ctx ? `\nWHAT THE COACH TOLD YOU (weigh this heavily — season, goals, how th
     { key: "people_to_watch", label: "PEOPLE TO WATCH", flag: "warn" },
     { key: "the_drift", label: "THE DRIFT" },
     ...(isMonthly ? [{ key: "month_read", label: "THE MONTH IN REVIEW" }] : []),
+    { key: "week_ahead", label: team.weekAhead?.blockEnded?.length ? "THE WEEK AHEAD — BLOCKS TO WRITE" : "THE WEEK AHEAD" },
     { key: "team_focus", label: "THIS WEEK'S TEAM FOCUS" },
   ]);
   if (!sections.length) {

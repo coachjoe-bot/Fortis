@@ -19,6 +19,7 @@
 // math; do not conflate the two.
 
 import { epley1RM, computeGritSnapshot, TIER_NAMES, getBenchKey } from "./grit.js";
+import { weekAheadFor } from "./programPosition.js";
 
 // ── parsed_data access ────────────────────────────────────────────────────────
 // Legacy rows store parsed_data as a JSON STRING, and the coach Overview's D memo
@@ -421,8 +422,33 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
     rank: rank || null,                 // Grit rank movement (null if not computed — e.g. no bodyweight on file)
     volume: adherence,                 // null if no structured program
     onTempProgram: !!athlete.temp_program_text,
+    // What's coming. Either the sessions in the week ahead (so the digest can point at
+    // the top sets worth turning up for) or the fact that the block is finished, which
+    // is a different conversation entirely. Program text rides along — capped, because
+    // a full block runs multi-KB — since the actual loads live in it and nothing else
+    // can supply "Thursday's a 93% top set".
+    weekAhead: (() => {
+      const programText = athlete.temp_program_text || athlete.program_text || "";
+      if (!programText.trim()) return null;
+      const wa = weekAheadFor({
+        programText,
+        startedOn: athlete.program_started_on || null,
+        override: athlete.program_position_override || null,
+        sessions: thisWeekSessions.map((s) => sessionDate(s)),
+      });
+      if (!wa) return null;
+      return { ...wa, programText: programText.slice(0, 3000) };
+    })(),
   };
 }
+
+// Last entry's timestamp of a grouped session — the same "when did this happen"
+// the rest of the digest counts by.
+const sessionDate = (s) => {
+  const entries = Array.isArray(s) ? s : (s?.entries || []);
+  const last = entries[entries.length - 1];
+  return last ? new Date(last.created_at).getTime() : Date.now();
+};
 
 // Adapt to athlete type from populated fields (spec §1 archetype row).
 export function athleteArchetype(a) {
@@ -571,10 +597,33 @@ export function buildCoachTeamBrief(perAthlete) {
   const volThis = rows.reduce((s, r) => s + (r.brief.volumeTrend?.thisWeekSets || 0), 0);
   const volLast = rows.reduce((s, r) => s + (r.brief.volumeTrend?.lastWeekSets || 0), 0);
 
+  // ── the week ahead, as a coach sees it ──
+  // The athlete digest previews the actual sessions; a coach report must not become a
+  // roster dump, so this keeps only what a coach has to ACT on. Two things qualify:
+  // who has run out of programming (the coach has to write them a new block, and it's
+  // the one item here with a hard deadline), and who is heading into the LAST week of
+  // theirs — which in almost every block is the heavy/test week worth being in the
+  // room for. Both are deterministic; nothing here is inferred by a model.
+  const blockEnded = rows.filter((r) => r.brief.weekAhead?.blockEnded).map((r) => nm(r.athlete));
+  const finalWeek = rows
+    .filter((r) => { const w = r.brief.weekAhead; return w && !w.blockEnded && w.weekKnown && w.weekCount && w.week === w.weekCount; })
+    .map((r) => nm(r.athlete));
+  // Where the squad sits in their blocks, so the coach can see at a glance whether
+  // they're moving together or scattered across weeks.
+  const weekSpread = {};
+  for (const r of rows) {
+    const w = r.brief.weekAhead;
+    if (w && !w.blockEnded && w.weekKnown && w.week) weekSpread[w.week] = (weekSpread[w.week] || 0) + 1;
+  }
+
   return {
     n, active: active.length, activePct: n ? Math.round(100 * active.length / n) : 0,
     totalSessions, avgSessions: n ? +(totalSessions / n).toFixed(1) : 0,
     adherenceAvg, noProgram,
+    weekAhead: {
+      blockEnded, finalWeek,
+      weekSpread: Object.entries(weekSpread).map(([week, athletes]) => ({ week: +week, athletes })),
+    },
     strengthMovement, strengths, weaknesses,
     newPRs, notablePRs: notablePRs.slice(0, 6),
     injuryClusters, sharpInjuries: sharp.slice(0, 4),
