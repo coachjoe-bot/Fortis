@@ -446,6 +446,7 @@ export const EVENT_NAMES = new Set([
   "coach_dashboard_view", "event_landing_view",
   "push_enabled", "push_disabled",
   "self_change_applied", "change_request_sent",
+  "tour_start", "tour_complete", "tour_skip",
 ]);
 // Coarse area vocabulary — SAME set as error_events so v_error_rate_by_area_daily
 // can divide errors by attempts on (area, day).

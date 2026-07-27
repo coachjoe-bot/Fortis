@@ -153,6 +153,8 @@ const ATHLETE_COL_ALLOW = {
       // gamification counters the app maintains as the athlete logs sessions
       "total_sessions_logged", "certified_badge_earned_at",
       "tier",
+      // onboarding tour resolution stamp (taken or declined — either way it's done)
+      "tour_done_at",
     ]),
     // Value guards: an athlete may only ever DOWNGRADE their own tier to "free"
     // (paid tiers are granted server-side by Stripe), never self-grant pro/elite.
@@ -365,9 +367,10 @@ export default async function handler(req, res) {
         } else if (table === "coaches") {
           if (!isAdmin) {
             // Managing coaches is admin-only — EXCEPT a coach may update their OWN
-            // notification_prefs (self-service settings). Only that column, only their row.
+            // self-service columns (notification_prefs, tour_done_at). Only those,
+            // only their row.
             const keys = Object.keys(body.data || {});
-            if (body.op === "update" && keys.length && keys.every((k) => k === "notification_prefs")) {
+            if (body.op === "update" && keys.length && keys.every((k) => k === "notification_prefs" || k === "tour_done_at")) {
               ownFilter = `&id=eq.${enc(caller.id)}`;
             } else {
               throw httpErr(403, "This account can't write that data");
