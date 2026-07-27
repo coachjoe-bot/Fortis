@@ -136,6 +136,32 @@ Will's decided design — blocks end BY DATE or explicitly, never by inference:
 - Coach-side end-date nudges: NOT built (athlete-first per Will) — candidate for
   the coach-experience overhaul.
 
+## 2026-07-27 wave 3: Phases v2 (branch feat/phases-v2)
+Will's redline of the history card + the terminology call:
+- **"Block" → "Phase" in ALL user-facing copy** (tab = PHASES, sections CURRENT
+  PHASE / PAST PHASES, "Start next phase", Last Phase cell). Same periodization
+  concept, plain word; doctrine/AI prompts still say block — deliberate, and the
+  rename is copy-only so it's cheap to revisit.
+- **Pane v2** (ProgramBlocksPane): current phase promoted to its own section on
+  top; stats chips (date range / week X of Y via programPosition or weeks-ran /
+  sessions logged — all DERIVED from one bucketed workouts query, never stored);
+  user-editable **phase names** (pencil → program_history.block_name, new
+  column, migration applied; defaults from the program header at save); recap
+  unchanged. **View program + Rebuild buttons REMOVED** — history is a record,
+  not a program archive (text still stored internally for recaps/diff/template).
+- **Build-off-by-name**: saying a past phase's name in the interview ("base it
+  on Summer Grind") deterministically loads its recap into the hand-off cell and
+  its text as the draft template (phasesRef/templateRef in builder.jsx;
+  __templatePhase survives park/resume). Replaces the removed Rebuild button.
+- **Retire button** (athlete My Program, unlocked, arm-confirm): closes the
+  phase with completed_at = LAST WORKOUT logged under it (closeCurrentBlock
+  completedAt override), recap rides, program clears, lands on Phases.
+- **Scheduled programs**: a Builder draft with a FUTURE start date parks into
+  Drafts ("📅 SCHEDULE FOR date" replaces the save button — never a future
+  current phase); when the start date arrives (or after a retire) the chat card
+  offers "Swap it in" (works with no live program). Early apply stays possible
+  from Drafts through the diff gate.
+
 ## Likely tweak backlog (nothing committed, gather from Will/beta)
 - Interviewer voice/pacing tuning from real transcripts (check `program_drafts.transcript`
   of real interviews — remember they're user PII, read only what's needed).
