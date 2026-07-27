@@ -48,7 +48,8 @@ const SUMMARY_SYS =
 const RECAP_SYS =
   "You are Coach Joe writing the closing recap of a COMPLETED training block for an athlete's " +
   "block history. You get the program that was planned, the training actually logged during the " +
-  "block, and the goal that was attached to it. Write 3-5 short plain-text sentences: what the " +
+  "block, and the goal that was attached to it. Write ONE tight plain-text paragraph — 3 to 6 " +
+  "sentences, hard limit, and always FINISH your final sentence: what the " +
   "block focused on, what actually got trained (be honest about adherence — logged sessions vs " +
   "the plan), what visibly moved (weights, reps, PRs), and where the goal stands — HIT, CLOSE, or " +
   "STILL CHASING — so the next block can pick it up or retire it. Joe's voice: direct, warm, no " +
@@ -95,7 +96,7 @@ async function closeBlock(athleteId, row, deps) {
       `PROGRAM THE BLOCK RAN:\n${String(row.program_text || "").slice(0, 2500)}\n\n` +
       `GOAL ATTACHED TO THIS BLOCK: ${goal || "(none on file)"}\n\n` +
       `TRAINING LOGGED DURING THE BLOCK (${row.applied_at ? String(row.applied_at).slice(0, 10) : "?"} → ${completedAt.slice(0, 10)}):\n${digest || "(no logged sessions)"}`;
-    const recap = await askClaude(RECAP_SYS, user, 400, [], "claude-sonnet-5", "program_summary");
+    const recap = await askClaude(RECAP_SYS, user, 600, [], "claude-sonnet-5", "program_summary");
     const text = (recap || "").trim();
     if (text) await sbUpdateWhere("program_history", `?id=eq.${row.id}`, { block_recap: text.slice(0, 1500) });
   } catch (e) { console.error("[history] block recap failed:", e?.message || e); }
