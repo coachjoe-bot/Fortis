@@ -96,7 +96,9 @@ export const athleteTourSteps = ({ free }) => free ? [
   // Inside the sheet. Part 0 shows the WHOLE sample log with nothing dimmed —
   // the point is that they see what a filled-out log actually looks like. Part 1
   // narrows the spotlight to the send button and waits for the real tap.
-  { key:"qlSheet", banner:"QUICK LOG", target:"ql-send", title:null,
+  // No banner: the sheet's own header already reads "⚡ QUICK LOG · SAMPLE", and
+  // a pill on top of it just collides.
+  { key:"qlSheet", banner:null, target:"ql-send", title:null,
     noDim:[true,false], interactive:[false,true], partTargets:[null,"ql-send"],
     parts:[
       "This is today's workout, already filled out for you. It's built from the program saved in your Program tab, plus anything you told me in chat that day. After you train, you open this, fix anything that went differently, and send it. Prefer typing? You can always just tell me your workout in the chat instead. This is just a shortcut.",
@@ -269,39 +271,45 @@ export function TourSpotlight({ step, part, steps, stepIndex, onTap, onCta, onSk
     else if (hole.top > 250) { cardTop = null; cardBottom = vh - hole.top + 12; }
   }
 
-  const blockerStyle = { position:"fixed", background:"transparent", zIndex:1101 };
+  // The dim is FOUR PANELS around the hole, not one giant box-shadow spread off
+  // the ring. The shadow approach painted over the spotlit control and the card
+  // no matter their z-index — a bright blue Send button rendered as muddy navy.
+  // Panels leave the hole genuinely untouched, and they double as the tap
+  // blockers that keep the tour on rails.
+  const panel = (extra) => ({ position:"fixed", background:DIM, zIndex:1101, ...extra });
+  const clear = (extra) => ({ position:"fixed", background:"transparent", zIndex:1101, ...extra });
   const tapProps = interactive ? {} : { onClick: onTap };
 
   return (
     <>
       {Banner}
-      {/* dim + ring. The ring is deliberately loud (2px cyan + inner and outer
-          glow): at 1.5px over a dark UI the "highlighted" control read as merely
-          less-dark rather than lit. */}
-      {hole ? (
+      {/* Ring: 2px cyan + outer glow only, never a fill or inner glow (both wash
+          over controls that have their own colour). Deliberately loud — at 1.5px
+          over a dark UI the "highlighted" control read as merely less-dark. */}
+      {hole && (
         <div style={{position:"fixed",top:hole.top,left:hole.left,width:hole.width,height:hole.height,
-          borderRadius:12,boxShadow:`0 0 0 200vmax ${DIM}, 0 0 18px 2px rgba(55,230,255,.55), inset 0 0 22px rgba(55,230,255,.18)`,
-          border:`2px solid ${T.cyan}`,background:"rgba(55,230,255,.05)",
+          borderRadius:12,border:`2px solid ${T.cyan}`,
+          boxShadow:"0 0 18px 2px rgba(55,230,255,.55)",
           animation:"tourPulse 1.8s ease-in-out infinite",
           transition:"top .35s ease, left .35s ease, width .35s ease, height .35s ease",
-          pointerEvents:"none",zIndex:1100}}/>
-      ) : noDim ? null : (
-        <div style={{position:"fixed",inset:0,background:DIM,zIndex:1100}} {...tapProps}/>
+          pointerEvents:"none",zIndex:1102}}/>
       )}
-      {/* blockers: outside the hole always inert; the hole itself covered too on
-          passive steps. noDim covers the whole screen (nothing is dimmed, but the
-          tour still owns every tap). */}
       {noDim ? (
-        <div style={{...blockerStyle,inset:0}} {...tapProps}/>
+        // Nothing dimmed (the whole sample log has to be readable), but the tour
+        // still owns every tap.
+        <div style={clear({inset:0})} {...tapProps}/>
       ) : hole ? (
         <>
-          <div style={{...blockerStyle,top:0,left:0,right:0,height:Math.max(0,hole.top)}} {...tapProps}/>
-          <div style={{...blockerStyle,top:hole.top,left:0,width:Math.max(0,hole.left),height:hole.height}} {...tapProps}/>
-          <div style={{...blockerStyle,top:hole.top,left:hole.left+hole.width,right:0,height:hole.height}} {...tapProps}/>
-          <div style={{...blockerStyle,top:hole.top+hole.height,left:0,right:0,bottom:0}} {...tapProps}/>
-          {!interactive && <div style={{...blockerStyle,top:hole.top,left:hole.left,width:hole.width,height:hole.height}} {...tapProps}/>}
+          <div style={panel({top:0,left:0,right:0,height:Math.max(0,hole.top)})} {...tapProps}/>
+          <div style={panel({top:hole.top,left:0,width:Math.max(0,hole.left),height:hole.height})} {...tapProps}/>
+          <div style={panel({top:hole.top,left:hole.left+hole.width,right:0,height:hole.height})} {...tapProps}/>
+          <div style={panel({top:hole.top+hole.height,left:0,right:0,bottom:0})} {...tapProps}/>
+          {/* passive steps: the hole is inert too, so a stray tap just advances */}
+          {!interactive && <div style={clear({top:hole.top,left:hole.left,width:hole.width,height:hole.height})} {...tapProps}/>}
         </>
-      ) : null}
+      ) : (
+        <div style={panel({inset:0})} {...tapProps}/>
+      )}
       {/* card. Centered via left/right+margin, NOT translateX — the fade-up
           animation animates transform and would clobber it mid-flight. */}
       <div key={`${step.key}-${part}`} className="fade-up" onClick={interactive ? undefined : onTap}
@@ -339,7 +347,7 @@ export function TourSpotlight({ step, part, steps, stepIndex, onTap, onCta, onSk
           </button>
         </div>
       </div>
-      <style>{`@keyframes tourPulse{0%,100%{box-shadow:0 0 0 200vmax ${DIM},0 0 18px 2px rgba(55,230,255,.55),inset 0 0 22px rgba(55,230,255,.18),0 0 0 0 rgba(55,230,255,.45)}50%{box-shadow:0 0 0 200vmax ${DIM},0 0 18px 2px rgba(55,230,255,.55),inset 0 0 22px rgba(55,230,255,.18),0 0 0 8px rgba(55,230,255,0)}}`}</style>
+      <style>{`@keyframes tourPulse{0%,100%{box-shadow:0 0 18px 2px rgba(55,230,255,.55),0 0 0 0 rgba(55,230,255,.45)}50%{box-shadow:0 0 18px 2px rgba(55,230,255,.55),0 0 0 9px rgba(55,230,255,0)}}`}</style>
     </>
   );
 }
