@@ -35,12 +35,16 @@ a block was hit or missed. Nothing tucked old-block context away when focus shif
 - **Backfill**: accounts with a live program but zero history (everyone, thanks to the
   applied_at 403 bug) get their current program opened as a block on first view of the
   Past Blocks tab (source `backfill`).
-- **Goal-switch boundary** (Will's call, and the right one): when a check-in surfaces a
-  goal_update that DIFFERS from the goal on file, the open block closes (recap and all)
-  and a new one opens on the same text, source `goal_change` (ProofChatModal, App.jsx).
-  A shifted goal is the strongest organic signal a chapter turned — and it costs the
-  user nothing; nobody has to know what a "block" is. Restating the same goal is a
-  guarded no-op (case-insensitive compare against the latest athlete_goals row).
+- ~~Goal-switch boundary~~ — BUILT then REMOVED same day on Will's call (07-27):
+  people shift goals slightly while running the exact same program, so a goal change
+  must never close a block on its own. The `goal_change` source stays reserved in the
+  gateway vocab for the ask-first version. **The decided direction (Will, 07-27): block
+  boundaries are DATE-DRIVEN** — every block carries a planned end date (the Builder
+  requires start+end in the blueprint; end dates realistic vs the goal gap), Joe
+  prompts in plain language when the date arrives (build next / swap in parked draft /
+  extend / done), and current dateless programs get an inferred-then-TYPED-confirmed
+  end date in chat. Fuzzy signals (goal shift, big text edit) may only ever ask, in
+  plain words — never the word "block" without explanation, never silent action.
 
 ### How boundaries actually get detected (the layered answer)
 No single detector survives the variety of training styles, so blocks never depend on
