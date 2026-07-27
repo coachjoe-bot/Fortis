@@ -38,10 +38,22 @@ console.log("precharge:");
     lastBlock: { block_summary: "4-day strength block", applied_at: "2026-07-01T00:00:00Z" },
   });
   ok(bp.goal && !bp.goal.value && bp.goal.pending === "get stronger", "known goal rides as PENDING (SMART gate decides)");
-  ok(/4 days/.test(bp.schedule?.value || ""), "schedule pre-charged from signup");
-  ok(/barbell/.test(bp.equipment?.value || ""), "equipment pre-charged");
-  ok(/ankle/.test(bp.red_flags?.value || ""), "injury history pre-charges red flags");
-  ok(/4-day strength block/.test(bp.handoff?.value || ""), "last block pre-charges hand-off");
+  // Confirm-don't-prefill: EVERYTHING known arrives pending (value empty) — the
+  // interviewer confirms, the extractor charges the cell on the user's yes.
+  ok(!bp.schedule?.value && /4 days/.test(bp.schedule?.pending || ""), "schedule rides as PENDING from signup");
+  ok(!bp.equipment?.value && /barbell/.test(bp.equipment?.pending || ""), "equipment rides as PENDING");
+  ok(!bp.red_flags?.value && /ankle/.test(bp.red_flags?.pending || ""), "injury history rides as PENDING red flags");
+  ok(!bp.handoff?.value && /4-day strength block/.test(bp.handoff?.pending || ""), "last block rides as PENDING hand-off");
+  ok(blueprintPct(bp, cellsFor("athlete", "full")) === 0, "nothing pre-filled counts toward 100%");
+}
+
+// ── precharge prefers the block recap for the hand-off ───────────────────────
+{
+  const bp = precharge({
+    athlete: {},
+    lastBlock: { block_summary: "4-day strength block", block_recap: "Bench moved 15 lbs; goal HIT.", applied_at: "2026-07-01T00:00:00Z" },
+  });
+  ok(/goal HIT/.test(bp.handoff?.pending || ""), "recap (not the one-liner) rides the hand-off when present");
 }
 
 // ── topic router: ONE file, priority order ───────────────────────────────────

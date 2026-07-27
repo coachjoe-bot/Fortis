@@ -74,6 +74,38 @@ The demo is the test bed: its `/api/claude` passes through to the deployed funct
 - Never add `env(safe-area-inset-bottom)` to bottom bars; flush every behavior change to
   all sibling call sites (the snapshot engine has TEN callers — grep `snapshotProgram(`).
 
+## 2026-07-27 beta-feedback wave (branch feat/builder-tweaks)
+First real-user pass (Will) surfaced three live defects + a UX wave. Shipped:
+- **P0 gateway fix:** athlete `program_history` inserts 403'd on `applied_at`
+  (not allowlisted) → program_history was EMPTY on prod since launch. Also the
+  root cause of "how does it know my last block?" — it never did.
+- **park() never nulls draft_text** (interview parks were erasing finished
+  drafts); parks serialized on a chain (no double-insert); park returns the row id.
+- **Builder stays mounted** across subtab switches (athlete modal + coach) and
+  **auto-resumes** the latest open draft row on mount — no more re-generated
+  first question, no lost sessions on modal close. `onParked` finally wired
+  (Park/Save&exit now visibly land you in Drafts).
+- **Background drafting:** module-scope GEN registry; DRAFT IT keeps writing
+  after the pane unmounts and parks the finished draft to the row. Animated
+  drafting screen with rotating status lines + "you can leave" note.
+- **Confirm-don't-prefill:** precharge() now yields PENDING (amber half-charge)
+  for everything known; extractor accepts confirmations ("yes, still 4 days");
+  interviewer framed on the NEXT block, asks keep-chasing-or-shift on stale
+  goals; at 100% invites "keep talking" (extractor `notes` → draft EXTRA NOTES).
+- **Reset button** (armed confirm) wipes the session + re-precharges fresh;
+  "Start a new program" from the saved state does the same.
+- **Athletes get ONE version** (scope buttons hidden; short/quick stay coach-only).
+- **Colors:** cyan → CA.accent blue throughout the Builder; blueprint master
+  cell charges white at 100%; DRAFT IT is the blue-gradient primary.
+- **Past Blocks is its own subtab** (4th tab, athlete + coach). Drafts is the
+  workbench only; "Open & edit" routes into the Builder (AI editor always there).
+- **Block system v1:** closed rows never evolve; "Start next block" explicit
+  boundary; AI **block recap** (logs+goal → HIT/CLOSE/STILL CHASING) written on
+  every close into `program_history.block_recap` (migration applied, additive);
+  recap rides the next interview's hand-off cell; zero-history accounts backfill
+  their current program on first Past Blocks view. Full design + roadmap:
+  `docs/program-builder-blocks-goals-design.md`.
+
 ## Likely tweak backlog (nothing committed, gather from Will/beta)
 - Interviewer voice/pacing tuning from real transcripts (check `program_drafts.transcript`
   of real interviews — remember they're user PII, read only what's needed).

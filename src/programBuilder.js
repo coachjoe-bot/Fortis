@@ -74,15 +74,17 @@ export const blueprintPct = (bp, cells) =>
   cells.length === 0 ? 0 : Math.round((filledCount(bp, cells) / cells.length) * 100);
 
 // ── Pre-charge from known data ────────────────────────────────────────────────
-// Cells arrive charged from what the app already knows; the interviewer CONFIRMS
-// instead of re-asking. Every value is plain text so the drafter reads it as-is.
+// NOTHING arrives accepted. What the app already knows rides as PENDING — the
+// tube glows amber at half charge and the interviewer CONFIRMS it in passing
+// ("you signed up saying 4 days — still true for this block?"). A new block can
+// mean a new schedule, new gear, a finished goal; stale data must never silently
+// drive a draft. Confirmation is one word of friction; a wrong program is weeks.
 export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer = "athlete" }) {
   const bp = {};
-  const set = (k, v) => { if (v && String(v).trim()) bp[k] = { value: String(v).trim(), source: "known" }; };
-  // goal is NOT pre-filled as accepted — the SMART gate decides. Known goal text
-  // rides as pending so the interviewer opens with it.
+  const set = (k, v) => { if (v && String(v).trim()) bp[k] = { value: "", source: "known", pending: String(v).trim() }; };
+  // goal additionally passes the SMART gate on top of confirmation.
   const goalText = (goals[0] && (goals[0].goal_text || goals[0].text)) || athlete.goal || "";
-  if (goalText.trim()) bp.goal = { value: "", source: "known", pending: goalText.trim() };
+  set("goal", goalText);
   const sched = [
     athlete.training_days_per_week ? `${athlete.training_days_per_week} days/week` : "",
     athlete.sport && athlete.season_date ? `season starts ${athlete.season_date}` : "",
@@ -92,7 +94,11 @@ export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer =
   set("red_flags", [athlete.injury_history, athlete.resolved_pain ? "" : ""].filter(Boolean).join("; "));
   if (lastBlock) {
     const range = lastBlock.applied_at ? ` (started ${String(lastBlock.applied_at).slice(0, 10)})` : "";
-    set("handoff", `Previous block${range}: ${lastBlock.block_summary || (lastBlock.program_text || "").split("\n").find(l => l.trim()) || "on record"}`);
+    // The recap (when a closed block has one) is the richest hand-off there is —
+    // it already says what moved and where the goal landed.
+    const gist = lastBlock.block_recap || lastBlock.block_summary
+      || (lastBlock.program_text || "").split("\n").find(l => l.trim()) || "on record";
+    set("handoff", `Previous block${range}: ${gist}`);
   }
   return bp;
 }
@@ -118,8 +124,8 @@ export function pickTopic({ blueprint = {}, athlete = {}, viewer = "athlete", sc
 export function extractorSystem(cells) {
   return `You extract training-interview facts into blueprint cells. Cells:
 ${cells.map(c => `- ${c.key}: ${c.label} — ${c.hint}`).join("\n")}
-Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"}}
-Rules: fill EVERY cell this message gives real information for (an expert dumping a full spec can fill many at once); omit cells the message says nothing about; "none"/"no injuries" style answers DO fill their cell with "None"; never invent facts; keep values short and operational. goal_smart judges only the goal: ok=true requires specific + measurable (a number) + timebound (a date/timeframe). Include goal_smart ONLY when the message speaks to the goal.`;
+Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>"}
+Rules: fill EVERY cell this message gives real information for (an expert dumping a full spec can fill many at once); omit cells the message says nothing about; "none"/"no injuries" style answers DO fill their cell with "None"; never invent facts; keep values short and operational. Some cells arrive PENDING — values from the user's profile awaiting confirmation. When the message CONFIRMS a pending value ("yes", "still true", "same as before", or confirms it with a correction), emit that cell with the pending value, updated with any correction they gave. When it REJECTS a pending value, emit the replacement they state (or omit if they gave none yet). goal_smart judges only the goal: ok=true requires specific + measurable (a number) + timebound (a date/timeframe). Include goal_smart ONLY when the message speaks to the goal. Use "notes" sparingly for real facts only (preferences, context the program should honor) — never restate cell values there.`;
 }
 
 export function parseExtraction(raw) {
@@ -131,31 +137,38 @@ export function parseExtraction(raw) {
     for (const [k, v] of Object.entries(cells)) {
       if (typeof v === "string" && v.trim()) out[k] = v.trim();
     }
-    return { cells: out, smart: j.goal_smart && typeof j.goal_smart === "object" ? { ok: !!j.goal_smart.ok, why: String(j.goal_smart.why || "") } : null };
-  } catch (_) { return { cells: {}, smart: null }; }
+    return {
+      cells: out,
+      smart: j.goal_smart && typeof j.goal_smart === "object" ? { ok: !!j.goal_smart.ok, why: String(j.goal_smart.why || "") } : null,
+      notes: typeof j.notes === "string" && j.notes.trim() ? j.notes.trim() : null,
+    };
+  } catch (_) { return { cells: {}, smart: null, notes: null }; }
 }
 
 // ── Interviewer (Sonnet, doctrine-cached) ────────────────────────────────────
 // Dynamic tail only — doctrine core (+ one topic) rides as the cached prefix.
-export function interviewerSystem({ cells, blueprint, scope, viewer, name = "" }) {
+export function interviewerSystem({ cells, blueprint, scope, viewer, name = "", complete = false }) {
   const state = cells.map(c => {
     const b = blueprint[c.key];
-    const st = b?.value ? `FILLED (${b.source}): ${b.value}` : b?.pending ? `PENDING (not yet accepted): ${b.pending}` : "EMPTY";
+    const st = b?.value ? `FILLED (${b.source}): ${b.value}` : b?.pending ? `PENDING (from their profile/history — NOT yet confirmed): ${b.pending}` : "EMPTY";
     return `- ${c.key} (${c.label}): ${st}\n  guidance: ${c.hint}`;
   }).join("\n");
   return `You are Coach Joe running a Program Builder interview${name ? ` with ${name}` : ""}${viewer === "coach" ? " (the user is a COACH building for their athlete/team)" : ""}. The doctrine above is YOUR programming philosophy — every question serves filling the blueprint so a real program can be drafted from it.
+
+You are building their NEXT block — the program that comes AFTER whatever they're running now. Never assume it exists to serve the current block's goals: goals get hit, schedules change, focuses shift between blocks. Treat the last/current block as finished context (what worked, what to carry, what to retire). If it's genuinely unclear whether this replaces the current program now or starts when it ends, ask once.
 
 BLUEPRINT (${scope} scope):
 ${state}
 
 Rules:
-- ONE question per turn, aimed at the most valuable EMPTY (or pending) cell. The cell checklist is the spine; the conversation is free — follow up naturally on what they just said before moving on.
-- Cells marked FILLED (known) came from their profile: CONFIRM in passing ("you signed up saying 4 days — still true?"), never re-interview them.
-- The goal cell is SMART-gated: don't accept a wish. Push warmly for the number and the date; offer a concrete suggestion if they're stuck.
+- ONE question per turn, aimed at the most valuable EMPTY (or PENDING) cell. The cell checklist is the spine; the conversation is free — follow up naturally on what they just said before moving on.
+- PENDING cells hold what the app already knows — never re-interview from scratch, but never treat them as true either: confirm in passing ("you signed up saying 4 days — still true for this next block?"). You can confirm 2-3 pending cells in one natural question.
+- The goal cell is SMART-gated: don't accept a wish. Push warmly for the number and the date; offer a concrete suggestion if they're stuck. If their goal on file looks finished or stale, say so and ask whether to keep chasing it or set a new target.
 - Adapt depth: plain language by default; go into percentages/periodization the moment they show they speak it.
 - Keep each turn under 60 words of prose.
 - End every turn with a line "CHIPS: option | option | option" — 2-4 short tappable answers for your question (omit the line only when chips make no sense).
-- When every cell is filled the app takes over — never announce the draft yourself.`;
+- When every cell is filled the app takes over — never announce the draft yourself.${complete ? `
+- The blueprint is COMPLETE — they're adding extra detail before drafting. Acknowledge in 1-2 lines that it's noted and will be factored into the draft; ask a follow-up ONLY if their message truly needs one; remind them DRAFT IT is ready when they are.` : ""}`;
 }
 
 export function parseInterviewerReply(raw) {
@@ -185,7 +198,10 @@ ${viewer === "coach" ? "- This is a TEAM program: one shared program scaled per 
 export function draftUser({ blueprint, cells, athlete = {} }) {
   const lines = cells.map(c => `${c.label}: ${blueprint[c.key]?.value || "(not specified)"}`);
   const who = [athlete.name, athlete.sport, athlete.age ? `${athlete.age} y/o` : "", athlete.weight_lbs ? `${athlete.weight_lbs} lbs` : ""].filter(Boolean).join(", ");
-  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}\n\nWrite the program.`;
+  // Post-100% conversation lands here: facts that fit no cell still shape the draft.
+  const notes = Array.isArray(blueprint.__notes) && blueprint.__notes.length
+    ? `\nEXTRA NOTES (honor these too):\n${blueprint.__notes.map(n => `- ${n}`).join("\n")}` : "";
+  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${notes}\n\nWrite the program.`;
 }
 
 // ── Deterministic draft validation ───────────────────────────────────────────
