@@ -302,7 +302,7 @@ async function runAthlete(athlete, batch, { dryRun = false } = {}) {
   // history fetch, so all three selects run in ONE parallel wave — same per-group
   // error handling as before (a failed pair falls back to [], a failed lookup to
   // null), one fewer serial DB round trip per digest child.
-  const [[fullWorkouts, fullManual], previousEntryAt] = await Promise.all([
+  const [[fullWorkouts, fullManual], previousEntryAt, blockEndsAt] = await Promise.all([
     Promise.all([
       sbSelect("workouts", `?athlete_id=eq.${enc(athlete.id)}&select=created_at,parsed_data&order=created_at.desc&limit=300`),
       sbSelect("manual_one_rms", `?athlete_id=eq.${enc(athlete.id)}&select=exercise,normalized_exercise,weight,unit`),
@@ -311,9 +311,18 @@ async function runAthlete(athlete, batch, { dryRun = false } = {}) {
     sbSelect("proof_digests", `?athlete_id=eq.${enc(athlete.id)}&digest_type=in.(weekly,monthly)&select=created_at&order=created_at.desc&limit=1`)
       .then((prior) => prior[0]?.created_at || null)
       .catch((e) => { console.error("[proof-feed] prior-entry lookup failed:", e.message); return null; }),
+    // Planned end date of the OPEN block. When set it is the authority on whether the
+    // block has finished — the date-driven boundary direction — and it outranks
+    // anything the athlete told us or the program text implies. Null (nobody has
+    // written it yet) simply falls through to those.
+    sbSelect("program_history", `?athlete_id=eq.${enc(athlete.id)}&completed_at=is.null&select=ends_at&order=applied_at.desc&limit=1`)
+      .then((rows) => rows[0]?.ends_at || null)
+      .catch(() => null),
   ]);
 
-  const b = briefFor(athlete, batch, windowType, fullWorkouts, fullManual, previousEntryAt);
+  // Attached rather than passed separately: buildBrief reads the block span off the
+  // athlete object, and this keeps that one read in one place.
+  const b = briefFor({ ...athlete, program_block_ends_at: blockEndsAt }, batch, windowType, fullWorkouts, fullManual, previousEntryAt);
 
   // Phase 2: structured program parse (hash-guarded; free if unchanged), then the
   // code-only load+volume adherence comparison.

@@ -21,7 +21,18 @@ ALTER TABLE athletes ADD COLUMN IF NOT EXISTS program_started_on timestamptz;
 -- program. Overwritten by the next claim — only the latest one is ever read.
 ALTER TABLE athletes ADD COLUMN IF NOT EXISTS program_position_override jsonb;
 
+-- The athlete's answer to "does this block end, and when?" —
+-- {appliedAt, endsAt, weeks, repeating, answeredAt}. Needed because an athlete on a
+-- simple repeatable week has a program with NO end, and reading that as a one-week
+-- block would tell them their block was finished in every single digest. Until this is
+-- answered (or program_history.ends_at is set, which outranks it) the week-ahead
+-- section is withheld entirely rather than guessed. `appliedAt` pins the answer to the
+-- block it describes, so starting a new block naturally re-asks.
+ALTER TABLE athletes ADD COLUMN IF NOT EXISTS program_block_span jsonb;
+
 COMMENT ON COLUMN athletes.program_started_on IS
   'When the current program became active; week number counts Sunday turnovers from here. Fallback for program_history.applied_at.';
 COMMENT ON COLUMN athletes.program_position_override IS
   'Athlete-stated program position {week, day, at}. Wins over the derived day within the same calendar week.';
+COMMENT ON COLUMN athletes.program_block_span IS
+  'Athlete answer to "does this block end?": {appliedAt, endsAt, weeks, repeating, answeredAt}. appliedAt pins it to the block it describes, so a new block re-asks. program_history.ends_at outranks it when set.';

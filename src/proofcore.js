@@ -430,11 +430,23 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
     weekAhead: (() => {
       const programText = athlete.temp_program_text || athlete.program_text || "";
       if (!programText.trim()) return null;
+      // The span answer only counts for the block it was given about: `appliedAt` pins
+      // it, so starting a new block drops it and Joe asks again — which is right, since
+      // the next block's length is a different question.
+      const span = athlete.program_block_span || null;
+      const spanAnswer = span && (!span.appliedAt || !athlete.program_started_on || span.appliedAt === athlete.program_started_on) ? span : null;
       const wa = weekAheadFor({
         programText,
         startedOn: athlete.program_started_on || null,
         override: athlete.program_position_override || null,
         sessions: thisWeekSessions.map((s) => sessionDate(s)),
+        // program_history.ends_at — the planned end date of the OPEN block, and the
+        // authority when it's set. It isn't on the athlete row, so the caller attaches
+        // it; until the date-driven boundary work starts writing that column this is
+        // simply absent and the athlete's own answer governs. Reading it here is what
+        // makes the two systems converge instead of competing.
+        endsAt: athlete.program_block_ends_at || null,
+        spanAnswer,
       });
       if (!wa) return null;
       return { ...wa, programText: programText.slice(0, 3000) };

@@ -27,7 +27,7 @@ import {
 } from "./quicklog.js";
 // Where the athlete is in their program — week turns Sunday, day advances per logged
 // session, athlete's word wins. Replaces the calendar heuristic that kept drifting.
-import { currentPosition, positionBlock } from "./programPosition.js";
+import { currentPosition, positionBlock, parseBlockSpan } from "./programPosition.js";
 // Coach change-request drafting/filing — single source of truth for the rule set
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
@@ -1144,6 +1144,7 @@ const parseWorkout = async (message, name, sport, knownNames = []) => {
   "is_temp_program_update":boolean,
   "is_program_revert":boolean,
   "program_position_claim":{"week":number|null,"day":number|null}|null,
+  "program_block_span":{"weeks":number|null,"end_date":string|null,"repeating":boolean|null}|null,
   "log_correction":{"is_mistake_fix":boolean,"details":string}|null,
   "coach_flag":"pain"|"plateau"|"equipment"|null
 }
@@ -1183,6 +1184,7 @@ Rules:
 - Set program_append:true when the athlete explicitly asks you to ADD the content in THIS message onto their existing saved program — "add this to my program", "add this to my program tab", "put this in my program", "append this to my plan", "tack this onto my program". The program content to add must be present in the message. This is ADDITIVE (extends the program), never a replacement — do NOT set it for a normal workout log, and if they're handing over a whole new program to save, that's is_program_update instead.
 - Set program_create_request:true when the athlete asks YOU to CREATE, WRITE, BUILD, DESIGN, or GENERATE a training program/plan FOR them and does NOT paste their own — "make me a program", "build me a program", "can you write me a plan", "design me a workout program", "I need a program, can you make one". This is them asking you to AUTHOR it, distinct from is_program_update (where they hand you an already-written program). Set it even if the request is short or details are still being gathered.
 - Set is_temp_program_update:true when the athlete has described their available equipment or conditions for a non-standard training situation (hotel, cruise, travel, beach, limited equipment, injury restrictions). Must include actual condition info — NOT set just because they mention traveling or ask what to do.
+- "program_block_span": populate when the athlete says HOW LONG their program runs, or that it doesn't end. Set "repeating":true for "it just repeats", "same week every week", "no end date", "I run it until I change it", "ongoing". Set "weeks" for a stated length ("it's a 6 week block", "8 weeks"). Set "end_date" ("YYYY-MM-DD", resolved against TODAY'S DATE above) for a stated finish ("it ends August 30", "last week is the 30th", "through the end of the month"). Set only what they actually say; leave the rest null. This is usually them ANSWERING a question about whether their block has an end — but take it wherever they volunteer it. Do NOT populate it from a date range printed in a program they pasted; only from the athlete's own words. Leave null otherwise.
 - "program_position_claim": populate when the athlete states WHERE THEY ARE in their program — "I'm on week 3", "this is day 2", "I'm starting week 4 today", "today's day 1", "I'm on week 2 day 3". Set only the parts they actually state (week alone, day alone, or both); leave the other null. This is the athlete correcting or confirming their position, and it OVERRIDES what the app worked out, so only populate it when they genuinely assert their position — NOT when they ask a question about it ("what day am I on?"), and NOT from a day LABEL in a workout log ("Push A" is the session's name, not a claim about week or day number). Leave null otherwise.
 - Set is_program_revert:true when the athlete signals they are returning to their normal training environment ("I'm back", "home now", "back at the gym", "back to normal", "cruise is over", etc.).
 - If weight is given in kg (e.g. "100kg squat"), set unit:"kg".
@@ -1224,7 +1226,7 @@ Rules:
     try { parsed = await runParse("claude-sonnet-5"); }
     catch { /* keep the Haiku result (or null) and fall through to the default */ }
   }
-  return parsed || {exercises:[],run_data:null,practice_data:null,pain_flags:[],pr_attempts:[],session_feel:null,general_notes:message,is_program_update:false,program_append:false,program_create_request:false,is_temp_program_update:false,is_program_revert:false,program_position_claim:null,log_correction:null,coach_flag:null};
+  return parsed || {exercises:[],run_data:null,practice_data:null,pain_flags:[],pr_attempts:[],session_feel:null,general_notes:message,is_program_update:false,program_append:false,program_create_request:false,is_temp_program_update:false,is_program_revert:false,program_position_claim:null,program_block_span:null,log_correction:null,coach_flag:null};
 };
 
 // ─── LOG CORRECTION RESOLVER ─────────────────────────────────────────────────
@@ -6010,6 +6012,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // (setProgramReplacePending → confirm chips). Creating a first program or
       // APPENDING loses nothing, so those save straight away.
       const wantsProgramWrite = parsed.is_program_update || parsed.program_append || parsed.program_create_request;
+      // Snapshot to detect "a program landed on this message" below — the ask about
+      // whether it ends belongs at the moment it's saved, not a week later.
+      const programTextBefore = (updatedAthlete.program_text || "").trim();
       const hasProgram = !!(updatedAthlete.program_text && updatedAthlete.program_text.trim());
 
       // ── "I'm on week 3" — the athlete's own position, recorded ────────────
@@ -6036,6 +6041,31 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           setAthlete(prev=>({...prev, program_position_override: override}));
         }
       } catch(_){}
+
+      // ── "does this block end?" — the athlete's answer, recorded ───────────
+      // Gates the Proof Feed's week-ahead section. Until this is known that section is
+      // withheld entirely rather than guessed, because an athlete on a simple
+      // repeatable week would otherwise be told their block had finished every single
+      // week (Will, 2026-07-27). Pinned to the block it describes via appliedAt, so
+      // starting a new block re-asks — the next block's length is its own question.
+      try {
+        const s = parsed.program_block_span;
+        const wks = Number(s?.weeks);
+        const validWeeks = Number.isFinite(wks) && wks>=1 && wks<=52 ? wks : null;
+        if(s && (s.repeating===true || validWeeks || s.end_date)){
+          const span = {
+            appliedAt: updatedAthlete.program_started_on || null,
+            repeating: s.repeating===true,
+            weeks: validWeeks,
+            endsAt: s.end_date || null,
+            answeredAt: new Date().toISOString(),
+          };
+          await sbUpdate("athletes",athlete.id,{program_block_span:span});
+          updatedAthlete.program_block_span = span;
+          setAthlete(prev=>({...prev, program_block_span: span}));
+        }
+      } catch(_){}
+
       if(wantsProgramWrite && updatedAthlete.program_locked){
         // Coach-locked: never touch it — and never silently file the athlete's raw
         // words as a "request" either. Joe AUTHORS the concrete suggested change
@@ -6141,6 +6171,22 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         setProgramSavePending({text: reply.trim()}); chipSetThisSend = true;
         followUp("Want me to keep that in your Program tab? Training off something structured is what turns single workouts into progress you can actually see — and it means I can prep this for you every session instead of writing it fresh each time.");
       }
+
+      // ── A program just landed and we can't tell whether it ends ───────────
+      // Ask NOW, at the moment it's saved, rather than leaving it to the next Proof
+      // Feed — this is the one moment the athlete is already thinking about the
+      // program. Only when the text itself doesn't answer it: a program that states a
+      // duration, numbers its weeks, or says it repeats needs no question, and asking
+      // anyway is the kind of pointless friction that gets an assistant tuned out.
+      // The Proof Feed keeps asking every week until it's answered, so a skipped answer
+      // here costs nothing (see buildQuestionBank's block_span question).
+      try {
+        const after = (updatedAthlete.program_text || "").trim();
+        const justSaved = after && after !== programTextBefore;
+        if(justSaved && !updatedAthlete.program_block_span && !parseBlockSpan(after).known){
+          followUp(`One thing before I build off this: does it run for a set stretch — a block with an end date — or is it the same week on repeat for now? Knowing lets me tell you what's coming each week instead of guessing.`);
+        }
+      } catch(_){}
 
       // Coach-request / self-change offers (pain / plateau / equipment) — additive,
       // never touches the program-write branches above. Skips entirely if the

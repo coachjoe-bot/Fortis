@@ -122,6 +122,25 @@ export function buildQuestionBank(brief, athlete, opts = {}) {
   if (gapLifts.length) {
     q.push({ id: "volume", kind: "context", deeper: false, meta: { lifts: gapLifts }, text: `Those light set counts on ${gapLifts.join(" and ")} — intentional recovery, or short on time/gas?` });
   }
+  // 4a. does this block end? Asked EVERY digest until answered — it's the gate on the
+  // week-ahead section existing at all, so an unanswered week is a week without it.
+  // Phrased in plain language with "block" explained, never as jargon: plenty of
+  // athletes run the same week forever and have never thought of it as a block.
+  const wa = brief.weekAhead;
+  if (wa && wa.needsSpan) {
+    q.push({
+      id: "block_span", kind: "block_span", deeper: false,
+      text: `Quick one so I can tell you what's coming: does your program run for a set stretch — a block with an end date — or is it the same week on repeat for now?`,
+    });
+  } else if (wa && wa.needsWeek) {
+    q.push({
+      id: "block_week", kind: "block_week", deeper: false,
+      meta: { weeks: wa.weekCount || null },
+      text: wa.weekCount
+        ? `Which week of the ${wa.weekCount} are you on right now? Once I know, I can show you what's coming and pull the right loads.`
+        : `Which week of your program are you on right now? Once I know, I can show you what's coming.`,
+    });
+  }
   // 4b. block finished — the one week where "what's next" outranks everything except
   // the goal it serves. Asked as a real question rather than left as prose, so the
   // answer comes back as an ANSWER the app can act on (close the block out, start the
@@ -222,6 +241,7 @@ You are writing this week's Proof Feed digest. Return ONLY JSON with these keys 
 - injury_change: if an injury is active, the SPECIFIC change you'd make, concrete enough to apply verbatim — name exercises, sets/reps, and where it slots in (which day / what it replaces). Keep it PROPORTIONATE to the pain (see injury_plan) — the smallest change that protects the area, not the biggest. No vague "a small tweak", and no floating swap without a home. Else null.
 - goal_progress: vs stated goals. Compare each goal ONLY to the matching lift — never measure one lift's number against a different lift's target (a deadlift number is not progress toward a squat goal). State progress in the SAME unit the goal is written in; if you convert kg↔lb, convert correctly (1 kg = 2.205 lb) and show ONE unit, never a confusing kg/lb mix. If a goal has no matching logged lift this window, say so plainly rather than forcing a comparison. Keep it clear enough that the athlete instantly understands where they stand. null if no goals.
 - week_ahead: what's COMING, from the brief's "weekAhead" object. null when weekAhead is null (no program on file — never invent a week for someone without one).
+  • If weekAhead.ready is FALSE, return week_ahead as null — NOTHING. Do not preview the week, do not describe the sessions, do not mention the block. We don't know enough yet and a wrong forecast is worse than none. The missing piece is asked as a QUESTION instead (it's already in the question list) — do not duplicate that ask in the prose.
   • When weekAhead.blockEnded is FALSE: a SHORT look forward at the week's programming. HIGHLIGHTS ONLY — the two or three things genuinely worth turning up for: the heavy day's top set with its actual number ("Thursday's bench tops out at 93% — 265"), a max-out or test day, a first attempt at a new load. Read those numbers out of weekAhead.programText for the week named in weekAhead.week; if the program states a percentage, resolve it against their known 1RM and give the POUNDS, because "93%" means nothing at a glance. Do NOT list every session, do NOT restate the full schedule, and do NOT mention ordinary accessory work. Then tie it to their GOALS in one clause — why this week moves them toward the thing they said they want. If nothing in the week is genuinely notable, say what the week's shape is in one line and leave it there rather than manufacturing excitement.
   • When weekAhead.blockEnded is TRUE: they have finished the LAST week of this block, so there is NO programming ahead of them. Do NOT invent one and do NOT preview sessions. Instead: tell them the block is done, name in one clause what it built (use their PRs, lift deltas and goal progress from this brief — the concrete evidence of the block, not a platitude), then ASK the two questions plainly — are they finished with this block, and do they want to build the next one. That question IS the section; keep it short and direct.
   • If weekAhead.weekKnown is FALSE, you do NOT know which week of the program they're on — do not name a week number and do not claim the block is over. Talk about the sessions coming up generically and ask which week they're on.
@@ -249,7 +269,14 @@ Adapt to WHATEVER program the athlete runs — do not assume a long, multi-week 
     // Sits before FOCUS NEXT WEEK deliberately: look at what's coming, THEN get the
     // one directive for it. The label changes when the block is done because the
     // section stops being a preview and becomes a question.
-    { key: "week_ahead", label: brief.weekAhead?.blockEnded ? "BLOCK COMPLETE — WHAT'S NEXT" : "THE WEEK AHEAD" },
+    //
+    // Dropped ENTIRELY unless weekAhead.ready — enforced here rather than trusted to
+    // the prompt, because "no section" is a guarantee worth making in code. Withheld
+    // means we don't know whether the block ends (a repeatable week would otherwise
+    // read as finished every single week) or which week they're on.
+    ...(brief.weekAhead?.ready
+      ? [{ key: "week_ahead", label: brief.weekAhead.blockEnded ? "BLOCK COMPLETE — WHAT'S NEXT" : "THE WEEK AHEAD" }]
+      : []),
     { key: "focus_next_week", label: "FOCUS NEXT WEEK" },
   ]);
 

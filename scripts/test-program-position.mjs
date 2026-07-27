@@ -10,7 +10,7 @@
 // All dates are LOCAL and deliberately anchored to real 2026 calendar weeks:
 //   Sun Jul 26 · Mon Jul 27 … Sat Aug 1 · Sun Aug 2 · Sun Aug 9
 
-const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock, weekAheadFor }
+const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock, weekAheadFor, parseBlockSpan }
   = await import("../src/programPosition.js");
 
 let pass = 0, fail = 0;
@@ -307,6 +307,65 @@ check("a program with no week structure never ends", (() => {
   return w.blockEnded === false && w.days.length === 3;
 })());
 check("no program → nothing to look ahead to", weekAheadFor({ programText: "", sessions: [] }) === null);
+
+// ─── does the block end? the gate on the whole section ───────────────────────
+// Will's case: an athlete on a simple repeatable week must NEVER be told their block
+// finished. The failure is one-directional and relentless — it would fire every single
+// digest — so "we don't know" has to mean "say nothing", not "guess".
+check("a plain repeatable week is not a known span", parseBlockSpan(NO_WEEKS).known === false);
+check("…so the week-ahead is withheld, not guessed", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], now: at("2026-07-28T09:00:00") });
+  return w.ready === false && w.needsSpan === true && w.blockEnded === false && w.week === null;
+})());
+check("…and it can never end, however long it runs", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-01-01T08:00:00"), sessions: [], now: at("2026-12-01T09:00:00") });
+  return w.blockEnded === false;
+})());
+
+// Answering unlocks it. "It repeats" = a real answer, not a missing one.
+check("'it repeats' is an answer", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, sessions: [], spanAnswer: { repeating: true }, now: at("2026-07-28T09:00:00") });
+  return w.ready === true && w.repeating === true && w.blockEnded === false && w.days.length === 3;
+})());
+check("a repeating program needs no week anchor", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, sessions: [], spanAnswer: { repeating: true }, now: at("2026-12-01T09:00:00") });
+  return w.ready === true && w.blockEnded === false;
+})());
+check("a stated length is an answer", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], spanAnswer: { weeks: 6 }, now: at("2026-07-28T09:00:00") });
+  return w.ready === true && w.weekCount === 6 && w.blockEnded === false;
+})());
+check("a stated end date ends the block when it passes", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], spanAnswer: { endsAt: "2026-08-01T00:00:00" }, now: at("2026-08-05T09:00:00") });
+  return w.ready === true && w.blockEnded === true;
+})());
+check("…and not before", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], spanAnswer: { endsAt: "2026-08-30T00:00:00" }, now: at("2026-08-05T09:00:00") });
+  return w.blockEnded === false;
+})());
+// program_history.ends_at is the authoritative store and beats everything.
+check("ends_at outranks the athlete's answer", (() => {
+  const w = weekAheadFor({ programText: NO_WEEKS, startedOn: at("2026-07-27T08:00:00"), sessions: [], endsAt: "2026-08-01T00:00:00", spanAnswer: { repeating: true }, now: at("2026-08-05T09:00:00") });
+  return w.spanSource === "ends_at" && w.blockEnded === true;
+})());
+
+// A program that answers the question itself is never asked.
+check("a stated duration needs no question", parseBlockSpan("Duration: 4 Weeks (June 30 – July 25)\nMONDAY — PUSH\nBench 3x5 @ 185").known === true);
+check("'6-week block' needs no question", parseBlockSpan("6-week block\nPush\nBench 3x5 @ 185").weeks === 6);
+check("numbered weeks need no question", parseBlockSpan(WEEK_SECTIONED).known === true && parseBlockSpan(WEEK_SECTIONED).weeks === 2);
+check("'repeats weekly' in the text is an answer", parseBlockSpan("Push/Pull/Legs, repeats weekly\nPush\nBench 3x5 @ 185").repeating === true);
+// An explicit repeat beats a week count — a 4-week wave run on loop must not end.
+check("explicit repeat outranks a week count", parseBlockSpan(WEEK_COLUMNS + "\nRun this on repeat.").repeating === true);
+check("Will's own program declares its length", parseBlockSpan(WILLARD).known === true && parseBlockSpan(WILLARD).weeks === 4);
+// …but his START is unknown, so the week still has to be asked before previewing.
+check("known span + unknown week still withholds", (() => {
+  const w = weekAheadFor({ programText: WILLARD, sessions: [], now: at("2026-07-28T09:00:00") });
+  return w.ready === false && w.needsWeek === true && w.needsSpan === false;
+})());
+check("…and answering the week unlocks it", (() => {
+  const w = weekAheadFor({ programText: WILLARD, override: { week: 3, at: at("2026-07-27T08:00:00") }, sessions: [], now: at("2026-07-28T09:00:00") });
+  return w.ready === true && w.week === 4;
+})());
 
 // ─── the prompt block ────────────────────────────────────────────────────────
 const block = positionBlock(pos({ sessions: [at("2026-07-27T10:00:00")], now: at("2026-07-28T09:00:00") }));

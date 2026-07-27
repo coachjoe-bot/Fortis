@@ -238,6 +238,58 @@ export const currentPosition = ({ programText, startedOn, override, sessions, no
   };
 };
 
+// ─── DOES THIS BLOCK END, AND WHEN? ──────────────────────────────────────────
+// The dangerous mistake here runs in ONE direction. An athlete on a simple repeatable
+// week — push/pull/legs, same every week, forever — has a program with no end. Read
+// that as a one-week block and every single digest tells them their block is finished
+// and asks if they want a new one. That is worse than saying nothing (Will,
+// 2026-07-27), so nothing is what we say until we actually know.
+//
+// Knowing means one of:
+//   • The athlete (or the Builder) told us: a planned end date, a length, or "it just
+//     repeats". program_history.ends_at is the authoritative store — the column the
+//     date-driven boundary work already put there.
+//   • The program itself makes it unambiguous: it says how long it runs, or it visibly
+//     changes week to week with numbered weeks. Then we can assume.
+// Anything else is UNKNOWN, and unknown means ASK — in chat when the program lands,
+// and in every Proof Feed until it's answered — while the week-ahead section stays off.
+
+const REPEATING_RE = /\b(?:repeat(?:s|ing|ed)?\s+(?:weekly|each week|every week|indefinitely)?|run\s+(?:this\s+)?(?:weekly|on\s+repeat)|ongoing|indefinite(?:ly)?|no\s+end\s+date|until\s+further\s+notice|same\s+every\s+week|weekly\s+rotation)\b/i;
+// "Duration: 4 Weeks", "4-week block", "6 week cycle", "over 8 weeks".
+const DURATION_RE = /(?:duration\s*[:—-]?\s*(\d{1,2})\s*weeks?)|(\d{1,2})\s*[-–\s]\s*week\s+(?:block|program|cycle|phase|wave)|(?:over|across)\s+(\d{1,2})\s+weeks?/i;
+
+export const parseBlockSpan = (programText) => {
+  const text = String(programText || "");
+  if (!text.trim()) return { known: false, repeating: false, weeks: null, source: "none" };
+  // An explicit "this repeats" beats a week count — a 4-week wave the athlete runs on
+  // loop is repeating, and treating it as finite would end it every fourth week.
+  if (REPEATING_RE.test(text)) return { known: true, repeating: true, weeks: null, source: "text_repeating" };
+  const d = text.match(DURATION_RE);
+  const stated = d ? parseInt(d[1] || d[2] || d[3], 10) : null;
+  if (stated && stated >= 1 && stated <= 52) return { known: true, repeating: false, weeks: stated, source: "text_duration" };
+  // Numbered weeks that actually differ week to week — the program is visibly a block
+  // and says how many weeks it runs. Two or more, because a lone "Week 1" is a label,
+  // not a length.
+  const shape = parseProgramShape(text);
+  if (shape.weekCount >= 2) return { known: true, repeating: false, weeks: shape.weekCount, source: "text_weeks" };
+  return { known: false, repeating: false, weeks: null, source: "none" };
+};
+
+// The answer that actually governs, cheapest-authority-last:
+//   stated end date > stated length / "it repeats" > what the program text shows.
+// `answer` is the athlete's recorded reply ({endsAt, weeks, repeating}); `endsAt` is
+// program_history.ends_at. Either being present means someone TOLD us, which always
+// beats what we guessed from the text.
+export const resolveBlockSpan = ({ programText, endsAt, answer } = {}) => {
+  if (endsAt) return { known: true, repeating: false, weeks: null, endsAt: new Date(endsAt), source: "ends_at" };
+  if (answer) {
+    if (answer.repeating) return { known: true, repeating: true, weeks: null, endsAt: null, source: "athlete_repeating" };
+    if (answer.endsAt) return { known: true, repeating: false, weeks: null, endsAt: new Date(answer.endsAt), source: "athlete_date" };
+    if (answer.weeks) return { known: true, repeating: false, weeks: answer.weeks, endsAt: null, source: "athlete_weeks" };
+  }
+  return { ...parseBlockSpan(programText), endsAt: null };
+};
+
 // ─── THE WEEK AHEAD ──────────────────────────────────────────────────────────
 // What the Proof Feed and the Coach's Edition look forward to. Two outcomes, and the
 // difference matters more than the contents of either:
@@ -251,10 +303,12 @@ export const currentPosition = ({ programText, startedOn, override, sessions, no
 // ahead is the one that just started. Fire it on a Friday and it's the next one. Both
 // are handled here rather than in the caller, because getting it wrong means previewing
 // a week the athlete is already halfway through.
-export const weekAheadFor = ({ programText, startedOn, override, sessions, now } = {}) => {
+export const weekAheadFor = ({ programText, startedOn, override, sessions, now, endsAt, spanAnswer } = {}) => {
   const t = now ? new Date(now) : new Date();
   const pos = currentPosition({ programText, startedOn, override, sessions, now: t });
   if (!pos.dayTemplate.length) return null;
+
+  const span = resolveBlockSpan({ programText, endsAt, answer: spanAnswer });
 
   // Sunday, with nothing logged yet → the week that just began IS the week ahead.
   const startedThisWeek = t.getDay() === 0 && pos.loggedThisWeek === 0;
@@ -263,15 +317,35 @@ export const weekAheadFor = ({ programText, startedOn, override, sessions, now }
   // final week forever.
   const week = pos.weekRaw + (startedThisWeek ? 0 : 1);
 
-  // Only claimable when we know which week they're on AND the program declares a
-  // length. Without either, the honest answer is "there are more sessions coming" —
-  // never "your block is over", which would prompt an athlete mid-block to bin it.
-  const blockEnded = pos.weekKnown && pos.weekCount > 0 && week > pos.weekCount;
+  // ── What don't we know? ──
+  // A repeating program needs no anchor: every week is the same week, so the sessions
+  // ahead are simply the template. A FINITE block needs to know which week they're on,
+  // or it can say neither what's coming nor whether the block is over.
+  const needsSpan = !span.known;
+  const needsWeek = span.known && !span.repeating && !pos.weekKnown;
+  const ready = !needsSpan && !needsWeek;
+
+  // End date beats week count when we have one — the decided direction for boundaries
+  // is date-driven, and a date survives an athlete training more or less often than
+  // the block assumed.
+  const blockEnded = !ready ? false
+    : span.repeating ? false
+    : span.endsAt ? t.getTime() > span.endsAt.getTime()
+    : span.weeks > 0 ? week > span.weeks
+    : false;
 
   return {
-    week: blockEnded ? null : week,
+    // Nothing to preview until both questions are answered. Callers render no section
+    // at all in that case — an absent week-ahead beats a wrong one.
+    ready,
+    needsSpan,
+    needsWeek,
+    week: !ready || blockEnded ? null : week,
     weekKnown: pos.weekKnown,
-    weekCount: pos.weekCount || null,
+    weekCount: span.weeks || pos.weekCount || null,
+    repeating: !!span.repeating,
+    spanSource: span.source,
+    endsAt: span.endsAt ? span.endsAt.toISOString() : null,
     hasWeeks: pos.hasWeeks,
     blockEnded,
     // Next week runs the full template — the Sunday rule resets to day 1 regardless of
