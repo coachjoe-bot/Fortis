@@ -185,13 +185,17 @@ const ATHLETE_COL_ALLOW = {
   // that opened the block; the vocab is closed so free-text chat extraction can
   // never invent one.
   program_history: {
-    cols: new Set(["program_text", "source", "block_summary", "completed_at"]),
+    // applied_at was missing from this set at launch, which 403'd EVERY
+    // athlete-side snapshot insert (snapshotProgramHistory sends it explicitly)
+    // and left program_history empty on prod. Guard the value, allow the column.
+    cols: new Set(["program_text", "source", "block_summary", "block_recap", "completed_at", "applied_at"]),
     values: {
       source: (v) => [
         "manual_edit", "chat_save", "chat_replace", "chat_append", "chat_create",
         "self_change", "checkin_change", "pr_propagation", "correction_reversal",
-        "builder", "coach_save",
+        "builder", "coach_save", "next_block", "backfill", "goal_change",
       ].includes(v),
+      applied_at: (v) => typeof v === "string" && !Number.isNaN(Date.parse(v)),
     },
   },
 };

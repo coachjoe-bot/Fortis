@@ -32,7 +32,7 @@ import { currentPosition, positionBlock } from "./programPosition.js";
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
-import { snapshotProgramHistory } from "./programHistory.js";
+import { snapshotProgramHistory, startNextBlock } from "./programHistory.js";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -2631,6 +2631,10 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     try{ if(ex.weight_lbs && ex.weight_lbs>50 && ex.weight_lbs<600) await sbUpdate("athletes",athlete.id,{weight_lbs:Math.round(ex.weight_lbs)}); }catch(_){}
     try{ if(ex.set_height_finalized && athlete.height_finalized===false) await sbUpdate("athletes",athlete.id,{height_finalized:true}); }catch(_){}
     try{ if(ex.stop_asking_weight) await sbUpdate("athletes",athlete.id,{ask_weight:false}); }catch(_){}
+    // NOTE (Will, 07-27): a goal switch must NOT auto-close a block — people
+    // shift goals slightly while running the same program. Block boundaries are
+    // date-driven (planned end dates) or explicit; fuzzy signals may only ASK,
+    // in plain language. See docs/program-builder-blocks-goals-design.md.
     try{ if(ex.goal_update && ex.goal_update.length>3) await sbInsert("athlete_goals",{athlete_id:athlete.id,goal_text:ex.goal_update}); }catch(_){}
 
     // Optional injury-protective program tweak (respects program_locked). Skipped when a
@@ -4483,9 +4487,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Program Builder Phase A: the Program view is three subtabs (My Program /
   // Builder / Drafts). Always reopens on My Program.
   const [programTab,setProgramTab] = useState("program");
+  // Once the Builder subtab has been visited it stays MOUNTED (display:none)
+  // for the life of the modal, so subtab hops never reset the interview.
+  const [builderMounted,setBuilderMounted] = useState(false);
+  useEffect(()=>{ if(programTab==="builder") setBuilderMounted(true); },[programTab]);
   // Reset on CLOSE (not open) so a deep link may set the subtab before opening —
   // the chat redirect's "Open the Builder" needs to land ON the Builder.
-  useEffect(()=>{ if(!showProgram){ setProgramTab("program"); setBuilderDraft(null); } },[showProgram]);
+  useEffect(()=>{ if(!showProgram){ setProgramTab("program"); setBuilderDraft(null); setBuilderMounted(false); } },[showProgram]);
   // A parked Builder session being resumed from the Drafts tab (Phase C). Keyed
   // into the pane so resuming a different draft remounts a fresh interview.
   const [builderDraft,setBuilderDraft] = useState(null);
@@ -6948,22 +6956,26 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               <button onClick={()=>setShowProgram(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"4px 12px",cursor:"pointer",fontSize:12}}>✕ Close</button>
             </div>
             {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
-            <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"]].map(([k,label])=>(
+            <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0,overflowX:"auto"}}>
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PAST BLOCKS"]].map(([k,label])=>(
                 <button key={k} onClick={()=>setProgramTab(k)}
-                  style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5}}>
+                  style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
                   {k==="builder"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
                 </button>
               ))}
             </div>
-            {programTab==="builder"&&(
-              <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column"}}>
+            {/* Builder stays MOUNTED (hidden) across subtab switches: the interview
+                doesn't reset, no first question regenerates, and an in-flight draft
+                keeps writing while the athlete browses Drafts/Past Blocks. */}
+            {(builderMounted||programTab==="builder")&&(
+              <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:programTab==="builder"?"flex":"none",flexDirection:"column"}}>
                 <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
                   <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
                     locked={!!athlete.program_locked}
                     initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
                     rebuildFrom={builderDraft?.__rebuildFrom||null}
+                    onParked={()=>setProgramTab("drafts")}
                     onSaveToProgram={applyBuilderText}/>
                 </Suspense>
               </div>
@@ -6972,8 +6984,13 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
-                  onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
+              </div>
+            )}
+            {programTab==="blocks"&&(
+              <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <ProgramBlocksPane athlete={athlete} viewer="athlete"
+                  onRebuild={(b)=>{ setBuilderDraft({__rebuildFrom:b}); setProgramTab("builder"); }}/>
               </div>
             )}
             {programTab==="program"&&(<>
@@ -8428,20 +8445,19 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 // ─── PROGRAM DRAFTS PANE (Program Builder Phase B) ────────────────────────────
 // The Drafts subtab of the Program view, shared verbatim by the athlete modal and
 // the coach AthleteDetail program tab (exported; coach.jsx imports it like the
-// other App.jsx helpers). Shows three card kinds from the handoff: parked
-// interviews (Builder resumes them — Phase C), finished drafts (save / edit /
-// delete), and the applied-block history that snapshotProgram captures. "Save to
-// My Program" NEVER writes directly: it shows the exact line diff against the
-// current program and hands the confirmed text to onSaveToProgram, which is the
-// caller's own gated save path (athlete: sbUpdate + snapshot; coach:
-// onProgramSave — so the coach notification + parse-at-save ride along free).
-export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume, onRebuild}){
+// other App.jsx helpers). Drafts are the WORKBENCH: parked interviews (the
+// Builder resumes them — Phase C) and finished drafts (save / edit / delete).
+// Editing routes back into the Builder so the AI editor ("tell Joe what to
+// change") is always available — a bare textarea here made athletes think the
+// assistant was broken. Finished/applied history lives in ProgramBlocksPane
+// (the Past Blocks subtab), not here. "Save to My Program" NEVER writes
+// directly: it shows the exact line diff against the current program and hands
+// the confirmed text to onSaveToProgram, which is the caller's own gated save
+// path (athlete: sbUpdate + snapshot; coach: onProgramSave — so the coach
+// notification + parse-at-save ride along free).
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume}){
   const [drafts,setDrafts] = useState([]);
-  const [blocks,setBlocks] = useState([]);
   const [loaded,setLoaded] = useState(false);
-  const [openBlock,setOpenBlock] = useState(null);   // block id whose full text is expanded
-  const [editingId,setEditingId] = useState(null);   // draft id in hand-edit mode
-  const [editText,setEditText] = useState("");
   const [confirming,setConfirming] = useState(null); // {draft, diff} → replace-confirm view
   const [busy,setBusy] = useState(false);
   const [deleteArm,setDeleteArm] = useState(null);   // draft id armed for delete
@@ -8455,16 +8471,12 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     const ownerFilter = viewer==="coach" ? "coach" : "athlete";
     sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.("interview","draft")&order=updated_at.desc&select=*`)
       .then(r=>{ if(Array.isArray(r)) setDrafts(r); })
-      .catch(()=>{});
-    sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=12&select=id,block_summary,source,applied_at,completed_at,program_text`)
-      .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
       .catch(()=>{})
       .finally(()=>setLoaded(true));
   };
   useEffect(load,[athlete.id]);
 
   const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
-  const firstLine = (t) => (String(t||"").split("\n").find(l=>l.trim())||"").slice(0,80);
 
   const startConfirm = (d) => {
     const diff = lineDiff(athlete.program_text||"", d.draft_text||"").filter(x=>x.type!=="same"||x.text.trim());
@@ -8479,16 +8491,6 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       setConfirming(null);
       load();
     } catch(e){ setErr("Couldn't save that — try again in a sec."); }
-    setBusy(false);
-  };
-  const saveDraftEdit = async (d) => {
-    if(busy) return;
-    setBusy(true); setErr("");
-    try {
-      await sbUpdateWhere("program_drafts",`?id=eq.${d.id}`,{draft_text:editText,updated_at:new Date().toISOString()});
-      setDrafts(prev=>prev.map(x=>x.id===d.id?{...x,draft_text:editText}:x));
-      setEditingId(null);
-    } catch(e){ setErr("Couldn't save the edit — try again."); }
     setBusy(false);
   };
   const deleteDraft = async (d) => {
@@ -8557,7 +8559,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
             </span>
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
           </div>
-          {d.status==="draft"&&editingId!==d.id&&(
+          {d.status==="draft"&&(
             <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.6,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"0 0 10px",maxHeight:96,overflow:"hidden"}}>
               {String(d.draft_text||"").split("\n").slice(0,4).join("\n")}
             </pre>
@@ -8565,56 +8567,106 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
           {d.status==="interview"&&(
             <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Saved mid-interview — the Builder picks up exactly where it stopped.</div>
           )}
-          {editingId===d.id&&(
-            <>
-              <textarea value={editText} onChange={e=>setEditText(e.target.value)} rows={10}
-                style={{width:"100%",boxSizing:"border-box",background:"rgba(58,123,255,0.03)",border:`1px solid ${CA.line2}`,borderRadius:10,padding:"10px 12px",color:CA.text,fontSize:12,outline:"none",resize:"vertical",lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",marginBottom:8}}/>
-              <div style={{display:"flex",gap:8,marginBottom:4}}>
-                <button onClick={()=>saveDraftEdit(d)} disabled={busy} style={miniBtn(true,CA.green)}>{busy?"Saving…":"Save draft"}</button>
-                <button onClick={()=>setEditingId(null)} style={miniBtn(false)}>Cancel</button>
-              </div>
-            </>
-          )}
-          {editingId!==d.id&&(
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {d.status==="draft"&&!locked&&(
-                <button onClick={()=>startConfirm(d)} style={miniBtn(true)}>Save to My Program</button>
-              )}
-              {d.status==="draft"&&locked&&(
-                <span style={{color:CA.muted,fontSize:11,alignSelf:"center"}}>🔒 Coach-locked — ask your coach to apply it.</span>
-              )}
-              {d.status==="draft"&&(
-                <button onClick={()=>{setEditingId(d.id);setEditText(d.draft_text||"");}} style={miniBtn(false)}>Open & edit</button>
-              )}
-              {d.status==="interview"&&(onResume?(
-                <button onClick={()=>onResume(d)} style={miniBtn(true,CA.cyan)}>Resume interview</button>
-              ):(
-                <button disabled style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Resume</button>
-              ))}
-              {d.status==="draft"&&onResume&&(
-                <button onClick={()=>onResume(d)} style={miniBtn(false)}>Open in Builder</button>
-              )}
-              {deleteArm===d.id?(
-                <>
-                  <button onClick={()=>deleteDraft(d)} disabled={busy} style={miniBtn(true,CA.red)}>{busy?"…":"Really delete"}</button>
-                  <button onClick={()=>setDeleteArm(null)} style={miniBtn(false)}>Keep</button>
-                </>
-              ):(
-                <button onClick={()=>setDeleteArm(d.id)} style={miniBtn(false)}>Delete</button>
-              )}
-            </div>
-          )}
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {d.status==="draft"&&!locked&&(
+              <button onClick={()=>startConfirm(d)} style={miniBtn(true)}>Save to My Program</button>
+            )}
+            {d.status==="draft"&&locked&&(
+              <span style={{color:CA.muted,fontSize:11,alignSelf:"center"}}>🔒 Coach-locked — ask your coach to apply it.</span>
+            )}
+            {d.status==="draft"&&onResume&&(
+              <button onClick={()=>onResume(d)} title="Opens the Builder: edit by hand or tell Joe what to change" style={miniBtn(false)}>Open & edit</button>
+            )}
+            {d.status==="interview"&&(onResume?(
+              <button onClick={()=>onResume(d)} style={miniBtn(true,CA.accent)}>Resume interview</button>
+            ):(
+              <button disabled style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Resume</button>
+            ))}
+            {deleteArm===d.id?(
+              <>
+                <button onClick={()=>deleteDraft(d)} disabled={busy} style={miniBtn(true,CA.red)}>{busy?"…":"Really delete"}</button>
+                <button onClick={()=>setDeleteArm(null)} style={miniBtn(false)}>Keep</button>
+              </>
+            ):(
+              <button onClick={()=>setDeleteArm(d.id)} style={miniBtn(false)}>Delete</button>
+            )}
+          </div>
         </div>
       ))}
       {err&&!confirming&&<div style={{color:CA.red,fontSize:11.5,marginBottom:10}}>{err}</div>}
+    </div>
+  );
+}
 
-      {/* ── Applied-block history ── */}
-      <div style={{...sub,marginTop:18}}>Past blocks</div>
+// The Past Blocks subtab — the athlete's training history at BLOCK altitude,
+// shared by the athlete modal and the coach AthleteDetail (exported, like
+// ProgramDraftsPane). One card per program_history row: date range, the one-line
+// summary, and — once a block closes — Joe's recap (logs + goal outcome
+// condensed by closeBlock in programHistory.js; a proof feed over a whole block
+// instead of a week). The open block carries "Start next block": the explicit
+// boundary for multi-block programs whose text doesn't change at the turn —
+// closes the chapter (recap and all) and opens a fresh row on the same program.
+// If the athlete has a live program but zero history (pre-fix accounts — the
+// applied_at 403 meant NO block ever recorded), the pane backfills the current
+// program as an open block on first view.
+export function ProgramBlocksPane({athlete, viewer="athlete", onRebuild}){
+  const [blocks,setBlocks] = useState([]);
+  const [loaded,setLoaded] = useState(false);
+  const [openBlock,setOpenBlock] = useState(null);   // block id whose full text is expanded
+  const [nextArm,setNextArm] = useState(false);      // "Start next block" armed
+  const [busy,setBusy] = useState(false);
+  const [err,setErr] = useState("");
+  const backfilledRef = useRef(false);
+
+  const load = () => sbRead("program_history",`?athlete_id=eq.${athlete.id}&order=applied_at.desc&limit=24&select=id,block_summary,block_recap,source,applied_at,completed_at,program_text`)
+    .then(r=>{ if(Array.isArray(r)) setBlocks(r); })
+    .catch(()=>{})
+    .finally(()=>setLoaded(true));
+  useEffect(()=>{ load(); },[athlete.id]);
+
+  // Backfill exactly once: current program exists but was never snapshotted.
+  useEffect(()=>{
+    if(!loaded||blocks.length>0||backfilledRef.current) return;
+    const t=(athlete.program_text||"").trim();
+    if(!t) return;
+    backfilledRef.current=true;
+    (async()=>{
+      try {
+        await snapshotProgramHistory({athleteId:athlete.id,text:t,source:"backfill"},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+        load();
+      } catch(e){ console.error("[blocks] backfill failed:",e?.message||e); }
+    })();
+  },[loaded,blocks.length,athlete.id]);
+
+  const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+  const firstLine = (t) => (String(t||"").split("\n").find(l=>l.trim())||"").slice(0,80);
+  const sub = {fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:8};
+  const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10};
+  const miniBtn = (active,color=CA.accent) => ({background:active?`${color}20`:"transparent",border:`1px solid ${active?color:CA.border}`,color:active?color:CA.muted,borderRadius:8,padding:"5px 11px",cursor:"pointer",fontSize:11.5,fontWeight:600,fontFamily:"'DM Sans'"});
+
+  const advanceBlock = async () => {
+    if(busy) return;
+    setBusy(true); setErr(""); setNextArm(false);
+    try {
+      // Closes the open block (Joe writes the recap from the logs) and opens the
+      // next one on the same program text — the athlete's explicit "block 1 is
+      // done, block 2 starts now" for programs with internal blocks.
+      const did = await startNextBlock({athleteId:athlete.id,programText:athlete.program_text||""},{sbRead,sbInsert,sbUpdateWhere,askClaude});
+      if(did) load();
+    } catch(e){ setErr("Couldn't close the block — try again in a sec."); }
+    setBusy(false);
+  };
+
+  return (
+    <div>
+      <div style={sub}>Past blocks</div>
+      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
       {loaded&&blocks.length===0&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
-          No block history yet. From now on, every saved program is archived here — so the Builder can ask "how did the last block go?" with the receipts in hand.
+          No block history yet. Every saved program is archived here as a block — with Joe's recap of what actually happened — so the next Builder interview starts with the receipts in hand.
         </div>
       )}
+      {err&&<div style={{color:CA.red,fontSize:11.5,marginBottom:10}}>{err}</div>}
       {blocks.map(b=>(
         <div key={b.id} style={card}>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
@@ -8624,17 +8676,37 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
             {!b.completed_at&&<span style={{width:6,height:6,borderRadius:"50%",background:CA.green,boxShadow:`0 0 6px ${CA.green}`}}/>}
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>{String(b.source||"").replace(/_/g," ")}</span>
           </div>
-          <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:8}}>
+          <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:b.block_recap?6:8}}>
             {b.block_summary||firstLine(b.program_text)||"—"}
           </div>
-          <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide":"View"}</button>
+          {b.block_recap&&(
+            <div style={{border:`1px solid ${CA.border}`,borderLeft:`2px solid ${CA.accent}`,borderRadius:8,background:"rgba(58,123,255,0.05)",padding:"8px 11px",color:CA.muted2,fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap",marginBottom:8}}>
+              {b.block_recap}
+            </div>
+          )}
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={()=>setOpenBlock(openBlock===b.id?null:b.id)} style={miniBtn(false)}>{openBlock===b.id?"Hide program":"View program"}</button>
             {onRebuild?(
               <button onClick={()=>onRebuild(b)} title="Start a Builder interview with this block as the starting point" style={miniBtn(false)}>Rebuild from this</button>
             ):(
               <button disabled title="Coming soon" style={{...miniBtn(false),opacity:0.5,cursor:"default"}}>Rebuild from this</button>
             )}
+            {!b.completed_at&&(nextArm?(
+              <>
+                <button onClick={advanceBlock} disabled={busy} style={miniBtn(true,CA.amber)}>{busy?"Closing…":"Yes — close it & start the next"}</button>
+                <button onClick={()=>setNextArm(false)} style={miniBtn(false)}>Not yet</button>
+              </>
+            ):(
+              <button onClick={()=>setNextArm(true)} disabled={busy}
+                title="Done with this phase of your program? Joe closes the chapter with a recap of what moved, and the next block starts fresh."
+                style={miniBtn(true,CA.accent)}>Start next block</button>
+            ))}
           </div>
+          {!b.completed_at&&nextArm&&(
+            <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.6,marginTop:8}}>
+              This closes the current block: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh block starts on the same program. Do this when you're moving to the next phase — like block 1 → block 2 of a multi-block plan.
+            </div>
+          )}
           {openBlock===b.id&&(
             <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"10px 0 0",borderTop:`1px solid ${CA.border}`,paddingTop:10}}>
               {b.program_text}
