@@ -16,7 +16,7 @@ import { loadStripe } from "@stripe/stripe-js/pure";
 // Stripe's React bindings live in their own lazy chunk (src/payform.jsx) — the
 // card form is the only consumer and most sessions never reach checkout.
 const StripePayBlock = lazy(()=>import("./payform.jsx"));
-import { ConsentFlow, LEGAL_VERSION } from "./legal.jsx";
+import { ConsentFlow, TERMS_VERSION, PRIVACY_VERSION } from "./legal.jsx";
 // Quick Log draft persistence — the rules that let an athlete close the sheet mid-workout
 // and pick it back up (expiry window, staleness check, clear-on-send).
 import {
@@ -122,7 +122,7 @@ const PRICE_CENTS = {
 };
 const usd = (cents) => `$${(cents / 100).toFixed(2)}`;
 
-const SPORTS = ["Football","Basketball","Volleyball","Soccer","Baseball","Archery","Olympic Weightlifting","Running","General Fitness"];
+const SPORTS = ["Football","Basketball","Volleyball","Soccer","Baseball","Archery","Olympic Weightlifting","Powerlifting","Running","General Fitness"];
 
 // ─── TIERS ────────────────────────────────────────────────────────────────────
 const TIERS = {
@@ -1324,8 +1324,19 @@ const JOEBOT_SPORTS = {
   "Baseball":"Rotational power, posterior chain, shoulder health, single-leg strength.",
   "Archery":"Shoulder stability, posterior chain, core anti-rotation, grip strength.",
   "Olympic Weightlifting":"Snatch and clean technique, posterior chain, mobility, overhead stability.",
+  "Powerlifting":"Squat, bench, and deadlift specificity -- peaking blocks, attempt selection, meet prep.",
   "Running":"Single-leg strength, posterior chain, hip stability, calf/ankle strength.",
   "General Fitness":"Build a balanced foundation -- squat, hinge, push, pull, carry. Health and longevity focus."
+};
+// Signup goal-card labels, phrased as short "you told us ___" clauses for the
+// first-ever chat message (07-29 UX audit fix #1) — keys mirror JOEBOT_GOALS /
+// the goal picker cards in the signup wizard (Step 4).
+const SIGNUP_GOAL_PHRASES = {
+  strength:"you're chasing maximum strength",
+  sport:"you're training for sport performance",
+  speed:"you're working on speed and endurance",
+  body:"you're focused on body composition",
+  fitness:"you want general health and fitness",
 };
 const JOEBOT_STATIC_SYS = `You are Coach Joe Thomas -- high school strength coach, 20+ years military S&C. Direct, real, no fluff.
 
@@ -1357,7 +1368,8 @@ RESERVED (only when situation genuinely matches):
 - "It's not about workout 1, it's about workout 100.": Athlete missed sessions only.
 - "You're only in competition with the you of yesterday.": Athlete comparing to others only.
 
-FORMATTING: Use numbered lists for exercises/alternatives/steps. Never paragraph format for exercise lists.
+FORMATTING: PLAIN TEXT only -- no markdown (no **bold**, no # headers, no bullet asterisks). The chat UI does not render markdown, so any asterisks or hashes show up as literal characters on screen. Use plain sentences and numbered lists (1. 2. 3.) for structure instead.
+Use numbered lists for exercises/alternatives/steps. Never paragraph format for exercise lists.
 Match length to the question: a sentence or two for logs and simple asks; go longer only for genuinely technical or programming questions that need the detail — thorough, never padded. Never cut off mid-thought; if you're running long, tighten the wording but finish the point. Use their name once naturally.
 Pain → suggest alternatives, and if they have a coach, support the app's offer to send that coach a structured change request (never tell them to email about it). Equipment unavailable → 2-3 specific alternatives, same coach-request offer if it keeps blocking a locked program.
 Locked program → you can't edit it yourself, but you can draft the request their coach reviews. Out of scope (billing, account access): "That's one for Coach Joe directly -- email support@trainwilco.com."
@@ -3460,12 +3472,16 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
   };
 
   // Record the athlete's legal acceptances. Best-effort: a failure never blocks
-  // account creation (per the consent spec). One row per document, tagged with the
-  // version the athlete actually agreed to.
+  // account creation (per the consent spec). One row per document, tagged with
+  // THAT document's own version (07-29 fix — Terms and Privacy were last updated
+  // on different dates, so a single shared version stamped every row with a
+  // Terms version that never existed; parental_consent covers the Terms'
+  // liability waiver, so it rides on TERMS_VERSION too).
   const recordAcceptances = async (athleteId, isMinor) => {
     const docs = ["terms","privacy",...(isMinor?["parental_consent"]:[])];
+    const versionFor = (d) => d==="privacy" ? PRIVACY_VERSION : TERMS_VERSION;
     try {
-      await sbInsert("legal_acceptances", docs.map(d=>({athlete_id:athleteId, document:d, version:LEGAL_VERSION})));
+      await sbInsert("legal_acceptances", docs.map(d=>({athlete_id:athleteId, document:d, version:versionFor(d)})));
     } catch{ /* swallow: consent insert is best-effort, must not block signup */ }
   };
 
@@ -3605,7 +3621,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
       if(ageYears>100){setErr("Enter a valid birthday.");return;}
       if(!data.heightFt||isNaN(data.heightFt)||+data.heightFt<3||+data.heightFt>8){setErr("Enter a valid height.");return;}
       if(!data.weight||isNaN(data.weight)||+data.weight<50||+data.weight>500){setErr("Enter a valid weight.");return;}
-      if(!data.gender){setErr("Select a gender option.");return;}
+      if(!data.gender){setErr("Select a sex option.");return;}
       setStep(4);
     } else if(step===4){
       // YOUR TRAINING — goal + days + equipment (goal and days had no validation
@@ -3752,7 +3768,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             placeholder="----" style={inpA({fontSize:24,letterSpacing:8,textAlign:"center"})}/>
         </div>
         <div style={{marginBottom:20}}>
-          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>EMAIL <span style={{color:CA.muted,fontWeight:400}}>(used to recover your PIN or username)</span></label>
+          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>EMAIL <span style={{color:CA.muted,fontWeight:400}}>(required — used to recover your PIN or username)</span></label>
           <input type="email" inputMode="email" autoComplete="email" value={data.email}
             onChange={e=>setD("email",e.target.value)}
             placeholder="you@email.com" style={inpA()}/>
@@ -3874,7 +3890,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             <div style={{marginTop:12}}>
               <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>COACH'S EMAIL</label>
               <input type="email" value={data.coachEmail} onChange={e=>setD("coachEmail",e.target.value)} autoComplete="off"
-                placeholder="coach@school.edu" style={inpA()}/>
+                placeholder="coach@yourteam.org" style={inpA()}/>
               <div style={{color:CA.muted,fontSize:11,marginTop:6,lineHeight:1.5}}>Pro/Elite: coach gets weekly progress reports. All tiers: coach gets a welcome email.</div>
             </div>
           </div>
@@ -4268,7 +4284,7 @@ function CoachLoginScreen({setView,setCoach,setErr,err}) {
                 <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>COACH EMAIL</label>
                 <input type="email" inputMode="email" autoComplete="email" value={recoveryEmail} onChange={e=>setRecoveryEmail(e.target.value)}
                   onKeyDown={e=>e.key==="Enter"&&sendRecovery()}
-                  placeholder="coach@school.edu" style={inpA()}/>
+                  placeholder="coach@yourteam.org" style={inpA()}/>
               </div>
               {err&&<div style={{color:CA.red,fontSize:12,marginBottom:12,textAlign:"center"}}>{err}</div>}
               <button onClick={sendRecovery} disabled={loading} style={btn(CA_BTN,"#fff",{opacity:loading?0.7:1,cursor:loading?"not-allowed":"pointer"})}>
@@ -5260,7 +5276,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const latestAthlete = freshAthlete?.[0]||athlete;
         if(!latestAthlete.first_chat_complete){
           setGoalCollectionActive(true);
-          setMessages([{role:"assistant",content:`Welcome to WILCO, ${latestAthlete.name}. Before I build your program — what are you specifically training for? Give me a goal and a number if you have one. For example: "I want to squat 300 lbs by football season" or "I want to lose 15 lbs before spring."`}]);
+          // Wired to what the signup wizard already captured (07-29 UX audit fix
+          // #1) — never re-ask what they just told us; only ask for the number/date
+          // the wizard can't collect.
+          const goalPhrase = SIGNUP_GOAL_PHRASES[latestAthlete.goal] || "you want to get started";
+          const sportBit = latestAthlete.sport && latestAthlete.sport!=="General Fitness" ? ` for ${latestAthlete.sport}` : "";
+          setMessages([{role:"assistant",content:`Welcome to WILCO, ${latestAthlete.name}. You told us ${goalPhrase}${sportBit} — give me a specific number or date to build toward (a lift, a time, a testing day) and I'll get your program started.`}]);
           setHistoryLoaded(true);
           return;
         }
@@ -6904,7 +6925,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div style={{flex:1,minWidth:0,color:CA.muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{athlete.name}</div>
           {/* Tier badge — athlete world holds the accent electric-blue (TIERS.color stays
               gold for the coach side / pricing; we repoint just this render). */}
-          {(()=>{const t=TIERS[athlete.tier||"free"]||{badge:athlete.tier==="school"?"SCHOOL":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
+          {(()=>{const t=TIERS[athlete.tier||"free"]||{badge:athlete.tier==="school"?"ORG":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
           {(athlete.total_sessions_logged||0)>=100&&(()=>{const cnt=athlete.total_sessions_logged||0;const tier=cnt>=1000?"×4":cnt>=500?"×3":cnt>=250?"×2":"";return<span title="WILCO Certified — 100+ workouts logged" style={{flexShrink:0,background:`${CA.accent}22`,border:`1px solid ${CA.accent}`,borderRadius:4,padding:"1px 6px",color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>✦ CERTIFIED{tier?` ${tier}`:""}</span>;})()}
         </div>
         {/* Row 1.5: streak charge-chain — this week's training as a row of links,
@@ -9922,7 +9943,7 @@ function ProfileCompletionModal({athlete, onClose, onSave}) {
             <div style={{marginBottom:16}}>{label("WEIGHT (lbs)")}<input type="number" min={50} max={500} value={data.weight} onChange={e=>setD("weight",e.target.value)} placeholder="e.g. 185" style={inpA()}/></div>
           </>}
 
-          {needsGender&&<div style={{marginBottom:16}}>{label("GENDER")}
+          {needsGender&&<div style={{marginBottom:16}}>{label("SEX")}
             <div style={{display:"flex",gap:8}}>
               {["Male","Female"].map(g=>(
                 <button key={g} onClick={()=>setD("gender",g)}
@@ -10316,7 +10337,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
             <span style={{display:"flex",alignItems:"center",gap:8}}>
               {/* Tier in its "cool box" — gold for Pro, blue for Elite/School — same
                   badge language used elsewhere (nav badge, tier cards). */}
-              {(()=>{const pt=currentTier==="school"?{label:"SCHOOL",color:CA.blue}:(TIERS[currentTier]||{label:(currentTier||"free").toUpperCase(),color:CA.muted});return(
+              {(()=>{const pt=currentTier==="school"?{label:"ORGANIZATION",color:CA.blue}:(TIERS[currentTier]||{label:(currentTier||"free").toUpperCase(),color:CA.muted});return(
                 <span style={{background:`${pt.color}22`,border:`1px solid ${pt.color}`,borderRadius:6,padding:"3px 10px",color:pt.color,fontSize:13,fontWeight:700,letterSpacing:1.5,fontFamily:"'Bebas Neue'"}}>{pt.label}</span>
               );})()}
               <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:CA.navy2,border:`1px solid ${CA.border}`,color:CA.muted,fontSize:10,transform:showPlan?"rotate(180deg)":"none",transition:"transform 0.15s"}}>▾</span>
@@ -10328,8 +10349,8 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
 
           {currentTier==="school" ? (
             <div style={{background:`${CA.blue}15`,border:`1px solid ${CA.blue}55`,borderRadius:10,padding:"12px 14px"}}>
-              <div style={{color:CA.blue,fontWeight:700,fontSize:14,marginBottom:2,fontFamily:"'Bebas Neue'",letterSpacing:2}}>SCHOOL PLAN</div>
-              <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5}}>Your access is covered by your school or team. No payment needed.</div>
+              <div style={{color:CA.blue,fontWeight:700,fontSize:14,marginBottom:2,fontFamily:"'Bebas Neue'",letterSpacing:2}}>ORGANIZATION PLAN</div>
+              <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5}}>Your access is covered by your organization or team. No payment needed.</div>
             </div>
           ) : (
           <>

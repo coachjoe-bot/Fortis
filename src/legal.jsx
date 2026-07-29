@@ -1,16 +1,26 @@
 // ─── LEGAL DOCUMENTS + CONSENT UI ────────────────────────────────────────────
 // Embedded Terms of Service / Liability Waiver and Privacy Policy, plus the
 // full-screen consent flow shown at athlete signup. The text below is the
-// verbatim "Last Updated: June 1, 2026" version of the documents hosted at
-// trainwilco.com/terms and trainwilco.com/privacy.
+// verbatim version of the documents hosted at trainwilco.com/terms and
+// trainwilco.com/privacy (Terms last updated June 1, 2026; Privacy last
+// updated July 10, 2026 — they update independently, hence separate version
+// constants below).
 //
-// KEEP IN SYNC: when the hosted documents change, update both the text constants
-// below AND LEGAL_VERSION. LEGAL_VERSION is written into the legal_acceptances
-// table on signup so we have an auditable record of which version each athlete
-// agreed to.
+// KEEP IN SYNC: when a hosted document changes, update its text constant below
+// AND its matching *_VERSION constant. Each version is written into the
+// legal_acceptances table on signup so we have an auditable record of which
+// version of THAT document each athlete agreed to.
 import React, { useState } from "react";
 
-export const LEGAL_VERSION = "2026-07-10";
+// Split per-document (07-29 fix): the acceptance log was stamping every
+// document — terms, privacy, AND parental_consent — with ONE version string,
+// which falsely recorded athletes as having accepted a version of the Terms
+// that never existed (Terms' own "Last Updated" is June 1; only Privacy was
+// actually updated July 10). Each constant must match its document's own
+// "Last Updated" line below. parental_consent covers the Terms' liability
+// waiver (§10.5), so it rides on TERMS_VERSION.
+export const TERMS_VERSION = "2026-06-01";
+export const PRIVACY_VERSION = "2026-07-10";
 
 export const TERMS_TEXT = `WILCO TRAINING LLC
 Terms of Service and Liability Waiver
@@ -144,7 +154,7 @@ Wilco Training LLC  |  TrainWilco.com  |  support@trainwilco.com801 Internationa
 export const PRIVACY_TEXT = `WILCO TRAINING LLC
 Privacy Policy
 Effective Date: May 22, 2026  |  Last Updated: July 10, 2026
-Wilco Training LLC (“Wilco,” “we,” “us,” or “our”) is committed to protecting the privacy of all users of the Wilco Training platform (“Platform”), including athletes, coaches, and school administrators. This Privacy Policy explains what information we collect, how we use it, how we protect it, and what choices you have. By using the Platform, you agree to the practices described in this Privacy Policy.
+Wilco Training LLC (“Wilco,” “we,” “us,” or “our”) is committed to protecting the privacy of all users of the Wilco Training platform (“Platform”), including athletes, coaches, and organization administrators. This Privacy Policy explains what information we collect, how we use it, how we protect it, and what choices you have. By using the Platform, you agree to the practices described in this Privacy Policy.
 This Privacy Policy applies to the Platform operated at TrainWilco.com and all associated web and mobile applications.
 1. Information We Collect
 1.1 Information You Provide Directly
@@ -158,14 +168,15 @@ Video and image submissions: footage or still frames you upload for form review 
 When you use the Platform, we automatically collect certain technical and usage data, including:
 Device type, operating system, and browser information;
 IP address and general geographic location;
-Pages visited, features used, and time spent on the Platform; and
-Session identifiers and authentication tokens.
+Pages visited, features used, and time spent on the Platform;
+Session identifiers and authentication tokens; and
+Push notification tokens, if you enable notifications on your device or browser — used only to deliver the notification types described in Section 2, never sold or shared with third parties.
 This information is used to operate and improve the Platform and does not identify you personally on its own.
 1.3 Payment Information
 Payment transactions are processed by Stripe, Inc., our third-party payment processor. Wilco does not collect, store, or have access to your full credit card number, bank account number, or other sensitive financial data. Stripe’s handling of your financial information is governed by Stripe’s Privacy Policy, available at stripe.com/privacy.
 1.4 Analytics and Tracking Technologies
 We use analytics tools and advertising technologies to understand how people discover and use the Platform and to measure our advertising. This may include cookies, pixel tags, and similar tracking technologies. You may disable certain cookies through your browser settings, though doing so may affect some Platform features.
-On our public website at TrainWilco.com we use the Meta Pixel, provided by Meta Platforms, Inc., alongside our own analytics. When you complete a paid subscription, we also send a matching purchase event to Meta through the Meta Conversions API. We use these tools to see whether our ads lead to sign-ups and subscriptions so we can improve them. Section 3.2 describes what we share with Meta, and Section 13.2 explains how to opt out.
+On our public website at TrainWilco.com we use the Meta Pixel, provided by Meta Platforms, Inc., alongside our own analytics. When you complete a paid subscription, we also send a matching purchase event to Meta through the Meta Conversions API. We use these tools to see whether our ads lead to sign-ups and subscriptions so we can improve them. Section 3.2 describes what we share with Meta, and Section 13.2 explains how to opt out. The base Meta Pixel (page views, trial starts, and similar site activity) applies to all visitors and has no age gate. The purchase event sent through the Meta Conversions API is the exception: we do not send it for accounts we identify as belonging to a user under 16 based on the date of birth provided at signup.
 There is no uniform industry standard for “Do Not Track” browser signals, so we do not respond to them. We do honor the Global Privacy Control (“GPC”) signal. If your browser or a browser extension sends a GPC signal, we treat it as a request to opt out of sharing your information for advertising, and we disable the Meta Pixel for that visit. You can also opt out at any time using our “Do Not Sell or Share My Personal Information” page at TrainWilco.com/do-not-sell.
 2. How We Use Your Information
 We use the information we collect to provide, maintain, and improve the Platform. Specifically, we use your information to:
@@ -175,6 +186,7 @@ Track your progress over time and display performance data within your account;
 Enable your coach or institution’s coaching staff to access your session data, progress reports, and AI coaching interactions through the coach dashboard;
 Process subscription payments and manage your account;
 Send essential service communications, including account confirmations, subscription updates, and policy changes;
+Send push notifications you've enabled — such as when a new coaching letter is ready, a reminder after a period of training inactivity, or an update your coach makes to your program;
 Respond to your support inquiries and resolve disputes;
 Analyze aggregate, de-identified usage patterns to improve Platform features and AI model performance;
 Improve and train our AI systems using de-identified, aggregated data derived from Platform usage. This data cannot reasonably be used to identify you individually; and
@@ -182,7 +194,7 @@ Measure and optimize our advertising by sharing limited activity, such as page v
 We use only a limited set of your information for advertising, as described above and in Sections 3.2 and 13.2. We do not sell your personal information for money. We never use your health information, workout logs, coach feedback, or video and image submissions for advertising, and we do not share that information with advertising partners. You can opt out of advertising sharing at any time through the “Do Not Sell or Share My Personal Information” page or by turning on Global Privacy Control.
 3. How We Share Your Information
 3.1 With Coaching Staff and Institutions
-If you are an athlete enrolled under a school or coach account, your session data, progress reports, AI coaching interactions, and form review feedback are visible to the coaching staff authorized under that account. This sharing is a core function of the Platform and is necessary to deliver the Services.
+If you are an athlete enrolled under an organization or coach account, your session data, progress reports, AI coaching interactions, and form review feedback are visible to the coaching staff authorized under that account. This sharing is a core function of the Platform and is necessary to deliver the Services.
 3.2 With Third-Party Service Providers
 We work with a limited set of vetted third parties that help us operate and promote the Platform. With the exception of Meta Platforms, Inc., which is described below, these providers act as our service providers and are contractually prohibited from using your data for any purpose other than providing services to Wilco. Our current providers include:
 Anthropic PBC — AI processing and language model infrastructure. Athlete data submitted to AI coaching features is processed through Anthropic’s systems, governed by Anthropic’s Privacy Policy at anthropic.com/privacy.
