@@ -21,6 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
+import { crewPeerIds, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
 
@@ -53,6 +54,17 @@ const WRITABLE = new Set([
   // block-history snapshot written on every program_text save (see
   // src/programHistory.js). RLS-on/zero-policy tables reached only through here.
   "program_drafts", "program_history",
+  // WILCO Crew V1. crew_moments gets a plain ATHLETE_OWN_COL entry below (a
+  // moment is just an athlete-owned insert, same trust level as workouts/prs).
+  // crew_edges/crew_reactions deliberately have NO ATHLETE_OWN_COL entry, which
+  // closes the GENERIC insert/update/delete/upsert path for them (both athlete
+  // and coach callers 403 there, same as any table missing from that map) — all
+  // real edge/reaction writes go through the dedicated `crew` op (below), whose
+  // per-action authz (peer checks, the 10-cap, canonical pair ordering, the
+  // reaction emoji allowlist, the org-comparison ban) IS the security boundary
+  // for those two, and can never be bypassed by a client crafting a raw
+  // insert/update/delete against them.
+  "crew_edges", "crew_moments", "crew_reactions",
 ]);
 
 // ─── Phase 1b(b): scoped READS ────────────────────────────────────────────────
@@ -129,6 +141,15 @@ const ATHLETE_OWN_COL = {
   // 'athlete', status/scope/source to their enums).
   program_drafts: "athlete_id",
   program_history: "athlete_id",
+  // WILCO Crew V1. crew_moments is a plain athlete-owned insert (same trust level
+  // as workouts/prs — the client decides WHEN a moment is worth writing; the
+  // gateway just proves the row belongs to the caller). Deliberately NOT
+  // crew_edges/crew_reactions — those need real server-side business logic
+  // (request/accept cap, canonical pair ordering, the reaction toggle + emoji
+  // allowlist) that a plain ownership-scoped insert can't express, so those two
+  // are handled ONLY by the dedicated `crew` op above and stay unreachable here
+  // (no entry below → the generic path 403s them, see the WRITABLE comment).
+  crew_moments: "athlete_id",
 };
 
 // ── Per-COLUMN allowlist for athlete writes to sensitive tables ───────────────
@@ -235,6 +256,20 @@ export default async function handler(req, res) {
         if (e.status === 401) await recordAuthFail();
         throw e;
       }
+    }
+
+    // ── WILCO Crew V1: peer-scoped op ────────────────────────────────────────
+    // Routed here (same spot as the "read" special case below, before the
+    // generic WRITABLE table check) because crew reads/writes need a peer set
+    // resolved BEFORE the row filter is known — exactly like the coach non-
+    // master read-scoping block just below ("look up my athletes, then filter
+    // by that id set"), and because accepting a request/removing a member/
+    // reacting are none of insert/update/delete/upsert in the generic sense
+    // (they flip status based on which side you are, or toggle a row). See
+    // api/_crew.js for the shared peer-resolution helper and api/push.js for
+    // the action-dispatch pattern this mirrors.
+    if (body.op === "crew") {
+      return await handleCrew(body, caller, res);
     }
 
     // ── Phase 1b(b): scoped READ ─────────────────────────────────────────────
@@ -606,6 +641,231 @@ async function prepCoachAlert(caller, table, data) {
   }
 
   return null;
+}
+
+// ─── WILCO Crew V1 — the `crew` op's action dispatch ─────────────────────────
+// Every action resolves the peer set from the CALLER's OWN id, never from a
+// client-supplied athlete id — a client must never be able to ask for an
+// arbitrary athlete's moments, roster row, or peer set (build spec §6).
+// Crew is athlete-only (no coach-facing surface in this build — spec §9).
+const CREW_CODE_LEN = 4;
+
+async function loadCallerAthlete(caller) {
+  if (caller.role !== "athlete") throw httpErr(403, "This account can't use Crew");
+  const rows = await sbSelect("athletes", `?id=eq.${enc(caller.id)}&select=id,name,crew_org_key,crew_code,school_id,coach_id`);
+  const me = rows[0];
+  if (!me) throw httpErr(401, "Not authorized");
+  return me;
+}
+
+function genCrewCode(name) {
+  const base = String(name || "ATH").trim().split(/\s+/)[0].toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) || "ATH";
+  let suffix = "";
+  for (let i = 0; i < CREW_CODE_LEN; i++) suffix += CREW_CODE_ALPHABET[Math.floor(Math.random() * CREW_CODE_ALPHABET.length)];
+  return `${base}-${suffix}`;
+}
+
+// Server-side port of src/App.jsx's `trainedThisWeek` memo (Mon-Sun, real
+// sessions only) — used for peers' roster rows, where the client can't read
+// their raw workouts. Returns {athleteId -> Set<dow>}.
+function trainedDaysThisWeekByAthlete(workoutRows) {
+  const out = {};
+  for (const w of workoutRows) {
+    const pd = typeof w.parsed_data === "string" ? (JSON.parse(w.parsed_data || "{}")) : (w.parsed_data || {});
+    const hasWork = (Array.isArray(pd.exercises) && pd.exercises.length > 0) || !!pd.run_data;
+    if (!hasWork) continue;
+    const d = new Date(w.created_at);
+    const set = (out[w.athlete_id] = out[w.athlete_id] || new Set());
+    set.add((d.getDay() + 6) % 7);
+  }
+  return out;
+}
+
+async function handleCrew(body, caller, res) {
+  const action = String(body.action || "");
+  const me = await loadCallerAthlete(caller);
+
+  if (action === "crew-code-ensure") {
+    if (me.crew_org_key) throw httpErr(403, "Org accounts don't need a crew code");
+    if (me.crew_code) return res.status(200).json({ code: me.crew_code });
+    let code = null;
+    for (let tries = 0; tries < 8 && !code; tries++) {
+      const candidate = genCrewCode(me.name);
+      try {
+        await sbWrite({ method: "PATCH", table: "athletes", query: `?id=eq.${enc(me.id)}`, body: { crew_code: candidate }, prefer: "return=minimal" });
+        code = candidate;
+      } catch (e) {
+        if (tries === 7) throw httpErr(500, "Couldn't generate a crew code — try again");
+        // Likely a unique-constraint collision on crew_code — retry with a fresh suffix.
+      }
+    }
+    return res.status(200).json({ code });
+  }
+
+  if (action === "crew-request") {
+    if (me.crew_org_key) throw httpErr(403, "Org accounts can't add a crew by code");
+    const code = str(body.code, { max: 20, name: "code" }).toUpperCase();
+    const targets = await sbSelect("athletes", `?crew_code=eq.${enc(code)}&select=id,crew_org_key`);
+    const target = targets[0];
+    if (!target) throw httpErr(404, "No athlete found with that code");
+    if (String(target.id) === String(me.id)) throw httpErr(400, "That's your own code");
+    // Org athletes can't be added by code either — enforced on BOTH sides so an
+    // org kid can never be pulled into someone's individual crew.
+    if (target.crew_org_key) throw httpErr(403, "That athlete can't be added by code");
+    const myAccepted = await sbSelect("crew_edges", `?status=eq.accepted&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=id`);
+    if (myAccepted.length >= CREW_CAP) throw httpErr(403, `Crew is full (max ${CREW_CAP})`);
+    const [a, b] = orderedPair(me.id, target.id); // canonical ordering computed server-side — never trust a client-supplied order
+    const already = await sbSelect("crew_edges", `?athlete_a=eq.${enc(a)}&athlete_b=eq.${enc(b)}&select=id,status`);
+    if (already[0]) {
+      if (already[0].status === "accepted") throw httpErr(400, "Already in your crew");
+      return res.status(200).json({ ok: true, pending: true, id: already[0].id });
+    }
+    const inserted = await sbWrite({ method: "POST", table: "crew_edges", body: { athlete_a: a, athlete_b: b, status: "pending", requested_by: me.id }, prefer: "return=representation" });
+    return res.status(200).json(Array.isArray(inserted) ? inserted[0] : inserted);
+  }
+
+  if (action === "crew-accept" || action === "crew-decline") {
+    const id = str(body.id, { max: 64, name: "id" });
+    const rows = await sbSelect("crew_edges", `?id=eq.${enc(id)}&select=*`);
+    const edge = rows[0];
+    if (!edge) throw httpErr(404, "Request not found");
+    if (String(edge.athlete_a) !== String(me.id) && String(edge.athlete_b) !== String(me.id)) throw httpErr(403, "Not your request");
+    if (action === "crew-decline") {
+      await sbWrite({ method: "DELETE", table: "crew_edges", query: `?id=eq.${enc(id)}`, prefer: "return=minimal" });
+      return res.status(200).json({ ok: true });
+    }
+    // Re-check the cap on the ACCEPTING side too — pending edges can pile up
+    // past the cap since only accept/request enforce it, not pending inserts.
+    const myAccepted = await sbSelect("crew_edges", `?status=eq.accepted&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=id`);
+    if (myAccepted.length >= CREW_CAP) throw httpErr(403, `Crew is full (max ${CREW_CAP})`);
+    const updated = await sbWrite({ method: "PATCH", table: "crew_edges", query: `?id=eq.${enc(id)}`, body: { status: "accepted", accepted_at: new Date().toISOString() }, prefer: "return=representation" });
+    return res.status(200).json(Array.isArray(updated) ? updated[0] : updated);
+  }
+
+  if (action === "crew-remove") {
+    // One-sided, silent — delete the row, no notification to the other side.
+    // Not available on org membership — there is no edge to remove there.
+    if (me.crew_org_key) throw httpErr(403, "Org membership can't be removed from here");
+    const id = str(body.id, { max: 64, name: "id" });
+    const rows = await sbSelect("crew_edges", `?id=eq.${enc(id)}&status=eq.accepted&select=id,athlete_a,athlete_b`);
+    const edge = rows[0];
+    if (!edge || (String(edge.athlete_a) !== String(me.id) && String(edge.athlete_b) !== String(me.id))) throw httpErr(404, "Not found");
+    await sbWrite({ method: "DELETE", table: "crew_edges", query: `?id=eq.${enc(id)}`, prefer: "return=minimal" });
+    return res.status(200).json({ ok: true });
+  }
+
+  if (action === "crew-list") {
+    const peers = await crewPeerIds(me);
+    // Pending requests (individual flow only — org membership has no request state).
+    let pending = [];
+    if (!me.crew_org_key) {
+      pending = await sbSelect("crew_edges", `?status=eq.pending&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=*`);
+    }
+    if (!peers.length) {
+      return res.status(200).json({ isOrg: !!me.crew_org_key, code: me.crew_code || null, pending, roster: [] });
+    }
+    const idList = peers.map((id) => `"${id}"`).join(",");
+    const [athletesRows, goalsRows, workoutRows, recentWorkoutRows] = await Promise.all([
+      sbSelect("athletes", `?id=in.(${idList})&select=id,name,training_days_per_week`),
+      // Goal-at-a-glance ONLY for peers who opted in (share_with_crew=true) — default off.
+      sbSelect("athlete_goals", `?athlete_id=in.(${idList})&share_with_crew=eq.true&order=created_at.desc&select=*`),
+      sbSelect("workouts", `?athlete_id=in.(${idList})&created_at=gte.${enc(mondayIso())}&select=athlete_id,parsed_data,created_at`),
+      // Quiet-crewmate nudge (8-day rule): bounded to a generous window so "quiet"
+      // still distinguishes from "never logged" without an unbounded per-peer scan.
+      sbSelect("workouts", `?athlete_id=in.(${idList})&created_at=gte.${enc(new Date(Date.now() - 400 * 864e5).toISOString())}&select=athlete_id,created_at&order=created_at.desc`),
+    ]);
+    const trainedByAthlete = trainedDaysThisWeekByAthlete(workoutRows);
+    const latestGoalByAthlete = {};
+    for (const g of goalsRows) if (!latestGoalByAthlete[g.athlete_id]) latestGoalByAthlete[g.athlete_id] = g;
+    const lastWorkoutAt = {};
+    for (const w of recentWorkoutRows) if (!lastWorkoutAt[w.athlete_id]) lastWorkoutAt[w.athlete_id] = w.created_at; // query is DESC — first hit per id is the latest
+
+    // A peer's goal progress needs their current e1RM for the parsed lift — the
+    // ONLY numbers server-computed this way are ones the roster already needs to
+    // show; a peer's raw workouts are never returned to the caller, only this
+    // one derived number (never included in the response for org callers'
+    // comparison fields — there ARE no comparison fields here; see below).
+    const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
+    const roster = [];
+    for (const a of athletesRows) {
+      const g = latestGoalByAthlete[a.id] || null;
+      let goal = null;
+      if (g) {
+        goal = { goalText: g.goal_text, parsedLift: g.parsed_lift, targetLbs: g.target_lbs, targetDate: g.target_date };
+        if (g.parsed_lift && g.target_lbs) {
+          goal.currentLbs = await bestE1rmLbsForLift(a.id, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
+        }
+      }
+      // NOTE: compare_a/compare_b (V2 opt-in) are never selected/returned here at
+      // all — there is no comparison surface in V1, org or individual. When V2
+      // lands, this is the spot that must keep stripping those fields for org
+      // callers (see api/_crew.js's org-comparison ban + the DB trigger).
+      const lastAt = lastWorkoutAt[a.id] || null;
+      const quietDays = lastAt ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 864e5) : null;
+      roster.push({
+        id: a.id, name: a.name,
+        trainedThisWeek: (trainedByAthlete[a.id] || new Set()).size,
+        trainingDaysPerWeek: a.training_days_per_week || null,
+        goal,
+        // Quiet-crewmate nudge (spec: 8-day rule, private, sender-only — the CLIENT
+        // decides whether to show "send a 💪", this is just the raw day count).
+        // null = no session in the 400-day window (treat as quiet, day count unknown).
+        quietDays,
+      });
+    }
+    return res.status(200).json({ isOrg: !!me.crew_org_key, code: me.crew_code || null, pending, roster });
+  }
+
+  if (action === "crew-feed") {
+    const peers = await crewPeerIds(me);
+    const ids = [...new Set([...peers, me.id])]; // peer set ∪ caller's own id
+    if (!ids.length) return res.status(200).json([]);
+    const idList = ids.map((id) => `"${id}"`).join(",");
+    const since = new Date(Date.now() - 14 * 864e5).toISOString(); // widest window (goal/milestone); per-type trim below
+    const rows = await sbSelect("crew_moments", `?athlete_id=in.(${idList})&created_at=gte.${enc(since)}&select=*&order=created_at.desc`);
+    const inWindow = rows.filter((m) => withinWindow(m));
+    if (!inWindow.length) return res.status(200).json([]);
+    const nameIds = [...new Set(inWindow.map((m) => m.athlete_id))];
+    const nameRows = await sbSelect("athletes", `?id=in.(${nameIds.map((id) => `"${id}"`).join(",")})&select=id,name`);
+    const nameById = Object.fromEntries(nameRows.map((a) => [a.id, a.name]));
+    const momentIds = inWindow.map((m) => `"${m.id}"`).join(",");
+    const reactions = inWindow.length ? await sbSelect("crew_reactions", `?moment_id=in.(${momentIds})&select=*`) : [];
+    const reactionsByMoment = {};
+    for (const r of reactions) (reactionsByMoment[r.moment_id] = reactionsByMoment[r.moment_id] || []).push(r);
+    return res.status(200).json(inWindow.map((m) => ({ ...m, athleteName: nameById[m.athlete_id] || null, reactions: reactionsByMoment[m.id] || [] })));
+  }
+
+  if (action === "crew-react") {
+    const momentId = str(body.momentId, { max: 64, name: "momentId" });
+    const emoji = String(body.emoji || "");
+    if (!REACTION_EMOJI.has(emoji)) throw httpErr(400, "Invalid reaction");
+    const moments = await sbSelect("crew_moments", `?id=eq.${enc(momentId)}&select=id,athlete_id`);
+    const moment = moments[0];
+    if (!moment) throw httpErr(404, "Moment not found");
+    if (String(moment.athlete_id) !== String(me.id)) {
+      const peers = await crewPeerIds(me);
+      if (!peers.includes(String(moment.athlete_id))) throw httpErr(403, "Not in your crew");
+    }
+    const existing = await sbSelect("crew_reactions", `?moment_id=eq.${enc(momentId)}&athlete_id=eq.${enc(me.id)}&emoji=eq.${enc(emoji)}&select=id`);
+    if (existing[0]) {
+      // Toggle: react twice = off, not two rows (crew_reactions_once backs this).
+      await sbWrite({ method: "DELETE", table: "crew_reactions", query: `?id=eq.${enc(existing[0].id)}`, prefer: "return=minimal" });
+      return res.status(200).json({ ok: true, reacted: false });
+    }
+    await sbWrite({ method: "POST", table: "crew_reactions", body: { moment_id: momentId, athlete_id: me.id, emoji }, prefer: "return=minimal" });
+    return res.status(200).json({ ok: true, reacted: true });
+  }
+
+  throw httpErr(400, "Unknown crew action");
+}
+
+function mondayIso() {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7;
+  const monday = new Date(now);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - dow);
+  return monday.toISOString();
 }
 
 function handleErr(e, res, caller, body) {

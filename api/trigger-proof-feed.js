@@ -56,6 +56,7 @@ import {
 } from "./_proof.js";
 import { computeGritSnapshot } from "./_grit.js";
 import { sendToAthlete, pushPayload, ensureVapid, sendTo } from "./_push.js";
+import { buildCrewBlip } from "./_crew.js";
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || "WILCO <noreply@trainwilco.com>";
@@ -337,6 +338,16 @@ async function runAthlete(athlete, batch, { dryRun = false } = {}) {
   } catch (e) { console.error("[proof-feed] program parse failed:", e.message); }
 
   const digest = isMonthly ? await generateMonthly(athlete, b.brief, deps) : await generateWeekly(athlete, b.brief, deps);
+
+  // WILCO Crew V1: the weekly/monthly Proof digest's crew blip — highlights only,
+  // never a roll-call, and OMITTED entirely when there's nothing (never "your
+  // crew was quiet," per the spec). Deterministic templating, no AI call, so a
+  // failure here can never break or delay the digest itself. Rides the EXISTING
+  // Proof push (no new notification type — non-goal §9).
+  try {
+    const crew = await buildCrewBlip(athlete);
+    if (crew) digest.contentJson.crew = crew;
+  } catch (e) { console.error("[proof-feed] crew blip failed:", e.message); }
 
   if (dryRun) {
     return { athlete: athlete.name, athlete_id: athlete.id, type: windowType, digest, brief: b.brief };
