@@ -1329,7 +1329,7 @@ const JOEBOT_SPORTS = {
   "General Fitness":"Build a balanced foundation -- squat, hinge, push, pull, carry. Health and longevity focus."
 };
 // Signup goal-card labels, phrased as short "you told us ___" clauses for the
-// first-ever chat message (07-29 UX audit fix #1) — keys mirror JOEBOT_GOALS /
+// first-ever chat message (07-29 UX audit fix #1); keys mirror JOEBOT_GOALS /
 // the goal picker cards in the signup wizard (Step 4).
 const SIGNUP_GOAL_PHRASES = {
   strength:"you're chasing maximum strength",
@@ -3473,7 +3473,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
 
   // Record the athlete's legal acceptances. Best-effort: a failure never blocks
   // account creation (per the consent spec). One row per document, tagged with
-  // THAT document's own version (07-29 fix — Terms and Privacy were last updated
+  // THAT document's own version (07-29 fix: Terms and Privacy were last updated
   // on different dates, so a single shared version stamped every row with a
   // Terms version that never existed; parental_consent covers the Terms'
   // liability waiver, so it rides on TERMS_VERSION too).
@@ -3768,7 +3768,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             placeholder="----" style={inpA({fontSize:24,letterSpacing:8,textAlign:"center"})}/>
         </div>
         <div style={{marginBottom:20}}>
-          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>EMAIL <span style={{color:CA.muted,fontWeight:400}}>(required — used to recover your PIN or username)</span></label>
+          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>EMAIL <span style={{color:CA.muted,fontWeight:400}}>(required, used to recover your PIN or username)</span></label>
           <input type="email" inputMode="email" autoComplete="email" value={data.email}
             onChange={e=>setD("email",e.target.value)}
             placeholder="you@email.com" style={inpA()}/>
@@ -5277,11 +5277,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         if(!latestAthlete.first_chat_complete){
           setGoalCollectionActive(true);
           // Wired to what the signup wizard already captured (07-29 UX audit fix
-          // #1) — never re-ask what they just told us; only ask for the number/date
+          // #1): never re-ask what they just told us; only ask for the number/date
           // the wizard can't collect.
           const goalPhrase = SIGNUP_GOAL_PHRASES[latestAthlete.goal] || "you want to get started";
           const sportBit = latestAthlete.sport && latestAthlete.sport!=="General Fitness" ? ` for ${latestAthlete.sport}` : "";
-          setMessages([{role:"assistant",content:`Welcome to WILCO, ${latestAthlete.name}. You told us ${goalPhrase}${sportBit} — give me a specific number or date to build toward (a lift, a time, a testing day) and I'll get your program started.`}]);
+          setMessages([{role:"assistant",content:`Welcome to WILCO, ${latestAthlete.name}. You told us ${goalPhrase}${sportBit}. Give me a specific number or date to build toward (a lift, a time, a testing day) and I'll get your program started.`}]);
           setHistoryLoaded(true);
           return;
         }

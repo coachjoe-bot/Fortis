@@ -500,7 +500,7 @@ function SchoolOnboardingForm({onCreated,me}) {
         max_athletes:maxAthletes,
         contact_email:contactEmail.trim()||null
       });
-      if(!schools?.length) throw new Error("Failed to create organization — check if that 3-letter code is already taken.");
+      if(!schools?.length) throw new Error("Failed to create organization. Check if that 3-letter code is already taken.");
       const school=schools[0];
       // 3. Create coaches + send invites
       // Seats are minted by the server (identity add-coach): it assigns
@@ -588,7 +588,7 @@ function SchoolOnboardingForm({onCreated,me}) {
 
       {/* Logo upload */}
       <div style={{marginBottom:16}}>
-        <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>ORGANIZATION LOGO <span style={{color:CA.muted,fontWeight:400,letterSpacing:0}}>(optional — PNG, SVG, or JPG)</span></label>
+        <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>ORGANIZATION LOGO <span style={{color:CA.muted,fontWeight:400,letterSpacing:0}}>(optional, PNG, SVG, or JPG)</span></label>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {logoPreview&&<img src={logoPreview} alt="Preview" style={{width:40,height:40,borderRadius:8,objectFit:"contain",background:"rgba(220,232,255,.92)",padding:3}}/>}
           <label style={{background:CA.navy3,border:`1px dashed ${CA.border}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",color:CA.muted2,fontSize:12,display:"inline-block"}}>
@@ -1412,12 +1412,12 @@ function CoachDashboard({coach,onLogout}) {
                     </div>
                     <select value={assignCoachId} onChange={e=>setAssignCoachId(e.target.value)}
                       style={{width:"100%",background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px 12px",color:CA.text,fontSize:13,outline:"none",marginBottom:14}}>
-                      <option value="">{isMaster?"— Unassigned (remove from any organization) —":"— Unassigned (stays in your organization) —"}</option>
+                      <option value="">{isMaster?"Unassigned (remove from any organization)":"Unassigned (stays in your organization)"}</option>
                       {sortedCoaches.map(c=>{
                         const s = schoolsById[c.school_id];
                         return (
                           <option key={c.id} value={c.id}>
-                            {(s?.name||"No Organization")} — {c.name}{c.role==="admin"?" (Admin)":""}{c.access_code?` · ${c.access_code}`:""}
+                            {(s?.name||"No Organization")}: {c.name}{c.role==="admin"?" (Admin)":""}{c.access_code?` · ${c.access_code}`:""}
                           </option>
                         );
                       })}
@@ -2097,7 +2097,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
           <div style={{maxHeight:showAllHeat?340:"none",overflowY:showAllHeat?"auto":"visible"}}>
           <div style={{display:"grid",gridTemplateColumns:"92px repeat(7,minmax(0,1fr)) 42px",gap:5,alignItems:"center",marginTop:14}}>
             <span/>{D.dayLabels.map((l,i)=><span key={i} style={{fontSize:10,color:i===D.todayIdx?CA.cyan:CA.muted,textAlign:"center",fontWeight:i===D.todayIdx?800:400}}>{l.l}<div style={{fontSize:8,opacity:.75}}>{l.d}</div></span>)}
-            <span style={{fontSize:9,color:CA.muted,textAlign:"right",letterSpacing:.5,cursor:"pointer"}} {...tipOn("Adherence — scored mostly on doing the right exercises, then enough volume, then the right weight.")}>ADH</span>
+            <span style={{fontSize:9,color:CA.muted,textAlign:"right",letterSpacing:.5,cursor:"pointer"}} {...tipOn("Adherence. Scored mostly on doing the right exercises, then enough volume, then the right weight.")}>ADH</span>
             {heatRows.flatMap((r,ri)=>[
               <span key={`n${ri}`} style={{fontSize:11.5,color:CA.muted2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.a.name}</span>,
               ...r.days.map((d,di)=>{

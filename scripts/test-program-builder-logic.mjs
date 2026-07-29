@@ -68,7 +68,7 @@ console.log("precharge:");
   ok(/Squat 245.*255/.test(bp.handoff?.pending || "") && /4-day strength block/.test(bp.handoff?.pending || ""), "lift-progress line joins the block summary when no recap exists");
 }
 {
-  // No recap AND no liftProgress (blank slate — brand new athlete, no history yet)
+  // No recap AND no liftProgress (blank slate, brand new athlete, no history yet)
   // must still degrade to the old summary/one-liner fallback, never throw.
   const bp = precharge({
     athlete: {},

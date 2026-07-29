@@ -104,11 +104,11 @@ export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer =
     // recap, fold in real lift-progress math from logged history (same
     // first-vs-best e1RM-per-lift computation the main chat already runs) so the
     // interview opens STATING what moved instead of asking from a blank slate
-    // (07-29 UX audit fix) — the block summary alone names the block, it never
+    // (07-29 UX audit fix): the block summary alone names the block, it never
     // says what actually happened during it.
     const progress = liftProgress ? `${liftProgress} this block (from logs)` : "";
     const gist = lastBlock.block_recap
-      || [lastBlock.block_summary, progress].filter(Boolean).join(" — ")
+      || [lastBlock.block_summary, progress].filter(Boolean).join(". ")
       || (lastBlock.program_text || "").split("\n").find(l => l.trim())
       || "on record";
     set("handoff", `Previous block${range}: ${gist}`);
