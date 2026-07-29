@@ -1,0 +1,21 @@
+-- ─── T18 iOS payments surgery: checkout handoff tokens ───────────────────────
+-- Run in Supabase SQL Editor (or via MCP apply_migration) before the /upgrade
+-- external-checkout flow can work end to end — additive only, safe on a live
+-- table (two new nullable columns, no backfill, no lock-heavy rewrite).
+--
+-- WHY: the native iOS app can't ship the embedded Stripe Elements PaymentStep
+-- (App Review 3.1.1 — see docs/../T18-appstore-build-plan.md §2), so it hands
+-- an athlete off to a standalone web checkout page (app.trainwilco.com/upgrade)
+-- via the system browser. That page needs to know which athlete arrived
+-- without a bare athleteId (enumeration) or a long-lived credential ever
+-- sitting in the URL. api/identity.js mints a short-lived (15 min), single-use
+-- signed token (mintCheckoutToken in api/_supa.js) and stamps its jti/expiry
+-- here; resolve-checkout-token later claims it ATOMICALLY (PATCH ... WHERE
+-- checkout_token_jti = <jti>, same compare-and-swap pattern as
+-- gift_codes_generated_at / claimGiftGeneration) so a copied or reopened link
+-- can be redeemed exactly once, then clears both columns.
+--
+-- Only ever queried by primary key (id) plus an equality filter on the jti in
+-- the same request — no extra index needed beyond the existing primary key.
+alter table athletes add column if not exists checkout_token_jti text;
+alter table athletes add column if not exists checkout_token_exp timestamptz;
