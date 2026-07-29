@@ -3,7 +3,7 @@
 // full-screen consent flow shown at athlete signup. The text below is the
 // verbatim version of the documents hosted at trainwilco.com/terms and
 // trainwilco.com/privacy (Terms last updated June 1, 2026; Privacy last
-// updated July 10, 2026 — they update independently, hence separate version
+// updated July 29, 2026 — they update independently, hence separate version
 // constants below).
 //
 // KEEP IN SYNC: when a hosted document changes, update its text constant below
@@ -15,12 +15,13 @@ import React, { useState } from "react";
 // Split per-document (07-29 fix): the acceptance log was stamping every
 // document — terms, privacy, AND parental_consent — with ONE version string,
 // which falsely recorded athletes as having accepted a version of the Terms
-// that never existed (Terms' own "Last Updated" is June 1; only Privacy was
-// actually updated July 10). Each constant must match its document's own
+// that never existed (Terms' own "Last Updated" is June 1; Privacy is updated
+// again today, 07-29, for the push-notification + Meta Pixel disclosures added
+// in this same change). Each constant must match its document's own
 // "Last Updated" line below. parental_consent covers the Terms' liability
 // waiver (§10.5), so it rides on TERMS_VERSION.
 export const TERMS_VERSION = "2026-06-01";
-export const PRIVACY_VERSION = "2026-07-10";
+export const PRIVACY_VERSION = "2026-07-29";
 
 export const TERMS_TEXT = `WILCO TRAINING LLC
 Terms of Service and Liability Waiver
@@ -153,7 +154,7 @@ Wilco Training LLC  |  TrainWilco.com  |  support@trainwilco.com801 Internationa
 
 export const PRIVACY_TEXT = `WILCO TRAINING LLC
 Privacy Policy
-Effective Date: May 22, 2026  |  Last Updated: July 10, 2026
+Effective Date: May 22, 2026  |  Last Updated: July 29, 2026
 Wilco Training LLC (“Wilco,” “we,” “us,” or “our”) is committed to protecting the privacy of all users of the Wilco Training platform (“Platform”), including athletes, coaches, and organization administrators. This Privacy Policy explains what information we collect, how we use it, how we protect it, and what choices you have. By using the Platform, you agree to the practices described in this Privacy Policy.
 This Privacy Policy applies to the Platform operated at TrainWilco.com and all associated web and mobile applications.
 1. Information We Collect
