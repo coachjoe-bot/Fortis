@@ -61,7 +61,7 @@ export default async function handler(req, res) {
     body: JSON.stringify({
       from:    FROM_EMAIL,
       to:      [coachEmail.trim().toLowerCase()],
-      subject: `Your WILCO coach access code — ${accessCode}`,
+      subject: `Your WILCO coach access code: ${accessCode}`,
       html
     })
   });
@@ -94,7 +94,7 @@ function buildInviteEmail({ coachName, accessCode, schoolName, appUrl }) {
 
       <p style="color:#1a1a2e;font-size:15px;margin:0 0 16px">Hi ${esc(coachName)},</p>
       <p style="color:#444;font-size:14px;line-height:1.7;margin:0 0 24px">
-        You've been added as a coach for <strong>${esc(schoolName)}</strong> on WILCO — an AI-powered strength and conditioning platform for high school athletes.
+        You've been added as a coach for <strong>${esc(schoolName)}</strong> on WILCO, an AI-powered strength and conditioning platform for high school athletes.
       </p>
       <p style="color:#444;font-size:14px;line-height:1.7;margin:0 0 24px">
         Your athletes will use your access code to register and get automatically assigned to your dashboard. Here it is:
@@ -105,13 +105,13 @@ function buildInviteEmail({ coachName, accessCode, schoolName, appUrl }) {
         <div style="color:#64748b;font-size:11px;letter-spacing:3px;margin-bottom:10px">YOUR ACCESS CODE</div>
         <div style="color:#d4a017;font-size:40px;font-weight:900;letter-spacing:12px;font-family:Arial,sans-serif">${esc(accessCode)}</div>
         <div style="color:#475569;font-size:12px;margin-top:12px;line-height:1.6">
-          Share this code with your athletes — they'll enter it when signing up.<br/>
+          Share this code with your athletes, they'll enter it when signing up.<br/>
           <strong style="color:#94a3b8">Keep it safe. Each code is unique to you.</strong>
         </div>
       </div>
 
       <!-- Steps -->
-      <p style="color:#1a1a2e;font-size:11px;font-weight:700;letter-spacing:1.5px;margin:0 0 14px;text-transform:uppercase">Getting started — 2 steps</p>
+      <p style="color:#1a1a2e;font-size:11px;font-weight:700;letter-spacing:1.5px;margin:0 0 14px;text-transform:uppercase">Getting started: 2 steps</p>
 
       <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
         <tr>

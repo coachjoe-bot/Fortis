@@ -482,13 +482,13 @@ async function biometricLogin(role){
   const e = await biometricAssert(role);
   if(role==="coach"){
     const res = await idApi("coach-login",{ pin: e.pin });
-    if(!res.coach){ clearBioEnrollment("coach"); throw new Error("Saved Face ID sign-in is out of date — please log in with your PIN."); }
+    if(!res.coach){ clearBioEnrollment("coach"); throw new Error("Saved Face ID sign-in is out of date, please log in with your PIN."); }
     CURRENT_AUTH = { role:"coach", id:res.coach.id, pin:e.pin, token:res.token };
     track("login","auth",{ role:"coach", method:"biometric" });
     return { ...res.coach, pin:e.pin };
   }
   const res = await idApi("athlete-login",{ name: e.name, pin: e.pin });
-  if(!res.athlete){ clearBioEnrollment("athlete"); throw new Error("Saved Face ID sign-in is out of date — please log in with your PIN."); }
+  if(!res.athlete){ clearBioEnrollment("athlete"); throw new Error("Saved Face ID sign-in is out of date, please log in with your PIN."); }
   CURRENT_AUTH = { role:"athlete", id:res.athlete.id, pin:e.pin, token:res.token };
   track("login","auth",{ role:"athlete", method:"biometric" });
   return { ...res.athlete, pin:e.pin };
@@ -1096,7 +1096,7 @@ export const askClaudeStream = async (system, user, {maxTokens=600, model="claud
 
 const extractProgramText = async (message) => {
   const text = await askClaude(
-    "Extract the training program from this athlete message. Return only the program content — days, exercises, sets, reps, weights. Clean formatting. No intro, no commentary, no explanation.",
+    "Extract the training program from this athlete message. Return only the program content: days, exercises, sets, reps, weights. Clean formatting. No intro, no commentary, no explanation.",
     message, 800, [], "claude-sonnet-5", "program_extract"
   );
   // Returns null (NOT the raw input) when extraction comes back empty. Falling
@@ -1257,7 +1257,7 @@ const resolveLogCorrection = async (message, recentChat, rows) => {
     })),
     ...(r.parsed_data?.pr_attempts?.length ? {pr_attempts: r.parsed_data.pr_attempts} : {}),
   }));
-  const sys = `You fix mistakes in an athlete's workout log. The athlete says something they previously logged is wrong (mistyped weight/reps, duplicate, entry that shouldn't exist). You get their recent logged entries as JSON rows — each has a unique "id" — plus recent chat for context. Return ONLY valid JSON, no markdown:
+  const sys = `You fix mistakes in an athlete's workout log. The athlete says something they previously logged is wrong (mistyped weight/reps, duplicate, entry that shouldn't exist). You get their recent logged entries as JSON rows, each has a unique "id", plus recent chat for context. Return ONLY valid JSON, no markdown:
 {
  "found":boolean,
  "workout_id":string|number|null,
@@ -1266,13 +1266,13 @@ const resolveLogCorrection = async (message, recentChat, rows) => {
  "reason":string|null
 }
 Rules:
-- Identify the SINGLE row holding the erroneous data — usually the most recent row matching what the athlete describes. Copy its "id" EXACTLY as given.
+- Identify the SINGLE row holding the erroneous data, usually the most recent row matching what the athlete describes. Copy its "id" EXACTLY as given.
 - "edits": one entry per exercise to change in that row. "exercise" must match that row's exercise "name" (or a pr_attempts "exercise") character-for-character.
-- action "update": a null field keeps its current value. If the exercise HAS a "set_details" array and any set changes, return the COMPLETE corrected "new_set_details" — every set, in order, preserving any "warmup":true flags — AND set "new_weight" to the corrected top working-set weight.
+- action "update": a null field keeps its current value. If the exercise HAS a "set_details" array and any set changes, return the COMPLETE corrected "new_set_details" (every set, in order, preserving any "warmup":true flags) and set "new_weight" to the corrected top working-set weight.
 - action "remove": deletes that exercise from the row (use for "I didn't actually do X" or duplicated exercises). To wipe a whole duplicated entry, remove every exercise in it.
 - Fix ONLY what the athlete says is wrong. Never reformat, rename, or "improve" anything else.
 - "summary": short human line(s) describing the exact change, e.g. "Strict Press (today): 3×5 top set 155 → 115".
-- If you cannot CONFIDENTLY identify the row or exercise, or the athlete is correcting something that is not a logged workout (their program, profile, a goal), return found:false with a brief "reason". NEVER guess — a wrong edit is worse than asking the athlete to do it by hand.`;
+- If you cannot CONFIDENTLY identify the row or exercise, or the athlete is correcting something that is not a logged workout (their program, profile, a goal), return found:false with a brief "reason". NEVER guess: a wrong edit is worse than asking the athlete to do it by hand.`;
   const chat = (recentChat||[]).map(m=>`${m.role==="user"?"Athlete":"Coach"}: ${String(m.content||"").slice(0,300)}`).join("\n");
   const user = `LOGGED ENTRIES (most recent first):\n${JSON.stringify(candidates)}\n\nRECENT CHAT:\n${chat}\n\nAthlete's correction message: ${message}`;
   const text = await askClaude({cached:sys}, user, 1200, [], "claude-sonnet-5", "log_correction");
@@ -1314,7 +1314,7 @@ const JOEBOT_GOALS = {
   sport:"Sport performance. Build the strength base first, then convert to power and speed. Tie advice to their sport.",
   speed:"Speed and endurance. Mix strength with conditioning. Running-specific guidance when relevant.",
   body:"Body composition. Strength training with hypertrophy volume. Track consistency over perfection.",
-  fitness:"General health and fitness. Balanced program — squat, hinge, push, pull, carry. Longevity focus.",
+  fitness:"General health and fitness. Balanced program: squat, hinge, push, pull, carry. Longevity focus.",
 };
 const JOEBOT_SPORTS = {
   "Football":"Lower body power (squat/deadlift/hip hinge), upper body strength (bench/row), explosive hip extension.",
@@ -1345,22 +1345,22 @@ BANNED PHRASES:
 - Exclamation points: Maximum ONE per response.
 - "Let's go!" / "Get after it!": BANNED as fillers.
 
-LOGGING IS AUTOMATIC: The app parses and saves every workout the athlete types — the logging happens on its own, and you never need "backend" or "account" access to record anything. NEVER tell the athlete you can't log something, that logging is "handled on the backend," or to contact whoever manages their account. If they say "log this," "make sure to log this," or "record this," they're just sharing the workout — acknowledge it and coach the numbers. Only decline things that are genuinely outside coaching (billing, account changes), never the workout itself.
+LOGGING IS AUTOMATIC: The app parses and saves every workout the athlete types, the logging happens on its own, and you never need "backend" or "account" access to record anything. NEVER tell the athlete you can't log something, that logging is "handled on the backend," or to contact whoever manages their account. If they say "log this," "make sure to log this," or "record this," they're just sharing the workout, acknowledge it and coach the numbers. Only decline things that are genuinely outside coaching (billing, account changes), never the workout itself.
 
-LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix — including recalculating any PRs or maxes the bad number created. Your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up — tap Apply fix below and I'll set the record straight."). NEVER claim the log is already fixed, never say you changed a number yourself, and never treat the corrected number as a brand-new workout or PR.
+LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. Your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). NEVER claim the log is already fixed, never say you changed a number yourself, and never treat the corrected number as a brand-new workout or PR.
 
 FOR NORMAL WORKOUT LOGS respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." -- then one specific observation. That's it.
 
-WEIGHT vs TARGET — how to judge a load against what was programmed. Get this right before you comment on ANY weight:
-1. ROUND THE TARGET FIRST. A target you worked out from a percentage is an estimate, not a number to hit on the nose — barbells load in 5 lb steps and nobody owns 1 lb plates. Round every calculated target to the NEAREST 5 lbs before you compare or quote it. Never say "your 228lb target"; that target is 230.
-2. CHECK THE DIRECTION. Subtract the target from what they actually lifted. Bigger than the target is OVER/above/heavier. Smaller than the target is UNDER/below/lighter. Never call a lighter number "above" the target or a heavier number "under" it — 315 against a 325 target is 10 lbs UNDER, not above. If you catch yourself unsure which way it went, do the subtraction again before you write the sentence.
+WEIGHT vs TARGET: how to judge a load against what was programmed. Get this right before you comment on ANY weight:
+1. ROUND THE TARGET FIRST. A target you worked out from a percentage is an estimate, not a number to hit on the nose, barbells load in 5 lb steps and nobody owns 1 lb plates. Round every calculated target to the NEAREST 5 lbs before you compare or quote it. Never say "your 228lb target"; that target is 230.
+2. CHECK THE DIRECTION. Subtract the target from what they actually lifted. Bigger than the target is OVER/above/heavier. Smaller than the target is UNDER/below/lighter. Never call a lighter number "above" the target or a heavier number "under" it: 315 against a 325 target is 10 lbs UNDER, not above. If you catch yourself unsure which way it went, do the subtraction again before you write the sentence.
 3. JUDGE BY THE SIZE OF THE GAP, not by whether the numbers match exactly:
-   - Within 5 lbs: THE SAME WEIGHT. They hit it. Say nothing about a difference — there is none. 225 on a 230 target is on target.
-   - 6-10 lbs off: a touch light (or a touch heavy). Not a finding. Mention it only if it's part of a real trend across sessions or they asked — one clause at most, never its own flag.
+   - Within 5 lbs: THE SAME WEIGHT. They hit it. Say nothing about a difference, there is none. 225 on a 230 target is on target.
+   - 6-10 lbs off: a touch light (or a touch heavy). Not a finding. Mention it only if it's part of a real trend across sessions or they asked, one clause at most, never its own flag.
    - 11-15 lbs off: a real gap, worth one plain sentence.
-   - More than 15 lbs off: a genuine miss or a genuine jump up. Coach it — ask what happened, or credit the overload.
-   These bands are for barbell work. On light dumbbell or accessory loads where 5 lbs is a big proportional jump, judge by percentage on the same scale — inside 3% is the same weight.
-4. Never build a flag, a concern, or a "one thing to flag" out of a gap inside 5 lbs. If the loads are on target, the observation you owe them is about something else — sets, reps, effort, what moved since last time.
+   - More than 15 lbs off: a genuine miss or a genuine jump up. Coach it: ask what happened, or credit the overload.
+   These bands are for barbell work. On light dumbbell or accessory loads where 5 lbs is a big proportional jump, judge by percentage on the same scale, inside 3% is the same weight.
+4. Never build a flag, a concern, or a "one thing to flag" out of a gap inside 5 lbs. If the loads are on target, the observation you owe them is about something else: sets, reps, effort, what moved since last time.
 
 RESERVED (only when situation genuinely matches):
 - "Atta boy/girl": New PR only.
@@ -1368,35 +1368,35 @@ RESERVED (only when situation genuinely matches):
 - "It's not about workout 1, it's about workout 100.": Athlete missed sessions only.
 - "You're only in competition with the you of yesterday.": Athlete comparing to others only.
 
-FORMATTING: PLAIN TEXT only -- no markdown (no **bold**, no # headers, no bullet asterisks). The chat UI does not render markdown, so any asterisks or hashes show up as literal characters on screen. Use plain sentences and numbered lists (1. 2. 3.) for structure instead.
+FORMATTING: PLAIN TEXT only -- no markdown (no **bold**, no # headers, no bullet asterisks). The chat UI does not render markdown, so any asterisks or hashes show up as literal characters on screen. Use plain sentences and numbered lists (1. 2. 3.) for structure instead. Never use an em dash (—); use a comma, colon, period, or parentheses instead.
 Use numbered lists for exercises/alternatives/steps. Never paragraph format for exercise lists.
-Match length to the question: a sentence or two for logs and simple asks; go longer only for genuinely technical or programming questions that need the detail — thorough, never padded. Never cut off mid-thought; if you're running long, tighten the wording but finish the point. Use their name once naturally.
+Match length to the question: a sentence or two for logs and simple asks; go longer only for genuinely technical or programming questions that need the detail. Thorough, never padded. Never cut off mid-thought; if you're running long, tighten the wording but finish the point. Use their name once naturally.
 Pain → suggest alternatives, and if they have a coach, support the app's offer to send that coach a structured change request (never tell them to email about it). Equipment unavailable → 2-3 specific alternatives, same coach-request offer if it keeps blocking a locked program.
 Locked program → you can't edit it yourself, but you can draft the request their coach reviews. Out of scope (billing, account access): "That's one for Coach Joe directly -- email support@trainwilco.com."
 
 UNUSUAL TRAINING CONDITIONS (travel, cruise, hotel, beach, limited equipment, injury layoff, etc.):
-- If athlete mentions they'll be away or have limited access but HASN'T described what's available yet: ask 2-3 direct questions — what equipment is on hand, how much space they have, how long the situation lasts. Do not give a program yet.
+- If athlete mentions they'll be away or have limited access but HASN'T described what's available yet: ask 2-3 direct questions, what equipment is on hand, how much space they have, how long the situation lasts. Do not give a program yet.
 - Once conditions ARE described: build a specific day-by-day program for exactly those conditions. Be clear it's temporary.
 - When athlete signals they're back to normal ("I'm back", "home now", "back at the gym"): transition them back to their regular program and reference it.
 
 PROGRAM REVIEW (athlete asks you to look at / review / give thoughts on their program):
-- Judge the program against THIS athlete's own goal, sport, level, and injury history — not against an ideal template or how you'd write it from scratch. There are many valid ways to program.
+- Judge the program against THIS athlete's own goal, sport, level, and injury history, not against an ideal template or how you'd write it from scratch. There are many valid ways to program.
 - Assume a real program (whether it came from you, another coach, or the athlete) is fundamentally sound. Lead with what's working and WHY it fits their goal. Do NOT hunt for flaws or nitpick to seem useful.
-- Only raise something if it genuinely conflicts with their goal, their sport's demands, a known injury, or basic recovery/safety — and when you do, frame it as one specific, optional adjustment with the reason. No vague "you could add more X."
-- If the program is solid, say so plainly and stop. A short "This lines up well with your [goal] — here's what I'd keep an eye on" is a complete answer. At most 1-2 suggestions; never a teardown.
-- "What's my workout today?" (also "what am I doing today", "show me today's workout", "what's on for today") → read their program, match today's day, and give exactly that session as a ready-to-run list: ONE line per exercise, "Name SETSxREPS @ WEIGHT" (weighted bodyweight "Weighted Pull-ups 3x8 +25", plain bodyweight "Push-ups 3x20", timed holds "Plank 3x60s"). Turn every load into an ACTUAL NUMBER so they can start without doing math, and SHOW THEM THE PROGRAM'S OWN PRESCRIPTION alongside it so they see where the number came from — check in this exact order and STOP at the first that applies:
+- Only raise something if it genuinely conflicts with their goal, their sport's demands, a known injury, or basic recovery/safety, and when you do, frame it as one specific, optional adjustment with the reason. No vague "you could add more X."
+- If the program is solid, say so plainly and stop. A short "This lines up well with your [goal]: here's what I'd keep an eye on" is a complete answer. At most 1-2 suggestions; never a teardown.
+- "What's my workout today?" (also "what am I doing today", "show me today's workout", "what's on for today") → read their program, match today's day, and give exactly that session as a ready-to-run list: ONE line per exercise, "Name SETSxREPS @ WEIGHT" (weighted bodyweight "Weighted Pull-ups 3x8 +25", plain bodyweight "Push-ups 3x20", timed holds "Plank 3x60s"). Turn every load into an ACTUAL NUMBER so they can start without doing math, and SHOW THEM THE PROGRAM'S OWN PRESCRIPTION alongside it so they see where the number came from. Check in this exact order and STOP at the first that applies:
   1. A working weight the program already states for that lift (e.g. "Bench 3x5 @ 185") → use that number exactly as written, no extra tag. Never recompute it.
-  2. Only if the program gives a PERCENTAGE instead → that percentage x their 1RM from the ESTIMATED 1RMs list, rounded to the NEAREST 5 lbs, and show BOTH as "@ 75% (185 lbs)" — the program's percentage first, the resolved weight in parentheses.
+  2. Only if the program gives a PERCENTAGE instead → that percentage x their 1RM from the ESTIMATED 1RMs list, rounded to the NEAREST 5 lbs, and show BOTH as "@ 75% (185 lbs)": the program's percentage first, the resolved weight in parentheses.
   3. Only if the program gives an RPE / effort target → resolve the weight and show both as "@ RPE 8 (185 lbs)".
   4. Only if the program gives none of those → what they lifted last time on that exercise (from the workout history above), shown as "@ 185 lbs (last time)".
-  If nothing gives a number, write the weight as "@ ___" (or "+___" for added-load bodyweight) — a visible blank beats a guessed number. Include only the exercises programmed for today; don't review or add commentary unless they ask.
+  If nothing gives a number, write the weight as "@ ___" (or "+___" for added-load bodyweight); a visible blank beats a guessed number. Include only the exercises programmed for today; don't review or add commentary unless they ask.
 
 SPORT PRACTICE + TRAINING LOAD:
-- Sport practices (practice, game, scrimmage, team conditioning) count as real workouts. A 2-hour basketball practice is significant physical stress — treat it as such.
+- Sport practices (practice, game, scrimmage, team conditioning) count as real workouts. A 2-hour basketball practice is significant physical stress, treat it as such.
 - When the current message OR recent history shows a practice AND a gym workout on the same day: acknowledge the double load. Ask about how they're feeling, sleep quality, or soreness before piling on more volume advice. Do not just say "Solid session" and move on.
 - When a game or high-intensity scrimmage was logged (today or yesterday) plus a gym session: flag recovery directly. Ask how their legs/body feel, mention sleep and nutrition if relevant, and suggest they keep the gym work moderate unless they feel fresh.
 - Back-to-back high-load days (practice + lift two days in a row): note the cumulative stress and ask if they need a down day or modified session. Injury prevention > training volume.
-- Do not manufacture concern if it's not warranted — film, walkthrough, or skill work (shooting, ball handling, passing drills) before a lift is fine. Use judgment on actual physical load.
+- Do not manufacture concern if it's not warranted: film, walkthrough, or skill work (shooting, ball handling, passing drills) before a lift is fine. Use judgment on actual physical load.
 
 GOAL MODES (the athlete's active mode is stated in the session context):
 ${Object.entries(JOEBOT_GOALS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}
@@ -1476,14 +1476,14 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
     });});
     const rmLines = Object.values(byEx).sort((a,b)=>b.e1rm-a.e1rm).slice(0,15)
       .map(r=>`${r.name}: ~${Math.round(r.e1rm)} lbs`).join("\n");
-    if(rmLines) maxContext = `\n\nESTIMATED 1RMs (best per lift from logged history — use ONLY to turn a program percentage into a weight):\n${rmLines}`;
+    if(rmLines) maxContext = `\n\nESTIMATED 1RMs (best per lift from logged history, use ONLY to turn a program percentage into a weight):\n${rmLines}`;
   }
 
   let programContext = "";
   if(athlete.temp_program_text){
-    programContext = `\n\nTEMPORARY ADAPTED PROGRAM (currently active — use this, not the regular program):\n${athlete.temp_program_text}`;
+    programContext = `\n\nTEMPORARY ADAPTED PROGRAM (currently active, use this, not the regular program):\n${athlete.temp_program_text}`;
     if(athlete.program_text){
-      programContext += `\n\nREGULAR PROGRAM (on hold — restore when athlete returns to normal):\n${athlete.program_text}`;
+      programContext += `\n\nREGULAR PROGRAM (on hold, restore when athlete returns to normal):\n${athlete.program_text}`;
     }
   } else if(athlete.program_text){
     programContext = `\n\nATHLETE'S CURRENT PROGRAM:\n${athlete.program_text}\nReference this when giving programming feedback.`;
@@ -1506,13 +1506,13 @@ SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastCo
   }
   // Injury context from profile
   if(athlete.injury_history){
-    goalsContext += `\n\nINJURY HISTORY: ${athlete.injury_history}\nFactor this into recommendations — suggest alternatives for any exercises that aggravate these areas.`;
+    goalsContext += `\n\nINJURY HISTORY: ${athlete.injury_history}\nFactor this into recommendations: suggest alternatives for any exercises that aggravate these areas.`;
   }
 
   // Athlete context from monthly recaps
   let contextMemory = "";
   if(athleteContext){
-    contextMemory = `\n\nATHLETE CONTEXT (from monthly recap history — preferences, injuries, goals stated over time):\n${athleteContext}\nUse this as background — do not repeat it back, just let it inform your responses.`;
+    contextMemory = `\n\nATHLETE CONTEXT (from monthly recap history: preferences, injuries, goals stated over time):\n${athleteContext}\nUse this as background, do not repeat it back, just let it inform your responses.`;
   }
 
   const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory};
@@ -1543,7 +1543,7 @@ SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastCo
 export const propagateForPRs = async (programText, prs) => {
   const prLines = prs.map(pr=>`${pr.exercise}: est. 1RM ${Math.round(pr.old1RM)} -> ${Math.round(pr.e1rm)} lbs`).join("\n");
   const raw = await askClaude(
-    `You are Coach Joe Thomas updating an athlete's written program after they hit new PR(s). FIRST read the program and work out what each lift's numbers are based on, then change as LITTLE as possible:\n- If the program states a REFERENCE MAX / 1RM baseline that percentages are figured from (e.g. a "1RM Used" or "baselines" line), and a lift that PR'd has such a baseline, update ONLY that one lift's baseline number to the new max. NEVER change another lift's baseline. NEVER change the percentages themselves — they're relative and stay exactly as written.\n- Many athletes set their own WORKING WEIGHTS or a TRAINING MAX deliberately different from their true 1RM/e1RM — never touch those.\n- Leave fixed working weights, goal/target numbers (e.g. "MAX ATTEMPT @315lbs"), and anything the athlete chose UNCHANGED.\n- If the lift that PR'd has NO baseline entry and NO %-of-max loads (e.g. it's programmed as "load climbing week to week" or fixed reps), there is nothing to update — answer CHANGED: no.\n- When in doubt, leave it unchanged. NEVER claim a change you did not actually make to the program text below.\nRespond in EXACTLY this format and nothing else:\nCHANGED: <yes|no>\nSUMMARY: <if yes, ONE sentence, second person, describing ONLY what you actually changed (e.g. "Updated your Back Squat reference max to 425 — your % loads now come off the new number"); if no, "No changes — your numbers aren't tied to your max.">\nPROGRAM:\n<the FULL program text, updated only where appropriate; if nothing changed, return it verbatim>`,
+    `You are Coach Joe Thomas updating an athlete's written program after they hit new PR(s). FIRST read the program and work out what each lift's numbers are based on, then change as LITTLE as possible:\n- If the program states a REFERENCE MAX / 1RM baseline that percentages are figured from (e.g. a "1RM Used" or "baselines" line), and a lift that PR'd has such a baseline, update ONLY that one lift's baseline number to the new max. NEVER change another lift's baseline. NEVER change the percentages themselves, they're relative and stay exactly as written.\n- Many athletes set their own WORKING WEIGHTS or a TRAINING MAX deliberately different from their true 1RM/e1RM; never touch those.\n- Leave fixed working weights, goal/target numbers (e.g. "MAX ATTEMPT @315lbs"), and anything the athlete chose UNCHANGED.\n- If the lift that PR'd has NO baseline entry and NO %-of-max loads (e.g. it's programmed as "load climbing week to week" or fixed reps), there is nothing to update: answer CHANGED: no.\n- When in doubt, leave it unchanged. NEVER claim a change you did not actually make to the program text below.\nRespond in EXACTLY this format and nothing else:\nCHANGED: <yes|no>\nSUMMARY: <if yes, ONE sentence, second person, describing ONLY what you actually changed (e.g. "Updated your Back Squat reference max to 425, your % loads now come off the new number"); if no, "No changes, your numbers aren't tied to your max.">\nPROGRAM:\n<the FULL program text, updated only where appropriate; if nothing changed, return it verbatim>`,
     `New PR(s):\n${prLines}\n\nProgram:\n${programText}`,
     // Must be large enough to echo the ENTIRE program back (server caps at 4000).
     // 1700 truncated long programs mid-text — the partial then overwrote the real
@@ -2486,7 +2486,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
       setLoading(true);
       try{
         const reply = await askClaude(
-          `You are Coach Joe Thomas — direct, specific, no fluff. The athlete asked a clarifying question during their weekly check-in. Answer it directly and concisely (1-3 sentences) using the digest context below. If they're asking what program change you meant, give the concrete change (sets/%/exercise swap). Do NOT ask a new question. Do NOT restate the whole digest.\n\nIf the answer touches a logged weight vs a prescribed one: a %-derived target is an estimate and the bar loads in 5 lb steps. Get the direction right (heavier than the target is OVER, lighter is UNDER — never reverse them), and treat anything within 5 lbs as the SAME weight, not a miss. 6-10 lbs is a touch off, 11-15 lbs is a real gap, past 15 lbs is a genuine miss worth coaching.`,
+          `You are Coach Joe Thomas: direct, specific, no fluff. The athlete asked a clarifying question during their weekly check-in. Answer it directly and concisely (1-3 sentences) using the digest context below. If they're asking what program change you meant, give the concrete change (sets/%/exercise swap). Do NOT ask a new question. Do NOT restate the whole digest.\n\nIf the answer touches a logged weight vs a prescribed one: a %-derived target is an estimate and the bar loads in 5 lb steps. Get the direction right (heavier than the target is OVER, lighter is UNDER, never reverse them), and treat anything within 5 lbs as the SAME weight, not a miss. 6-10 lbs is a touch off, 11-15 lbs is a real gap, past 15 lbs is a genuine miss worth coaching.`,
           `Digest sections:\n${JSON.stringify(c.sections||c)}\n\nThe question I just asked: "${q.text}"\nThe athlete asked back: "${msg}"`,
           280,[],"claude-sonnet-5","joebot_chat"
         );
@@ -2516,9 +2516,9 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     const NONE = "[[NONE]]";
     const soFar = newAnswers.map(a=>`Q: ${a.q}\nA: ${a.a}`).join("\n");
     const react = async () => {
-      const base = `You are Coach Joe Thomas running an athlete's ${isMonthly?"monthly":"weekly"} check-in — a real strength coach texting them back. Direct, specific, warm, no fluff, no lists, no emoji spam. The athlete just answered your question. First decide whether their answer actually warrants a genuine response: a real detail, a concern, effort, or something worth reacting to warrants one; a thin/low-effort/empty reply ("idk", "nothing", "fine", "n/a", a shrug) does NOT — don't force it. BODYWEIGHT RULE: if their answer is a change in bodyweight (up or down), do NOT judge it — not "small bump, nothing to worry about", not "good", not "watch that". The app has no nutrition/diet context yet, so any verdict is guesswork and can undercut an athlete who's intentionally bulking or cutting. Just acknowledge it's logged/noted and move on to the next thing. INJURY RULE: if you reference a protective program change, keep it PROPORTIONATE — the smallest change that protects the area, and never so drastic it silently abandons the athlete's stated goal; if babying it truly conflicts with the goal, say that plainly rather than pretending both are fine.`;
+      const base = `You are Coach Joe Thomas running an athlete's ${isMonthly?"monthly":"weekly"} check-in: a real strength coach texting them back. Direct, specific, warm, no fluff, no lists, no emoji spam. The athlete just answered your question. First decide whether their answer actually warrants a genuine response: a real detail, a concern, effort, or something worth reacting to warrants one; a thin/low-effort/empty reply ("idk", "nothing", "fine", "n/a", a shrug) does NOT, don't force it. BODYWEIGHT RULE: if their answer is a change in bodyweight (up or down), do NOT judge it, not "small bump, nothing to worry about", not "good", not "watch that". The app has no nutrition/diet context yet, so any verdict is guesswork and can undercut an athlete who's intentionally bulking or cutting. Just acknowledge it's logged/noted and move on to the next thing. INJURY RULE: if you reference a protective program change, keep it PROPORTIONATE, the smallest change that protects the area, and never so drastic it silently abandons the athlete's stated goal; if babying it truly conflicts with the goal, say that plainly rather than pretending both are fine.`;
       const system = hasNext
-        ? `${base} If it warrants a response: reply in 2-4 sentences that (1) react to what they actually said, referencing a real detail, and (2) then lead into the next thing you want to know: "${nextQ.text}" — keep that question's intent but phrase it as a natural follow-up. If it does NOT warrant a response: reply with ONLY the next question, phrased naturally ("${nextQ.text}"), no forced reaction. Ask only that one question either way. Talk like a text message.`
+        ? `${base} If it warrants a response: reply in 2-4 sentences that (1) react to what they actually said, referencing a real detail, and (2) then lead into the next thing you want to know: "${nextQ.text}" (keep that question's intent but phrase it as a natural follow-up). If it does NOT warrant a response: reply with ONLY the next question, phrased naturally ("${nextQ.text}"), no forced reaction. Ask only that one question either way. Talk like a text message.`
         : `${base} This is the last question, so do NOT ask anything new. If it warrants a response: reply in 1-3 sentences reacting to what they said, in your voice, closing the loop. If it does NOT warrant a response: reply with EXACTLY "${NONE}" and nothing else. Talk like a text message.`;
       try{
         const r = await askClaude(
@@ -2597,7 +2597,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     setCoachOfferPending(null);
     if(!pending){ setPhase("dialogue"); return; }
     if(!sendIt){
-      setMessages(prev=>[...prev,{role:"assistant",content:"No problem — I'll leave it as-is. Keep me posted if it changes."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"No problem, I'll leave it as-is. Keep me posted if it changes."}]);
       await resumeAfterCoachOffer(pending);
       return;
     }
@@ -2609,7 +2609,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
       });
       await fileChangeRequest({athlete, draft, reason: pending.painMsg, sbInsert, track});
       coachRequestSentRef.current = true;
-      setMessages(prev=>[...prev,{role:"assistant",content:"📨 Sent — your coach will see it on their dashboard with your reasoning."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"📨 Sent, your coach will see it on their dashboard with your reasoning."}]);
     }catch(_){
       // A8: a transient failure used to throw away the drafted request AND the
       // athlete's consent with no way to retry. Keep the offer pending and re-show
@@ -2663,7 +2663,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
         // Ask for the change AND a plain-spoken explanation of what's changing and
         // why, so the athlete approves knowing the specifics — not a blind yes.
         const raw = await askClaude(
-          `You are Coach Joe Thomas. Propose the SMALLEST safe injury-protective adjustment to this athlete's program based on their check-in — proportionate to the pain, not drastic. Keep their stated goal intact wherever possible; any exercise swap must replace a SPECIFIC slot (name the day and what it replaces), never a floating add-on. If protecting the area genuinely conflicts with the goal timeline, say so honestly in WHY rather than pretending both are fine. Respond in EXACTLY this format and nothing else:\nSUMMARY: <1-2 short sentences naming exactly what you're changing and where it slots in, plain-spoken, second person ("your")>\nWHY: <1 sentence tying it to what they told you in the check-in>\nPROGRAM:\n<the FULL updated program text — preserve structure/format, change only what's needed>`,
+          `You are Coach Joe Thomas. Propose the SMALLEST safe injury-protective adjustment to this athlete's program based on their check-in, proportionate to the pain, not drastic. Keep their stated goal intact wherever possible; any exercise swap must replace a SPECIFIC slot (name the day and what it replaces), never a floating add-on. If protecting the area genuinely conflicts with the goal timeline, say so honestly in WHY rather than pretending both are fine. Respond in EXACTLY this format and nothing else:\nSUMMARY: <1-2 short sentences naming exactly what you're changing and where it slots in, plain-spoken, second person ("your")>\nWHY: <1 sentence tying it to what they told you in the check-in>\nPROGRAM:\n<the FULL updated program text, preserve structure/format, change only what's needed>`,
           `Current program:\n${athlete.program_text}\n\nCheck-in:\n${qaText}`,
           4000, [], "claude-sonnet-5", "program_generate"
         );
@@ -2715,7 +2715,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     setProgramRevising(true);
     try{
       const raw = await askClaude(
-        `You are Coach Joe Thomas. You proposed a program adjustment; the athlete responded with a question or a change request. Answer them, then give your (possibly revised) proposal. Keep changes small and safe. Respond in EXACTLY this format and nothing else:\nREPLY: <1-3 sentences answering them, in your voice>\nSUMMARY: <1-2 short sentences naming exactly what you're now changing, plain-spoken, second person ("your")>\nWHY: <1 sentence>\nPROGRAM:\n<the FULL updated program text — preserve structure/format>`,
+        `You are Coach Joe Thomas. You proposed a program adjustment; the athlete responded with a question or a change request. Answer them, then give your (possibly revised) proposal. Keep changes small and safe. Respond in EXACTLY this format and nothing else:\nREPLY: <1-3 sentences answering them, in your voice>\nSUMMARY: <1-2 short sentences naming exactly what you're now changing, plain-spoken, second person ("your")>\nWHY: <1 sentence>\nPROGRAM:\n<the FULL updated program text, preserve structure/format>`,
         `Current program:\n${athlete.program_text}\n\nYour proposed change:\nSUMMARY: ${programPending.summary||"(none given)"}\nWHY: ${programPending.why||"(none given)"}\nPROPOSED PROGRAM:\n${programPending.newText}\n\nAthlete's response:\n${ask}`,
         4000, [], "claude-sonnet-5", "program_generate"
       );
@@ -2728,7 +2728,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
       if(replyTxt) setMessages(prev=>[...prev,{role:"assistant",content:replyTxt}]);
       setProgramPending({newText:prog, summary, why});
     }catch(_){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't work through that just now — you can still apply or skip the change below."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't work through that just now, you can still apply or skip the change below."}]);
     }
     setProgramRevising(false);
     setEditingProgram(false);
@@ -2835,7 +2835,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             ) : (
               <>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>applyProgramChange(true)} style={{flex:1,background:CA.accent,color:"#000",border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",fontFamily:"'Bebas Neue'",letterSpacing:1,fontSize:14}}>Yes — Apply</button>
+                  <button onClick={()=>applyProgramChange(true)} style={{flex:1,background:CA.accent,color:"#000",border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",fontFamily:"'Bebas Neue'",letterSpacing:1,fontSize:14}}>Yes, Apply</button>
                   <button onClick={()=>applyProgramChange(false)} style={{flex:1,background:"transparent",color:CA.muted,border:`1px solid ${CA.border}`,borderRadius:8,padding:"10px",cursor:"pointer",fontSize:13}}>Skip</button>
                 </div>
                 <button onClick={()=>setEditingProgram(true)} style={{width:"100%",marginTop:8,background:"transparent",color:CA.muted2,border:`1px solid ${CA.border}`,borderRadius:8,padding:"9px",cursor:"pointer",fontSize:12}}>✏️ Edit or ask a question</button>
@@ -3127,11 +3127,11 @@ function InstallPrompt({manual, milestone, onClose}) {
         <div style={{textAlign:"center",marginBottom:14}}>
           <img src="/icon-192.png" alt="" width={56} height={56} style={{borderRadius:14,marginBottom:10}}/>
           <div style={{fontFamily:"'Bebas Neue'",fontSize:24,color:CA.accent,letterSpacing:2}}>
-            {milestone ? `${milestone} WORKOUTS IN — PUT WILCO ON YOUR HOME SCREEN` : "PUT WILCO ON YOUR HOME SCREEN"}
+            {milestone ? `${milestone} WORKOUTS IN, PUT WILCO ON YOUR HOME SCREEN` : "PUT WILCO ON YOUR HOME SCREEN"}
           </div>
           <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginTop:6}}>
             {milestone
-              ? <>You're logging. Install WILCO and it opens full screen like a normal app — and it's the only way Joe can nudge you when you go quiet.</>
+              ? <>You're logging. Install WILCO and it opens full screen like a normal app, and it's the only way Joe can nudge you when you go quiet.</>
               : <>WILCO isn't in the App Store. Install it from here and it opens full screen like a normal app, right next to the rest of your apps.</>}
           </div>
         </div>
@@ -3195,7 +3195,7 @@ function PaymentDisclosures({tier, billing, giftApplied, giftTerms=null, tester=
       </div>
       {tester ? (
         <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6}}>
-          Your tester code unlocks <b style={{color:CA.text}}>{tier==="elite"?"Elite":"Pro"}</b> free for as long as your tester access is active — <b style={{color:CA.text}}>you won't be charged</b>. A card is required to activate, but it will not be billed.
+          Your tester code unlocks <b style={{color:CA.text}}>{tier==="elite"?"Elite":"Pro"}</b> free for as long as your tester access is active, <b style={{color:CA.text}}>you won't be charged</b>. A card is required to activate, but it will not be billed.
         </div>
       ) : !giftApplied ? (
         <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6}}>
@@ -3204,11 +3204,11 @@ function PaymentDisclosures({tier, billing, giftApplied, giftTerms=null, tester=
       ) : (
         <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6}}>
           {giftTerms?.freeForever
-            ? <>Your code makes <b style={{color:CA.text}}>{tier==="elite"?"Elite":"Pro"}</b> free for as long as it stays active — <b style={{color:CA.text}}>you won't be charged</b>. A card is required to activate.</>
+            ? <>Your code makes <b style={{color:CA.text}}>{tier==="elite"?"Elite":"Pro"}</b> free for as long as it stays active, <b style={{color:CA.text}}>you won't be charged</b>. A card is required to activate.</>
             : (giftTerms?.amountOff > 0 && chargeNow > 0)
             ? <>Your code takes <b style={{color:CA.text}}>{usd(giftTerms.amountOff)}</b> off{giftTerms.forever?<> every {renewWord}</>:" today"}, so you'll be charged <b style={{color:CA.text}}>{usd(chargeNow)}</b> now, then <b style={{color:CA.text}}>{laterLabel}</b> on <b style={{color:CA.text}}>{nextChargeDate}</b>.</>
             : billing==="annual"
-            ? <>Your code covers your first {renewWord} — <b style={{color:CA.text}}>no charge today</b>. You will be charged <b style={{color:CA.text}}>{laterLabel}</b> on <b style={{color:CA.text}}>{nextChargeDate}</b> unless you cancel before then.</>
+            ? <>Your code covers your first {renewWord}: <b style={{color:CA.text}}>no charge today</b>. You will be charged <b style={{color:CA.text}}>{laterLabel}</b> on <b style={{color:CA.text}}>{nextChargeDate}</b> unless you cancel before then.</>
             : <>Your first {freeMonths>1?<b style={{color:CA.text}}>{freeMonths} months</b>:"month"} of Pro {freeMonths>1?"are":"is"} free. You will be charged <b style={{color:CA.text}}>{laterLabel}</b> on <b style={{color:CA.text}}>{nextChargeDate}</b> unless you cancel before then.</>}
         </div>
       )}
@@ -3322,7 +3322,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
       <div style={{color:CA.muted2,fontSize:13,marginBottom:14,lineHeight:1.6}}>
         {appliedKind==="tester" ? `Add a card to activate your free ${tier==="elite"?"Elite":"Pro"} tester access. It won't be charged.`
           : appliedGift ? "Confirm your payment details to activate Pro."
-          : "Add a card to start your free trial. You won't be charged until it ends — cancel anytime."}
+          : "Add a card to start your free trial. You won't be charged until it ends, cancel anytime."}
       </div>
 
       <PaymentDisclosures tier={tier} billing={billing} giftApplied={!!appliedGift} giftTerms={giftTerms} tester={appliedKind==="tester"} trialDays={trialDays}/>
@@ -3713,7 +3713,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
     <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:16,padding:24}}>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
         <button onClick={()=>{const p=prevStep(); p?setStep(p):setView("home");}} style={{background:"none",border:"none",color:CA.muted,cursor:"pointer",fontSize:18}}>←</button>
-        <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>NEW ATHLETE — STEP {Math.max(1,visibleSteps.indexOf(step)+1)} OF {visibleSteps.length}</div>
+        <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>NEW ATHLETE, STEP {Math.max(1,visibleSteps.indexOf(step)+1)} OF {visibleSteps.length}</div>
       </div>
       {step===1&&<>
         <div style={{marginBottom:16}}>
@@ -3752,7 +3752,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         {nameTakenNote&&(
           <div style={{background:`${CA.accent}12`,border:`1px solid ${CA.accent}55`,borderRadius:10,padding:"10px 13px",marginBottom:16}}>
             <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:3}}>HEADS UP</div>
-            <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55}}>Someone's already training as <span style={{color:CA.text,fontWeight:600}}>{data.name.trim()}</span>. You can still use that name — just sign in with your <span style={{color:CA.text,fontWeight:600}}>email</span> instead, so we always know which account is yours.</div>
+            <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55}}>Someone's already training as <span style={{color:CA.text,fontWeight:600}}>{data.name.trim()}</span>. You can still use that name, just sign in with your <span style={{color:CA.text,fontWeight:600}}>email</span> instead, so we always know which account is yours.</div>
           </div>
         )}
         <div style={{marginBottom:16}}>
@@ -3824,7 +3824,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         <div style={{color:CA.muted2,fontSize:13,marginBottom:16,lineHeight:1.6}}>What are you training for, and what have you got to train with? Joe tailors every recommendation to this.</div>
         <div style={{color:CA.muted,fontSize:11,letterSpacing:1,marginBottom:8}}>PRIMARY GOAL</div>
         {[
-          {key:"strength",label:"Get Stronger",sub:"Maximal strength — squat, deadlift, bench, Olympic lifts"},
+          {key:"strength",label:"Get Stronger",sub:"Maximal strength: squat, deadlift, bench, Olympic lifts"},
           {key:"sport",label:"Sport Performance",sub:"Explosiveness, speed, and conditioning for my sport"},
           {key:"speed",label:"Get Faster / Improve Endurance",sub:"Running performance, cardio base, speed work"},
           {key:"body",label:"Body Composition",sub:"Build muscle, lose fat, look and feel better"},
@@ -3871,7 +3871,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
              the most common interaction was tapping Next without typing. The
              persona conditionals are BLOCKS now, not separate steps. ── */}
       {step===5&&<>
-        <div style={{color:CA.muted2,fontSize:13,marginBottom:18,lineHeight:1.6}}>Last bit — all optional. Anything you add here just makes Joe's advice sharper.</div>
+        <div style={{color:CA.muted2,fontSize:13,marginBottom:18,lineHeight:1.6}}>Last bit, all optional. Anything you add here just makes Joe's advice sharper.</div>
         {competitive&&(
           <div style={{marginBottom:16,background:`${CA.accent}0f`,border:`1px solid ${CA.accent}44`,borderRadius:10,padding:"12px 14px"}}>
             <label style={{color:CA.accent,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>TEAM CODE <span style={{color:CA.muted,fontWeight:400,textTransform:"none",letterSpacing:0}}>(from your coach or athletic director)</span></label>
@@ -3880,7 +3880,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
               placeholder="e.g. LHS01" style={inpA({textTransform:"uppercase",letterSpacing:3,fontWeight:700})}/>
             {codeState?.status==="checking"&&<div style={{color:CA.muted,fontSize:11,marginTop:6}}>Checking code…</div>}
             {codeState?.status==="ok"&&<div style={{color:CA.green,fontSize:11.5,marginTop:6,fontWeight:600}}>✓ You'll be connected to {codeState.school}</div>}
-            {codeState?.status==="bad"&&<div style={{color:CA.amber,fontSize:11.5,marginTop:6}}>We couldn't find that code — double-check it, or leave it blank and join on your own.</div>}
+            {codeState?.status==="bad"&&<div style={{color:CA.amber,fontSize:11.5,marginTop:6}}>We couldn't find that code, double-check it, or leave it blank and join on your own.</div>}
             <div style={{color:CA.muted,fontSize:11,marginTop:6,lineHeight:1.5}}>Connects you to their dashboard automatically. Training on your own? Leave it blank.</div>
             <div style={{marginTop:12}}>
               <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>COACH'S NAME</label>
@@ -4012,7 +4012,7 @@ function LoginScreen({setView,setAthlete,setErr,err}) {
     setBioBusy(true); setErr("");
     try{ const a = await biometricLogin("athlete"); enterApp(a,a.pin); }
     catch(e){
-      if(!getBioEnrollment("athlete")){ setBioReady(false); setErr("Face ID is no longer set up — log in with your PIN."); }
+      if(!getBioEnrollment("athlete")){ setBioReady(false); setErr("Face ID is no longer set up, log in with your PIN."); }
       else setErr(e.message||"Face ID sign-in failed. Use your PIN.");
     }
     setBioBusy(false);
@@ -4059,7 +4059,7 @@ function LoginScreen({setView,setAthlete,setErr,err}) {
         <div style={{fontSize:34,marginBottom:12}}>⚡️</div>
         <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:2,marginBottom:8}}>FASTER SIGN-IN</div>
         <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginBottom:20}}>
-          Use Face ID to sign in next time — no name or PIN to type. You can still use your PIN anytime.
+          Use Face ID to sign in next time, no name or PIN to type. You can still use your PIN anytime.
         </div>
         {err&&<div style={{color:CA.red,fontSize:12,marginBottom:12}}>{err}</div>}
         <button onClick={enableBio} disabled={bioBusy} style={btn(CA.accent,"#000",{opacity:bioBusy?0.7:1,cursor:bioBusy?"not-allowed":"pointer"})}>
@@ -4179,7 +4179,7 @@ function CoachLoginScreen({setView,setCoach,setErr,err}) {
     setBioBusy(true); setErr("");
     try{ const c = await biometricLogin("coach"); enterDash(c,c.pin); }
     catch(e){
-      if(!getBioEnrollment("coach")){ setBioReady(false); setErr("Face ID is no longer set up — log in with your PIN."); }
+      if(!getBioEnrollment("coach")){ setBioReady(false); setErr("Face ID is no longer set up, log in with your PIN."); }
       else setErr(e.message||"Face ID sign-in failed. Use your PIN.");
     }
     setBioBusy(false);
@@ -4225,7 +4225,7 @@ function CoachLoginScreen({setView,setCoach,setErr,err}) {
         <div style={{fontSize:34,marginBottom:12}}>⚡️</div>
         <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:2,marginBottom:8}}>FASTER SIGN-IN</div>
         <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginBottom:20}}>
-          Use Face ID to sign in next time — no PIN to type. You can still use your PIN anytime.
+          Use Face ID to sign in next time, no PIN to type. You can still use your PIN anytime.
         </div>
         {err&&<div style={{color:CA.red,fontSize:12,marginBottom:12}}>{err}</div>}
         <button onClick={enableBio} disabled={bioBusy} style={btn(CA_BTN,"#fff",{opacity:bioBusy?0.7:1,cursor:bioBusy?"not-allowed":"pointer"})}>
@@ -4337,7 +4337,7 @@ function CoachSetupScreen({setView,setCoach,setErr,err}) {
     <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:16,padding:24}}>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
         <button onClick={()=>step>1?setStep(1):setView("home")} style={{background:"none",border:"none",color:CA.muted,cursor:"pointer",fontSize:18}}>←</button>
-        <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>COACH SETUP — STEP {step} OF 2</div>
+        <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:18,letterSpacing:2}}>COACH SETUP, STEP {step} OF 2</div>
       </div>
       {step===1&&<>
         <div style={{color:CA.muted2,fontSize:13,marginBottom:16,lineHeight:1.6}}>Enter the access code provided by your athletic director.</div>
@@ -4594,7 +4594,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     const next=new Date(Math.max(Date.now(),Date.parse(blockPrompt.endsAt))+weeks*7*86400000);
     try{
       await setBlockEnd({athleteId:athlete.id,endsAt:next.toISOString()},{sbRead,sbInsert,sbUpdateWhere,askClaude});
-      blockPromptAck(`Done — pushed your program's finish to ${next.toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check back in when it gets close.`);
+      blockPromptAck(`Done, pushed your program's finish to ${next.toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check back in when it gets close.`);
       setBlockPrompt(null);
     }catch(_){}
     setBlockPromptBusy(false);
@@ -4623,13 +4623,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       let date=null;
       try{ date=JSON.parse((String(raw).match(/\{[\s\S]*\}/)||["{}"])[0]).date||null; }catch(_){}
       if(!date||Number.isNaN(Date.parse(date))||Date.parse(date)<Date.parse(today)){
-        setBlockDateErr("Couldn't pin a future date from that — try a date like Aug 24, or \"3 more weeks\".");
+        setBlockDateErr("Couldn't pin a future date from that, try a date like Aug 24, or \"3 more weeks\".");
       } else {
         await setBlockEnd({athleteId:athlete.id,endsAt:`${date}T12:00:00Z`},{sbRead,sbInsert,sbUpdateWhere,askClaude});
-        blockPromptAck(`Locked in — your program wraps up ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check in when it gets close so the next one's ready before this one runs out.`);
+        blockPromptAck(`Locked in, your program wraps up ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}. I'll check in when it gets close so the next one's ready before this one runs out.`);
         setBlockPrompt(null); setBlockDateInput("");
       }
-    }catch(_){ setBlockDateErr("Couldn't reach Joe — try again in a sec."); }
+    }catch(_){ setBlockDateErr("Couldn't reach Joe, try again in a sec."); }
     setBlockPromptBusy(false);
   };
 
@@ -4758,9 +4758,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       await sbUpdate("athletes",athlete.id,{temp_program_text:null});
       setAthlete(prev=>({...prev,temp_program_text:null}));
       setShowProgram(false);
-      setMessages(prev=>[...prev,{role:"assistant",content:"✅ Welcome back — you're on your regular program again."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"✅ Welcome back, you're on your regular program again."}]);
     }catch(_){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't switch you back just now — try again in a sec."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't switch you back just now, try again in a sec."}]);
     }
     setResumingProgram(false);
   };
@@ -4769,7 +4769,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // locked-program branch in send(), which drafts the request and shows the
   // Send-to-coach chips — so this adds a doorway, not a second code path.
   const startChangeRequestFromProgram = () => {
-    setMessages(prev=>[...prev,{role:"assistant",content:"Your coach has your program locked, but I can send them a request. What would you change, and why? (e.g. \"swap back squats — my knee's been bugging me\")"}]);
+    setMessages(prev=>[...prev,{role:"assistant",content:"Your coach has your program locked, but I can send them a request. What would you change, and why? (e.g. \"swap back squats, my knee's been bugging me\")"}]);
   };
   // Header session count + this-week streak strip, memoized on the data they
   // derive from. AthleteView re-renders on every keystroke AND on every streamed
@@ -5041,7 +5041,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       setAthlete(prev=>({...prev,program_text:null}));
       setAthleteProgramText("");
       setProgramTab("blocks");
-    } catch(e){ setAthleteProgramMsg("Couldn't retire that — try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
+    } catch(e){ setAthleteProgramMsg("Couldn't retire that, try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
     setRetiring(false);
   };
 
@@ -5054,7 +5054,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       const reader = new FileReader();
       const b64 = await new Promise((res,rej)=>{reader.onload=()=>res(reader.result.split(",")[1]);reader.onerror=rej;reader.readAsDataURL(file);});
       const extracted = await askClaude(
-        "You are reading a photo of an athlete's training program. Extract the full program text exactly as written. Preserve all structure — exercises, sets, reps, weights, days, weeks. Output plain text only, no commentary.",
+        "You are reading a photo of an athlete's training program. Extract the full program text exactly as written. Preserve all structure: exercises, sets, reps, weights, days, weeks. Output plain text only, no commentary.",
         "Extract the training program from this image.",600,[b64],"claude-sonnet-5","program_extract"
       );
       if(extracted) setAthleteProgramText(prev=>prev?prev+"\n\n"+extracted:extracted);
@@ -5798,7 +5798,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setCorrectionPending(null);
     if(!pending) return;
     if(!apply){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Left it alone — nothing changed. If it still needs fixing, tell me what's off or use MY LOG → Edit."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Left it alone, nothing changed. If it still needs fixing, tell me what's off or use MY LOG → Edit."}]);
       return;
     }
     setLoading(true);
@@ -5881,7 +5881,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } catch(_){ /* best-effort */ }
       }
       haptic(15);
-      setMessages(prev=>[...prev,{role:"assistant",content:`Done — log corrected.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:`Done, log corrected.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't apply that fix cleanly, so I changed nothing. Open MY LOG → Edit on the workout to correct it by hand."}]);
     }
@@ -5900,9 +5900,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         await sbUpdate("athletes",athlete.id,{program_text:pending.newText});
         snapshotProgram(athlete.id,pending.newText,"chat_replace",{forceNewBlock:true});
         setAthlete(prev=>({...prev,program_text:pending.newText}));
-        setMessages(prev=>[...prev,{role:"assistant",content:"📋 Done — swapped in the new program. It's in your Program tab now."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"📋 Done, swapped in the new program. It's in your Program tab now."}]);
       } catch(e){
-        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that one — try again in a sec."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that one, try again in a sec."}]);
       }
     } else {
       setMessages(prev=>[...prev,{role:"assistant",content:"👍 Kept your current program. Nothing changed."}]);
@@ -5916,7 +5916,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setProgramSavePending(null);
     if(!pending) return;
     if(!apply){
-      setMessages(prev=>[...prev,{role:"assistant",content:"👍 No problem — it's still right here in the chat if you want it."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"👍 No problem, it's still right here in the chat if you want it."}]);
       return;
     }
     try {
@@ -5925,7 +5925,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       setAthlete(prev=>({...prev,program_text:pending.text}));
       setMessages(prev=>[...prev,{role:"assistant",content:"📋 Saved to your Program tab. Now every Quick Log builds off it, and I'll track your progress against it session to session."}]);
     } catch(e){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that one — try again in a sec."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that one, try again in a sec."}]);
     }
   };
 
@@ -5936,7 +5936,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     const p = builderRedirectPending;
     setBuilderRedirectPending(null);
     if(!p) return;
-    setMessages(prev=>[...prev,{role:"assistant",content:"Writing the full version into your Program tab — give me a few seconds."}]);
+    setMessages(prev=>[...prev,{role:"assistant",content:"Writing the full version into your Program tab, give me a few seconds."}]);
     try {
       let generated = null;
       try {
@@ -5948,20 +5948,20 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(!generated) generated = await extractProgramText(p.reply);
       const looksLikeProgram = generated && generated.trim().length > 120 && generated.trim().split("\n").length > 3;
       if(!looksLikeProgram){
-        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version — open the Builder from the Program tab and I'll do it right."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version, open the Builder from the Program tab and I'll do it right."}]);
         return;
       }
       if(athlete.program_text && athlete.program_text.trim()){
         setProgramReplacePending({newText:generated.trim()});
-        setMessages(prev=>[...prev,{role:"assistant",content:"That's the program I'd put you on. You've already got one saved though — want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"That's the program I'd put you on. You've already got one saved though, want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so."}]);
       } else {
         await sbUpdate("athletes",athlete.id,{program_text:generated.trim()});
         snapshotProgram(athlete.id,generated.trim(),"chat_create",{forceNewBlock:true});
         setAthlete(prev=>({...prev, program_text: generated.trim()}));
-        setMessages(prev=>[...prev,{role:"assistant",content:"📋 Saved that to your Program tab — it'll drive every session from here. Tweak it anytime in the Program tab."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"📋 Saved that to your Program tab, it'll drive every session from here. Tweak it anytime in the Program tab."}]);
       }
     } catch(e){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version — open the Builder from the Program tab and I'll do it right."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't get a clean quick version, open the Builder from the Program tab and I'll do it right."}]);
     }
   };
 
@@ -5973,14 +5973,14 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setChangeRequestPending(null);
     if(!pending) return;
     if(!sendIt){
-      setMessages(prev=>[...prev,{role:"assistant",content:"No problem — I won't send it. Your program stays as-is; bring it up with your coach whenever you're ready."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"No problem, I won't send it. Your program stays as-is; bring it up with your coach whenever you're ready."}]);
       return;
     }
     try {
       await fileChangeRequest({athlete, draft: pending, reason: pending.athleteMsg, sbInsert, track});
-      setMessages(prev=>[...prev,{role:"assistant",content:"📨 Sent. Your coach will see it on their dashboard with your reasoning — they make the final call."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"📨 Sent. Your coach will see it on their dashboard with your reasoning, they make the final call."}]);
     } catch(e){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't send that one — try again in a bit, or bring it up with your coach directly."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't send that one, try again in a bit, or bring it up with your coach directly."}]);
     }
   };
 
@@ -5996,15 +5996,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     try {
       const base = athlete.program_text || "";
       const placement = findPlacement(base, p.lift);
-      const sys = `You are applying ONE change to a strength program for the athlete who owns it. Return ONLY the complete updated program text — no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given — carry over the existing sets/reps/loading unless the request changes them.`;
+      const sys = `You are applying ONE change to a strength program for the athlete who owns it. Return ONLY the complete updated program text: no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given, carry over the existing sets/reps/loading unless the request changes them.`;
       const parts = [`CURRENT PROGRAM:\n${base}`, `\nREQUESTED CHANGE: ${p.suggestion}`];
-      if(placement) parts.push(`\nTARGET: ${placement.dayLabel||"unspecified day"} — currently "${placement.currentLine}"`);
+      if(placement) parts.push(`\nTARGET: ${placement.dayLabel||"unspecified day"}, currently "${placement.currentLine}"`);
       parts.push(`\nATHLETE'S OWN WORDS: "${p.athleteMsg}"`);
       const raw = await askClaude(sys, parts.join("\n"), 4000, [], "claude-sonnet-5", "program_apply_change");
       const guard = mergeGuard(base, raw);
       if(!guard.ok){
         setSelfChangePending(null);
-        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't make that change cleanly — tell me exactly what you want different and I'll take another run at it."}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't make that change cleanly, tell me exactly what you want different and I'll take another run at it."}]);
         return;
       }
       const diff = lineDiff(base, guard.text);
@@ -6016,10 +6016,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       const extra = allLines.length - shown.length;
       const diffText = shown.join("\n") + (extra>0?`\n…and ${extra} more lines`:"");
       setSelfChangePending({...p, phase:"review", merged:guard.text, addedLines:adds.length, removedLines:dels.length});
-      setMessages(prev=>[...prev,{role:"assistant",content:`Here's the exact change — everything else stays put:\n\n${diffText}\n\nLock it in?`}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:`Here's the exact change, everything else stays put:\n\n${diffText}\n\nLock it in?`}]);
     } catch(e){
       setSelfChangePending(null);
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't make that change cleanly — tell me exactly what you want different and I'll take another run at it."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't make that change cleanly, tell me exactly what you want different and I'll take another run at it."}]);
     }
   };
 
@@ -6061,9 +6061,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       setAthlete(prev=>({...prev,program_text:pending.merged}));
       try{ track("self_change_applied","ai"); }catch(_){}
       setSelfChangePending(null);
-      setMessages(prev=>[...prev,{role:"assistant",content:"Done — program's updated. It'll be there next session."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Done, program's updated. It'll be there next session."}]);
     } catch(e){
-      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that — try again in a sec."}]);
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that, try again in a sec."}]);
     }
   };
 
@@ -6161,11 +6161,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         setAthlete(prev=>({...prev,first_chat_complete:true}));
         setGoalCollectionActive(false);
         const confirmReply = msg.trim().length>5
-          ? `Got it — I'll build your program around that. Now let's get to work. Tell me about your first workout, or ask me anything.`
+          ? `Got it, I'll build your program around that. Now let's get to work. Tell me about your first workout, or ask me anything.`
           : `Noted. I'll factor that in as we go. Tell me about your first workout, or ask me anything.`;
         setMessages(prev=>[...prev,{role:"assistant",content:confirmReply}]);
       } catch(e){
-        setMessages(prev=>[...prev,{role:"assistant",content:`Got it. Let's get to work — what did you do today?`}]);
+        setMessages(prev=>[...prev,{role:"assistant",content:`Got it. Let's get to work, what did you do today?`}]);
         setGoalCollectionActive(false);
         try{ await sbUpdate("athletes",athlete.id,{first_chat_complete:true}); }catch(_){}
       }
@@ -6283,7 +6283,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // be classified as programs — so the flag is ignored for them.)
       if(parsed.log_correction?.is_mistake_fix && !fromQuickLog){
         if((updatedAthlete.tier||"free")==="free"){
-          followUp("Free tier doesn't store workout history, so there's no saved entry to fix — nothing carried over.");
+          followUp("Free tier doesn't store workout history, so there's no saved entry to fix, nothing carried over.");
           return;
         }
         try {
@@ -6291,9 +6291,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           if(plan?.found && plan.workout_id!=null && Array.isArray(plan.edits) && plan.edits.length &&
              workoutHistory.some(w=>String(w.id)===String(plan.workout_id))){
             setCorrectionPending({plan, targetId: plan.workout_id}); chipSetThisSend = true;
-            followUp(`Here's the fix:\n\n${plan.summary}\n\nTap “Apply fix” below and I'll set the record straight — any false PR or max from the mistype gets recalculated too. Nothing changes until you tap.`);
+            followUp(`Here's the fix:\n\n${plan.summary}\n\nTap “Apply fix” below and I'll set the record straight, any false PR or max from the mistype gets recalculated too. Nothing changes until you tap.`);
           } else {
-            followUp(`I couldn't safely pin down that entry${plan?.reason?` (${plan.reason.toLowerCase()})`:""}. Open MY LOG → tap Edit on the workout and fix it by hand — takes 30 seconds.`);
+            followUp(`I couldn't safely pin down that entry${plan?.reason?` (${plan.reason.toLowerCase()})`:""}. Open MY LOG → tap Edit on the workout and fix it by hand, takes 30 seconds.`);
           }
         } catch(_){
           followUp("Couldn't line up that fix just now. Open MY LOG → tap Edit on the workout to correct it by hand.");
@@ -6372,7 +6372,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         try {
           const draft = await draftChangeRequest({athlete: updatedAthlete, message: msg, programText: updatedAthlete.program_text||"", askClaude});
           setChangeRequestPending({suggestion: draft.suggestion, lift: draft.lift, current: draft.current, why: draft.why, source: draft.source, athleteMsg: msg}); chipSetThisSend = true;
-          followUp(`🔒 Your coach has your program locked, so I can't change it myself — but I can send them a request. Here's what I'd ask for:\n\n"${draft.suggestion}"\n\nWant me to send that to your coach?`);
+          followUp(`🔒 Your coach has your program locked, so I can't change it myself, but I can send them a request. Here's what I'd ask for:\n\n"${draft.suggestion}"\n\nWant me to send that to your coach?`);
         } catch(e){}
       } else if(parsed.program_append && !fromQuickLog){
         // "add this to my program tab" — additive. Merge onto the existing program
@@ -6403,7 +6403,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               snapshotProgram(athlete.id,programText,"chat_save");
               updatedAthlete.program_text = programText;
               setAthlete(prev=>({...prev, program_text: programText}));
-              followUp("📋 Program saved to your Program tab — I'll reference it every session.");
+              followUp("📋 Program saved to your Program tab, I'll reference it every session.");
             }
           }
         } catch(e){}
@@ -6415,7 +6415,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // away (builderRedirectFallback). Free tier and Field Mode keep the
         // inline path below; locked programs never reach here (locked branch above).
         setBuilderRedirectPending({msg, reply}); chipSetThisSend = true;
-        followUp("That's a Builder job. It sits you down properly — goal, schedule, red flags, what you've got to train with — then drafts the real thing from my actual programming rules. Tap “Open the Builder” below, or I can write something quick right here.");
+        followUp("That's a Builder job. It sits you down properly (goal, schedule, red flags, what you've got to train with), then drafts the real thing from my actual programming rules. Tap “Open the Builder” below, or I can write something quick right here.");
       } else if(parsed.program_create_request && !fromQuickLog){
         // Athlete asked Joe to BUILD them a program. The conversational reply is
         // capped at 800 tokens, so it can never BE the program — a dedicated
@@ -6428,7 +6428,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           // Status only — deliberately NOT through followUp, which folds the note
           // into finalReply and would bake "give me a few seconds" into the saved
           // bot_reply the coach later reads.
-          setMessages(prev=>[...prev,{role:"assistant",content:"Writing the full version into your Program tab — give me a few seconds."}]);
+          setMessages(prev=>[...prev,{role:"assistant",content:"Writing the full version into your Program tab, give me a few seconds."}]);
           let generated = null;
           try {
             generated = await generateFullProgram({
@@ -6441,13 +6441,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           if(looksLikeProgram){
             if(hasProgram){
               setProgramReplacePending({newText:generated.trim()}); chipSetThisSend = true;
-              followUp("That's the program I'd put you on. You've already got one saved though — want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so.");
+              followUp("That's the program I'd put you on. You've already got one saved though, want me to replace it? Tap “Replace program” below to switch, or “Keep current”. Nothing changes until you say so.");
             } else {
               await sbUpdate("athletes",athlete.id,{program_text:generated.trim()});
               snapshotProgram(athlete.id,generated.trim(),"chat_create",{forceNewBlock:true});
               updatedAthlete.program_text = generated.trim();
               setAthlete(prev=>({...prev, program_text: generated.trim()}));
-              followUp("📋 Saved that to your Program tab — it'll drive every session from here. Tweak it anytime in the Program tab.");
+              followUp("📋 Saved that to your Program tab, it'll drive every session from here. Tweak it anytime in the Program tab.");
             }
           }
         } catch(e){}
@@ -6465,7 +6465,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // answer; the day is stamped either way.
         markProgramSaveOffered(updatedAthlete.id);
         setProgramSavePending({text: reply.trim()}); chipSetThisSend = true;
-        followUp("Want me to keep that in your Program tab? Training off something structured is what turns single workouts into progress you can actually see — and it means I can prep this for you every session instead of writing it fresh each time.");
+        followUp("Want me to keep that in your Program tab? Training off something structured is what turns single workouts into progress you can actually see, and it means I can prep this for you every session instead of writing it fresh each time.");
       }
 
       // ── A program just landed and we can't tell whether it ends ───────────
@@ -6480,7 +6480,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const after = (updatedAthlete.program_text || "").trim();
         const justSaved = after && after !== programTextBefore;
         if(justSaved && !updatedAthlete.program_block_span && !parseBlockSpan(after).known){
-          followUp(`One thing before I build off this: does it run for a set stretch — a block with an end date — or is it the same week on repeat for now? Knowing lets me tell you what's coming each week instead of guessing.`);
+          followUp(`One thing before I build off this: does it run for a set stretch (a block with an end date), or is it the same week on repeat for now? Knowing lets me tell you what's coming each week instead of guessing.`);
         }
       } catch(_){}
 
@@ -6559,8 +6559,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             updatedAthlete.temp_program_text = tempText;
             setAthlete(prev=>({...prev, temp_program_text: tempText}));
             followUp(updatedAthlete.program_locked
-              ? "✈️ Got it — I've set you up with a temporary program for while you're away. Your coach's program is untouched and waiting; I've let them know you're on the road. Tell me when you're back."
-              : "✈️ Got it — I've set a temporary program for while you're away. Tell me when you're back and I'll switch you to your regular programming.");
+              ? "✈️ Got it, I've set you up with a temporary program for while you're away. Your coach's program is untouched and waiting; I've let them know you're on the road. Tell me when you're back."
+              : "✈️ Got it, I've set a temporary program for while you're away. Tell me when you're back and I'll switch you to your regular programming.");
             // Leave a coach-visible trace in the program audit trail. Deliberately
             // NOT coach_context: that table isn't athlete-writable (the write would
             // 403), and its notes are concatenated into the coach's Edition prompt
@@ -6575,7 +6575,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
                 await sbInsert("program_modifications",{
                   athlete_id: updatedAthlete.id,
                   modification_type: "field_mode",
-                  description: "Training away from their usual setup — Joe set a temporary program. The coach's program is on hold, not changed.",
+                  description: "Training away from their usual setup, Joe set a temporary program. The coach's program is on hold, not changed.",
                   old_value: null,
                   new_value: null,
                 });
@@ -6591,7 +6591,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           await sbUpdate("athletes",athlete.id,{temp_program_text:null});
           updatedAthlete.temp_program_text = null;
           setAthlete(prev=>({...prev, temp_program_text: null}));
-          followUp("✅ Temporary program cleared — back to your regular programming.");
+          followUp("✅ Temporary program cleared, back to your regular programming.");
         } catch(e){}
       }
 
@@ -6618,7 +6618,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           const updated = await appendAthleteContext(athlete.id,`${dateTag}: ${cr.note.trim()}`,{longTerm:!!cr.is_injury});
           if(updated!==null){ setAthleteContext(updated); saved.push("note"); }
         }
-        if(saved.length) followUp("✓ Got it — I'll remember that.");
+        if(saved.length) followUp("✓ Got it, I'll remember that.");
       }
 
       // Gap check: 1–3 hrs since last real entry → ask same workout or new session.
@@ -6797,7 +6797,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
 
     const sizeMB = (file.size/1024/1024).toFixed(1);
     setMessages(prev=>[...prev,
-      {role:"user",content:`[Form review video: ${file.name} — ${sizeMB}MB]`},
+      {role:"user",content:`[Form review video: ${file.name}, ${sizeMB}MB]`},
       {role:"assistant",content:`Reading your video...`}
     ]);
 
@@ -6827,19 +6827,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       const focus = sportFocusMap[athlete.sport] || "joint alignment, bracing, range of motion";
 
       const movementCtx = movementLabel.trim()
-        ? `The athlete says they are performing: ${movementLabel.trim()}. Use this as the movement label — do not second-guess it.`
+        ? `The athlete says they are performing: ${movementLabel.trim()}. Use this as the movement label, do not second-guess it.`
         : `Identify the movement from the frames.`;
 
-      const sys = `You are Coach Joe Thomas — high school strength coach, 20+ years military S&C. You are reviewing still frames from a workout video of ${athlete.name} (sport: ${athlete.sport}).
+      const sys = `You are Coach Joe Thomas, high school strength coach, 20+ years military S&C. You are reviewing still frames from a workout video of ${athlete.name} (sport: ${athlete.sport}).
 
 ${movementCtx}
 Give direct, specific coaching feedback on their form. Focus on: ${focus}.
 
 Format your response exactly like this:
-Movement: [name the movement — use the athlete's label if provided]
+Movement: [name the movement, use the athlete's label if provided]
 What's solid: [1-2 things done well]
 Fix these:
-1. [Most important cue — be specific, e.g. "Drive knees out at the bottom, not in"]
+1. [Most important cue, be specific, e.g. "Drive knees out at the bottom, not in"]
 2. [Second cue]
 3. [Third cue if applicable]
 
@@ -6926,7 +6926,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           {/* Tier badge — athlete world holds the accent electric-blue (TIERS.color stays
               gold for the coach side / pricing; we repoint just this render). */}
           {(()=>{const t=TIERS[athlete.tier||"free"]||{badge:athlete.tier==="school"?"ORG":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
-          {(athlete.total_sessions_logged||0)>=100&&(()=>{const cnt=athlete.total_sessions_logged||0;const tier=cnt>=1000?"×4":cnt>=500?"×3":cnt>=250?"×2":"";return<span title="WILCO Certified — 100+ workouts logged" style={{flexShrink:0,background:`${CA.accent}22`,border:`1px solid ${CA.accent}`,borderRadius:4,padding:"1px 6px",color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>✦ CERTIFIED{tier?` ${tier}`:""}</span>;})()}
+          {(athlete.total_sessions_logged||0)>=100&&(()=>{const cnt=athlete.total_sessions_logged||0;const tier=cnt>=1000?"×4":cnt>=500?"×3":cnt>=250?"×2":"";return<span title="WILCO Certified: 100+ workouts logged" style={{flexShrink:0,background:`${CA.accent}22`,border:`1px solid ${CA.accent}`,borderRadius:4,padding:"1px 6px",color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>✦ CERTIFIED{tier?` ${tier}`:""}</span>;})()}
         </div>
         {/* Row 1.5: streak charge-chain — this week's training as a row of links,
             trained days lit + glowing (electric blue), rest cooled steel. Today is
@@ -6981,7 +6981,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {offline&&(
         <div style={{background:`${CA.amber}18`,borderBottom:`1px solid ${CA.amber}55`,padding:"7px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <span style={{color:CA.amber,fontSize:12}}>
-            You're offline — {outbox.length>0 ? `${outbox.length} ${outbox.length===1?"log is":"logs are"} waiting and will send when you're back.` : "logs will send when you're back."}
+            You're offline. {outbox.length>0 ? `${outbox.length} ${outbox.length===1?"log is":"logs are"} waiting and will send when you're back.` : "Logs will send when you're back."}
           </span>
         </div>
       )}
@@ -6989,7 +6989,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* Profile completion banner */}
       {!profileBannerDismissed&&!athlete.birthday&&(
         <div style={{background:`${CA.accent}15`,borderBottom:`1px solid ${CA.accent}40`,padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexShrink:0}}>
-          <div style={{color:CA.accent,fontSize:12}}>Help us personalize your program — takes 60 seconds.</div>
+          <div style={{color:CA.accent,fontSize:12}}>Help us personalize your program, takes 60 seconds.</div>
           <div style={{display:"flex",gap:6,flexShrink:0}}>
             <button onClick={()=>setShowProfileCompletion(true)} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>Complete Profile</button>
             <button onClick={()=>{setProfileBannerDismissed(true);try{localStorage.setItem(`wilco_profile_banner_${athlete.id}`,"1");}catch(_){}}} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11}}>Later</button>
@@ -7112,11 +7112,11 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {blockPrompt&&(
         <div style={{margin:"0 14px 8px",border:`1px solid ${CA.accent}45`,background:`${CA.accent}0d`,borderRadius:12,padding:"11px 13px",flexShrink:0}}>
           <div style={{color:CA.text,fontSize:12.5,lineHeight:1.6,marginBottom:9}}>
-            {blockPrompt.kind==="ending"&&<>Heads up — your program wraps up <b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Want to line up what's next so there's no dead week?</>}
+            {blockPrompt.kind==="ending"&&<>Heads up, your program wraps up <b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Want to line up what's next so there's no dead week?</>}
             {blockPrompt.kind==="ended"&&<>Your program hit its planned finish (<b>{new Date(blockPrompt.endsAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>). Ready to move on to the next one?</>}
-            {blockPrompt.kind==="closed"&&<>Done — that phase is in the books. I wrote up how it went under <b>Program → Phases</b>. Want to build what's next?</>}
+            {blockPrompt.kind==="closed"&&<>Done, that phase is in the books. I wrote up how it went under <b>Program → Phases</b>. Want to build what's next?</>}
             {blockPrompt.kind==="scheduled"&&<>{blockPrompt.draft?.title?<><b>{blockPrompt.draft.title}</b></>:"The program you built"} was planned to start <b>{new Date(`${blockPrompt.start}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>. Ready to run it?</>}
-            {blockPrompt.kind==="backfill"&&<>Quick one so I can plan ahead: when does your current program wrap up?{blockPrompt.est?<> Reading your program, you look to be in week {blockPrompt.est.week} of {blockPrompt.est.weekCount} — that'd put the finish around <b>{new Date(`${blockPrompt.est.estEnd}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>.</>:null} Type it out — a date or something like "3 more weeks" works.</>}
+            {blockPrompt.kind==="backfill"&&<>Quick one so I can plan ahead: when does your current program wrap up?{blockPrompt.est?<> Reading your program, you look to be in week {blockPrompt.est.week} of {blockPrompt.est.weekCount}, that'd put the finish around <b>{new Date(`${blockPrompt.est.estEnd}T12:00:00Z`).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</b>.</>:null} Type it out, a date or something like "3 more weeks" works.</>}
           </div>
           {blockPrompt.kind==="backfill"?(
             <>
@@ -7160,7 +7160,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
                 style={{background:blockPrompt.draft?CA.navy3:`${CA.accent}20`,border:`1px solid ${blockPrompt.draft?CA.border:CA.accent}`,color:blockPrompt.draft?CA.muted2:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>🏗️ Build the next program</button>
               <button onClick={()=>setBlockPrompt(p=>({...p,extendOpen:true}))} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Extend a few weeks</button>
-              <button onClick={blockDone} disabled={blockPromptBusy} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>{blockPromptBusy?"…":"It's done — wrap it up"}</button>
+              <button onClick={blockDone} disabled={blockPromptBusy} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>{blockPromptBusy?"…":"It's done, wrap it up"}</button>
               <button onClick={()=>setBlockPrompt(null)} style={{background:"none",border:"none",color:CA.muted,borderRadius:20,padding:"7px 8px",cursor:"pointer",fontSize:12}}>Later</button>
             </div>
           )}
@@ -7469,7 +7469,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 {athlete.program_text&&(
                   <div style={{border:`1px solid ${CA.border}`,borderRadius:9,padding:12,background:"rgba(10,15,30,.4)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                      <div style={{flex:1,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:CA.muted,textTransform:"uppercase"}}>Regular Program — On Hold</div>
+                      <div style={{flex:1,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:CA.muted,textTransform:"uppercase"}}>Regular Program, On Hold</div>
                       {/* Field Mode used to render BOTH programs read-only, so an
                           athlete mid-trip who wanted to fix the program they go back
                           to had to fake a revert, edit, then re-describe their travel
@@ -7513,13 +7513,13 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                     with their real program on hold. Same revert write as the chat path. */}
                 <button onClick={resumeRegularProgram} disabled={resumingProgram}
                   style={{background:`${CA.amber}18`,border:`1px solid ${CA.amber}`,color:CA.amber,borderRadius:10,padding:"11px 14px",cursor:resumingProgram?"default":"pointer",fontSize:13,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1,opacity:resumingProgram?0.6:1,marginTop:2}}>
-                  {resumingProgram?"RESUMING…":"I'M BACK — RESUME MY PROGRAM"}
+                  {resumingProgram?"RESUMING…":"I'M BACK, RESUME MY PROGRAM"}
                 </button>
               </div>
             ):athlete.program_locked?(
               <>
                 <div style={{background:`${CA.accent}15`,border:`1px solid ${CA.accent}40`,margin:"12px 16px 0",borderRadius:10,padding:"8px 14px",color:CA.accent,fontSize:12}}>
-                  🔒 Program locked by coach — contact your coach to make changes.
+                  🔒 Program locked by coach, contact your coach to make changes.
                 </div>
                 {/* The full Joe-authored change-request flow already exists, but only
                     fired when chat happened to parse a program-write intent or a
@@ -7561,17 +7561,17 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 {(athlete.program_text||"").trim()&&(retireArm?(
                   <div style={{border:`1px solid ${CA.amber}55`,background:`${CA.amber}0d`,borderRadius:10,padding:"10px 12px"}}>
                     <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6,marginBottom:8}}>
-                      Retire this program? The phase ends at your last logged workout, Joe writes its recap, and it moves to <b>Phases</b> — your program slot opens up for the next one.
+                      Retire this program? The phase ends at your last logged workout, Joe writes its recap, and it moves to <b>Phases</b>, your program slot opens up for the next one.
                     </div>
                     <div style={{display:"flex",gap:8}}>
                       <button onClick={retireProgram} disabled={retiring}
-                        style={{background:`${CA.amber}20`,border:`1px solid ${CA.amber}`,color:CA.amber,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600}}>{retiring?"Retiring…":"Yes — retire it"}</button>
+                        style={{background:`${CA.amber}20`,border:`1px solid ${CA.amber}`,color:CA.amber,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600}}>{retiring?"Retiring…":"Yes, retire it"}</button>
                       <button onClick={()=>setRetireArm(false)} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Keep training</button>
                     </div>
                   </div>
                 ):(
                   <button onClick={()=>setRetireArm(true)} disabled={retiring}
-                    title="Done with this program? Close out the phase with one tap — Joe writes the recap and the slot opens for your next one."
+                    title="Done with this program? Close out the phase with one tap, Joe writes the recap and the slot opens for your next one."
                     style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:10,padding:"8px 16px",cursor:"pointer",fontSize:12,fontFamily:"'DM Sans'"}}>
                     🏁 Retire this program → Phases
                   </button>
@@ -7611,7 +7611,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             // placeholder so the stream's settle write still targets the last bubble.
             if(loading||videoLoading||!historyLoaded){
               pendingQuickLogSend.current = text;
-              const note = {role:"assistant",content:"Got your log — I'll send it the moment this reply finishes."};
+              const note = {role:"assistant",content:"Got your log, I'll send it the moment this reply finishes."};
               setMessages(prev=>{
                 const u=[...prev];
                 if(u.length && u[u.length-1].role==="assistant") u.splice(u.length-1,0,note);
@@ -7658,7 +7658,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             <div style={{fontSize:34,marginBottom:12}}>⚡️</div>
             <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:22,letterSpacing:2,marginBottom:8}}>FASTER SIGN-IN</div>
             <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginBottom:20}}>
-              Use Face ID to sign in next time — no name or PIN to type. You can still use your PIN anytime.
+              Use Face ID to sign in next time, no name or PIN to type. You can still use your PIN anytime.
             </div>
             {bioErr&&<div style={{color:CA.red,fontSize:12,marginBottom:12}}>{bioErr}</div>}
             <button onClick={enableBioNow} disabled={bioBusy} style={btn(CA.accent,"#000",{opacity:bioBusy?0.7:1,cursor:bioBusy?"not-allowed":"pointer"})}>
@@ -7880,27 +7880,27 @@ const QL_DRAFT_SYS = `You prefill workout logs for an athlete in a fitness app. 
 
 Output exactly two sections separated by a line containing only "===" :
 
-SECTION 1 — TODAY'S FOCUS (shown to the athlete for reference; never sent to chat). Keep it SHORT — a few lines, scannable in two seconds. This is the MEANING behind today's programming, NOT a sourcing breakdown. Do NOT show per-exercise weight math, percentages-times-1RM arithmetic, or "→ round to" reasoning. Include, in this order, ONLY what genuinely applies:
-- ONE line naming the day and its intent: the block/week/day label plus what kind of session it is (e.g. "Block II, Week 2, Day 1 — Push A. Heavy bench day." or "Week 2, Day 3 — Legs A. Squat-focused, moderate volume.").
-- If the program schedules percentages or a climb for the KEY lift, state the STRUCTURE in one short line (e.g. "Bench climbs 67→89% of your 275 max." or "Top set around 85% today."). One line, key lift(s) only — never every exercise.
-- Up to 2 short coaching notes that give the session MEANING, drawn ONLY from the athlete's GOALS, SAVED CONTEXT, INJURY HISTORY, or RECENT FORM REVIEWS, and ONLY when they relate to a movement that appears in TODAY'S session. Examples: "This is your biggest mover toward the 315 bench goal." / "Keep the core braced on the deficit deadlifts — protects the low back you tweaked." / "Last form check on squats: knees caving on the drive — cue them out." Cite a note only if it maps to today's lifts; if nothing relevant applies, omit this entirely. Never invent a goal, cue, or injury that isn't in the provided context.
+SECTION 1: TODAY'S FOCUS (shown to the athlete for reference; never sent to chat). Keep it SHORT: a few lines, scannable in two seconds. This is the MEANING behind today's programming, NOT a sourcing breakdown. Do NOT show per-exercise weight math, percentages-times-1RM arithmetic, or "→ round to" reasoning. Include, in this order, ONLY what genuinely applies:
+- ONE line naming the day and its intent: the block/week/day label plus what kind of session it is (e.g. "Block II, Week 2, Day 1: Push A. Heavy bench day." or "Week 2, Day 3: Legs A. Squat-focused, moderate volume.").
+- If the program schedules percentages or a climb for the KEY lift, state the STRUCTURE in one short line (e.g. "Bench climbs 67→89% of your 275 max." or "Top set around 85% today."). One line, key lift(s) only, never every exercise.
+- Up to 2 short coaching notes that give the session MEANING, drawn ONLY from the athlete's GOALS, SAVED CONTEXT, INJURY HISTORY, or RECENT FORM REVIEWS, and ONLY when they relate to a movement that appears in TODAY'S session. Examples: "This is your biggest mover toward the 315 bench goal." / "Keep the core braced on the deficit deadlifts, protects the low back you tweaked." / "Last form check on squats: knees caving on the drive, cue them out." Cite a note only if it maps to today's lifts; if nothing relevant applies, omit this entirely. Never invent a goal, cue, or injury that isn't in the provided context.
 Write these as plain short lines, coach-to-athlete. No headers, no bullets-with-labels, no math.
 
 ===
 
-SECTION 2 — THE LOG (exactly what the athlete would type after the session):
-- FIRST LINE: the program day label (e.g. "Day 5 – Push B" or "Upper B"). Take it STRAIGHT from the resolved position in the WHERE YOU ARE block — the app tracks which week and day the athlete is on, so this is a lookup, not a deduction. Do NOT re-derive it by counting sessions forward from their last log, and do NOT compute the week from today's date against the program's printed block dates (e.g. "Weeks: Jun 30–Jul 25") — those dates are only a guide and the athlete may be behind or ahead. Read every load/percentage from the column for the WEEK the block names. If the program has no day labels, use a short session name. Only when WHERE YOU ARE explicitly says the session could NOT be resolved should you work it out yourself from the last logged session.
-- ONE SESSION, NEVER A MERGE: if the conversation contains MORE THAN ONE written session for today — the athlete asked for an adjustment and you wrote another version, or a turn is marked as a REJECTED/superseded version — only the LAST version counts. It replaces the earlier one outright. Never combine exercises from two versions into one log, and never carry a lift over from a rejected version because it "looks like it belongs". If the athlete rejected a version, every exercise in it is rejected with it.
-- CONVERSATION OVERRIDES INFERENCE: if the CONVERSATION THIS SESSION shows the athlete already said which day they're doing ("I'm on day 3", "doing legs today") or that they're changing an exercise today (swapping, adding, or dropping a movement, or a different weight/scheme), BUILD THE DRAFT AROUND WHAT THEY SAID — the stated day wins over your own inference, and reflect any stated swaps/adds/drops in the exercise list. Only fall back to inferring the day when the conversation doesn't state one.
-- Then a blank line, then ONE line per exercise: "Name SETSxREPS @ WEIGHT" — the resolved WEIGHT is an ACTUAL NUMBER, and when that number was derived from a percentage / RPE / last time, SHOW THE SOURCE in parentheses right after it so the athlete sees the program's own prescription, not just a bare number. Weighted bodyweight: "Weighted Pull-ups 3x8 +25". Plain bodyweight: "Push-ups 3x20". Timed holds: "Plank 3x60s".
-- WEIGHT HIERARCHY — check in this exact order and STOP at the first that applies. The PROGRAM always outranks both history and the 1RM cheat sheet. ALWAYS write the resolved pounds FIRST, then the source in parentheses (the number must lead so the log records the right weight):
-  1. A SET WORKING WEIGHT written in the program for that exercise (e.g. "Bench 3x5 @ 185", "185x5", "working weight 185") → use that number exactly as written, with NO parenthetical — the program already states the pounds (write "Bench 3x5 @ 185"). This is the DEFAULT — always look here FIRST. Do NOT recompute it off a 1RM.
+SECTION 2: THE LOG (exactly what the athlete would type after the session):
+- FIRST LINE: the program day label (e.g. "Day 5 – Push B" or "Upper B"). Take it STRAIGHT from the resolved position in the WHERE YOU ARE block: the app tracks which week and day the athlete is on, so this is a lookup, not a deduction. Do NOT re-derive it by counting sessions forward from their last log, and do NOT compute the week from today's date against the program's printed block dates (e.g. "Weeks: Jun 30–Jul 25"); those dates are only a guide and the athlete may be behind or ahead. Read every load/percentage from the column for the WEEK the block names. If the program has no day labels, use a short session name. Only when WHERE YOU ARE explicitly says the session could NOT be resolved should you work it out yourself from the last logged session.
+- ONE SESSION, NEVER A MERGE: if the conversation contains MORE THAN ONE written session for today (the athlete asked for an adjustment and you wrote another version, or a turn is marked as a REJECTED/superseded version), only the LAST version counts. It replaces the earlier one outright. Never combine exercises from two versions into one log, and never carry a lift over from a rejected version because it "looks like it belongs". If the athlete rejected a version, every exercise in it is rejected with it.
+- CONVERSATION OVERRIDES INFERENCE: if the CONVERSATION THIS SESSION shows the athlete already said which day they're doing ("I'm on day 3", "doing legs today") or that they're changing an exercise today (swapping, adding, or dropping a movement, or a different weight/scheme), BUILD THE DRAFT AROUND WHAT THEY SAID: the stated day wins over your own inference, and reflect any stated swaps/adds/drops in the exercise list. Only fall back to inferring the day when the conversation doesn't state one.
+- Then a blank line, then ONE line per exercise: "Name SETSxREPS @ WEIGHT". The resolved WEIGHT is an ACTUAL NUMBER, and when that number was derived from a percentage / RPE / last time, SHOW THE SOURCE in parentheses right after it so the athlete sees the program's own prescription, not just a bare number. Weighted bodyweight: "Weighted Pull-ups 3x8 +25". Plain bodyweight: "Push-ups 3x20". Timed holds: "Plank 3x60s".
+- WEIGHT HIERARCHY: check in this exact order and STOP at the first that applies. The PROGRAM always outranks both history and the 1RM cheat sheet. ALWAYS write the resolved pounds FIRST, then the source in parentheses (the number must lead so the log records the right weight):
+  1. A SET WORKING WEIGHT written in the program for that exercise (e.g. "Bench 3x5 @ 185", "185x5", "working weight 185") → use that number exactly as written, with NO parenthetical: the program already states the pounds (write "Bench 3x5 @ 185"). This is the DEFAULT: always look here FIRST. Do NOT recompute it off a 1RM.
   2. ONLY if the program states no set weight but DOES give a percentage → percentage x the athlete's 1RM from the cheat sheet, tagged with the percentage: "Snatch 4x1 @ 185 (75%)".
   3. ONLY if the program gives an RPE / effort target instead → resolve the working weight for that RPE and tag it: "Bench 5x5 @ 185 (RPE 8)".
   4. ONLY if the program gives neither a set weight nor a percentage/RPE → what they lifted last time on that exercise, tagged: "Barbell Row 3x10 @ 135 (last time)".
-  The 1RM cheat sheet exists ONLY for step 2. Never derive a weight from e1RM when the program already states a working weight for that lift. The parenthetical is the SOURCE only — never put the percentage or "RPE" before the pounds.
-- ROUNDING: any weight you CALCULATE (a percentage result, or any number that isn't already a round gym weight) rounds to the NEAREST 5 lbs — lifters don't carry 1 or 2 lb plates. A weight the program states verbatim is used exactly as written, never re-rounded.
-- If none of the four levels give you a number, write the weight as a fill-in blank: "Weighted Dips 3x8 @ ___" (or "+___" for added-load bodyweight work). NEVER guess a weight — a visible blank beats a made-up number.
+  The 1RM cheat sheet exists ONLY for step 2. Never derive a weight from e1RM when the program already states a working weight for that lift. The parenthetical is the SOURCE only: never put the percentage or "RPE" before the pounds.
+- ROUNDING: any weight you CALCULATE (a percentage result, or any number that isn't already a round gym weight) rounds to the NEAREST 5 lbs: lifters don't carry 1 or 2 lb plates. A weight the program states verbatim is used exactly as written, never re-rounded.
+- If none of the four levels give you a number, write the weight as a fill-in blank: "Weighted Dips 3x8 @ ___" (or "+___" for added-load bodyweight work). NEVER guess a weight: a visible blank beats a made-up number.
 - Include ONLY exercises programmed for the inferred day. Never invent exercises.
 
 If the program says today is a rest day and no training day is clearly next, output exactly REST_DAY (no sections, no separator).
@@ -7910,8 +7910,8 @@ const QL_EDIT_SYS = `You revise a prefilled workout-log draft per an athlete's i
 
 Rules:
 - Apply the instruction; keep everything else in the draft unchanged.
-- If the instruction names a DIFFERENT program day ("I did day 2"), rebuild BOTH sections for that day and output them in the draft format: the SHORT focus note (day + intent, key-lift structure in one line, up to 2 relevant coaching notes drawn only from the provided goals/context/injury/form reviews — NO per-exercise sourcing math, NO percentages arithmetic), then a line containing only "===", then the log — using the weight hierarchy (a SET working weight in the program FIRST with no tag, else % x 1RM rounded to the nearest 5 lbs tagged "(75%)", else RPE resolved and tagged "(RPE 8)", else last time tagged "(last time)", else a "___" fill-in blank — resolved pounds ALWAYS first, never derive off e1RM when the program states a working weight, and never guess). This is the ONLY case where you output a focus note.
-- For every other instruction (weight tweaks, sets/reps changes, adding or removing exercises), output ONLY the revised log — no focus note, no "===".
+- If the instruction names a DIFFERENT program day ("I did day 2"), rebuild BOTH sections for that day and output them in the draft format: the SHORT focus note (day + intent, key-lift structure in one line, up to 2 relevant coaching notes drawn only from the provided goals/context/injury/form reviews, NO per-exercise sourcing math, NO percentages arithmetic), then a line containing only "===", then the log, using the weight hierarchy (a SET working weight in the program FIRST with no tag, else % x 1RM rounded to the nearest 5 lbs tagged "(75%)", else RPE resolved and tagged "(RPE 8)", else last time tagged "(last time)", else a "___" fill-in blank; resolved pounds ALWAYS first, never derive off e1RM when the program states a working weight, and never guess). This is the ONLY case where you output a focus note.
+- For every other instruction (weight tweaks, sets/reps changes, adding or removing exercises), output ONLY the revised log: no focus note, no "===".
 - PRESERVE the source tag: when a line already carries a "(75%)" / "(RPE 8)" / "(last time)" tag and your edit doesn't change what set that weight, keep the tag. The resolved pounds always come FIRST, the tag in parentheses after.
 - If the draft is empty and the instruction describes what they did, write the draft from it.
 - Same format: first line = day label, blank line, one exercise per line ("Name SETSxREPS @ WEIGHT", with the source tag in parentheses when the weight came from a %, RPE, or last time).
@@ -7929,8 +7929,8 @@ Rules:
 // written. Omit it for the background pre-build, which has nothing to paint.
 const qlTodayStr = () => new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
 const qlCtxBlock = (ctx) => `${ctx.programFromChat
-  ? `PROGRAM (NOT a saved program — this is what Joe wrote for the athlete in the conversation below, and it is usually a SINGLE session for today rather than a multi-week block. Build today's log from it AS WRITTEN. Do NOT try to place it in a week/block, do NOT advance it forward by any number of sessions, and do NOT invent later days for it — the WHERE YOU ARE block below is history for context only, not a position inside this):\n${ctx.program}`
-  : `PROGRAM:\n${ctx.program||"(none)"}`}\n\nCONVERSATION THIS SESSION (what the athlete already told Joe today — HONOR any program day or exercise change stated here over your own inference):\n${ctx.chatLines||"(nothing said yet)"}\n\nWHERE YOU ARE (today's session is ALREADY RESOLVED for you — the app tracks it. Use it as given; do NOT recompute it from the calendar, from the program's printed block dates, or from the exercises in their history):\n${ctx.whereYouAre||"(nothing logged yet — start at the program's first day, Week 1)"}\n\nRECENT SESSIONS (newest first):\n${ctx.sessionLines||"(none logged yet)"}\n\n1RM CHEAT SHEET:\n${ctx.rmLines||"(none known)"}\n\nGOALS (for the focus note — cite only if a goal maps to a lift in today's session):\n${ctx.goalLines||"(none stated)"}\n\nSAVED CONTEXT (preferences/history worth knowing — use only if relevant to today's lifts):\n${ctx.ctxNotes||"(none)"}\n\nINJURY HISTORY (guard the affected areas; note it only if today's lifts touch them):\n${ctx.injury||"(none)"}\n\nRECENT FORM REVIEWS (past video-check cues — cite one only if it names a movement in today's session):\n${ctx.formReviews||"(none)"}`;
+  ? `PROGRAM (NOT a saved program: this is what Joe wrote for the athlete in the conversation below, and it is usually a SINGLE session for today rather than a multi-week block. Build today's log from it AS WRITTEN. Do NOT try to place it in a week/block, do NOT advance it forward by any number of sessions, and do NOT invent later days for it; the WHERE YOU ARE block below is history for context only, not a position inside this):\n${ctx.program}`
+  : `PROGRAM:\n${ctx.program||"(none)"}`}\n\nCONVERSATION THIS SESSION (what the athlete already told Joe today; HONOR any program day or exercise change stated here over your own inference):\n${ctx.chatLines||"(nothing said yet)"}\n\nWHERE YOU ARE (today's session is ALREADY RESOLVED for you: the app tracks it. Use it as given; do NOT recompute it from the calendar, from the program's printed block dates, or from the exercises in their history):\n${ctx.whereYouAre||"(nothing logged yet, start at the program's first day, Week 1)"}\n\nRECENT SESSIONS (newest first):\n${ctx.sessionLines||"(none logged yet)"}\n\n1RM CHEAT SHEET:\n${ctx.rmLines||"(none known)"}\n\nGOALS (for the focus note, cite only if a goal maps to a lift in today's session):\n${ctx.goalLines||"(none stated)"}\n\nSAVED CONTEXT (preferences/history worth knowing, use only if relevant to today's lifts):\n${ctx.ctxNotes||"(none)"}\n\nINJURY HISTORY (guard the affected areas; note it only if today's lifts touch them):\n${ctx.injury||"(none)"}\n\nRECENT FORM REVIEWS (past video-check cues, cite one only if it names a movement in today's session):\n${ctx.formReviews||"(none)"}`;
 
 // ─── "BUILD ME A PROGRAM" ────────────────────────────────────────────────────
 // The saved program is the athlete's single most-referenced artifact — it's
@@ -7947,12 +7947,12 @@ const qlCtxBlock = (ctx) => `${ctx.programFromChat
 // real depth.
 const PROGRAM_GEN_SYS = `You are Coach Joe, a strength coach writing a COMPLETE training program for one athlete.
 
-Write the program itself — nothing else. No preamble, no sign-off, no "here's your program", no commentary about what you did or why. The output is saved verbatim into the athlete's Program tab and is read back to them every session, so it must stand alone as a document.
+Write the program itself, nothing else. No preamble, no sign-off, no "here's your program", no commentary about what you did or why. The output is saved verbatim into the athlete's Program tab and is read back to them every session, so it must stand alone as a document.
 
 REQUIREMENTS
 - Cover a full training block: at least 4 weeks of progression, laid out so the athlete can see what changes week to week (either a week-by-week layout or a clearly stated progression rule per lift).
 - One clearly labeled session per training day, matching the athlete's stated days per week.
-- Every exercise gets sets x reps AND a load prescription. Use real numbers off their known 1RMs/recent working weights where you have them (percentages are fine, but state the resulting weight when you can). Where you genuinely don't know a load, prescribe by RPE or by "start at X and add Y per week" — never leave a lift blank.
+- Every exercise gets sets x reps AND a load prescription. Use real numbers off their known 1RMs/recent working weights where you have them (percentages are fine, but state the resulting weight when you can). Where you genuinely don't know a load, prescribe by RPE or by "start at X and add Y per week"; never leave a lift blank.
 - Respect their equipment. Never program a lift they can't perform with what they have.
 - Respect their injury history: avoid or substitute movements that aggravate it, and say what the substitution is.
 - Order each session sensibly: main lift(s) first, accessories after, conditioning last.
@@ -7979,12 +7979,12 @@ async function generateFullProgram({athlete, workoutHistory, messages, goals, co
   ].filter(Boolean).join("\n");
   const text = await askClaude(
     PROGRAM_GEN_SYS,
-    `ATHLETE PROFILE:\n${profile||"(sparse — assume a standard commercial gym and 4 days/week)"}\n\n`+
+    `ATHLETE PROFILE:\n${profile||"(sparse, assume a standard commercial gym and 4 days/week)"}\n\n`+
     `WHAT THEY ASKED FOR:\n${request}\n\n`+
-    `WHAT YOU ALREADY TOLD THEM IN CHAT (build the program that matches this — do not contradict it):\n${joeReply||"(nothing specific)"}\n\n`+
+    `WHAT YOU ALREADY TOLD THEM IN CHAT (build the program that matches this, do not contradict it):\n${joeReply||"(nothing specific)"}\n\n`+
     `GOALS:\n${ctx.goalLines||"(none stated)"}\n\n`+
-    `1RM CHEAT SHEET (use these to set real loads):\n${ctx.rmLines||"(none known — prescribe by RPE and progression instead)"}\n\n`+
-    `RECENT SESSIONS (newest first — their true current working weights):\n${ctx.sessionLines||"(nothing logged yet)"}\n\n`+
+    `1RM CHEAT SHEET (use these to set real loads):\n${ctx.rmLines||"(none known, prescribe by RPE and progression instead)"}\n\n`+
+    `RECENT SESSIONS (newest first, their true current working weights):\n${ctx.sessionLines||"(nothing logged yet)"}\n\n`+
     `INJURY HISTORY:\n${ctx.injury||"(none)"}\n\n`+
     `SAVED CONTEXT:\n${ctx.ctxNotes||"(none)"}`,
     3500, [], "claude-sonnet-5", "program_generate"
@@ -8158,7 +8158,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         setPhase("ready");
       }
       setInstruction("");
-    }catch(e){ setEditErr("Couldn't apply that — try again."); }
+    }catch(e){ setEditErr("Couldn't apply that, try again."); }
     setEditBusy(false);
   };
 
@@ -8198,11 +8198,11 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
       {phase==="noprogram"?(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px",gap:14,textAlign:"center"}}>
           <div style={{fontSize:32}}>📋</div>
-          <div style={{color:CA.text,fontSize:15,lineHeight:1.6}}>Quick Log preps today's workout from your program — but I don't have a program on file for you yet.</div>
+          <div style={{color:CA.text,fontSize:15,lineHeight:1.6}}>Quick Log preps today's workout from your program, but I don't have a program on file for you yet.</div>
           {/* The one place the case for a structured program belongs: an empty state
               the athlete opened themselves. It's not a nudge attached to something
               else they were doing, so it can say the real reason without nagging. */}
-          <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>Training to a plan is what turns workouts into progress you can measure — and it makes every log after this one tap. Or just ask me in chat for today's session and I'll build the log off that.</div>
+          <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>Training to a plan is what turns workouts into progress you can measure, and it makes every log after this one tap. Or just ask me in chat for today's session and I'll build the log off that.</div>
           <button onClick={onAddProgram} style={{background:CA.accent,color:"#000",border:"none",borderRadius:10,padding:"12px 28px",fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:15,cursor:"pointer"}}>Add My Program →</button>
         </div>
       ):phase==="loading"?(
@@ -8219,7 +8219,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column",padding:"14px 16px",gap:10}}>
           {phase==="rest"&&(
             <div style={{background:`${CA.blue}12`,border:`1px solid ${CA.blue}50`,borderRadius:10,padding:"10px 14px",color:CA.muted2,fontSize:12,lineHeight:1.6}}>
-              Your program says today's a rest day, so there's nothing to prep. Trained anyway? Tell Joe below — "I did day 2", "did some arms and cardio" — and I'll draft it.
+              Your program says today's a rest day, so there's nothing to prep. Trained anyway? Tell Joe below ("I did day 2", "did some arms and cardio") and I'll draft it.
             </div>
           )}
           {/* Proof the memory worked. Telling someone their draft saves is a claim; showing
@@ -8261,7 +8261,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           {editErr&&<div style={{color:CA.red,fontSize:12}}>{editErr}</div>}
           {showEditHelp&&(
             <div style={{background:CA.navy2,border:`1px solid ${CA.blue}50`,borderRadius:10,padding:"10px 12px",display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
-              <div style={{color:CA.muted,fontSize:11}}>Tell Joe what to change in plain words — tap one to try:</div>
+              <div style={{color:CA.muted,fontSize:11}}>Tell Joe what to change in plain words, tap one to try:</div>
               {["I did Day 2's workout today","All my bench sets were at 185","Skipped the accessories, added 3 sets of curls"].map(ex=>(
                 <button key={ex} onClick={()=>{setInstruction(ex);setShowEditHelp(false);}}
                   style={{textAlign:"left",background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12}}>
@@ -8523,7 +8523,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
               {totalWorkoutsHero}
               <div style={{color:CA.muted,textAlign:"center",padding:40,fontSize:13}}>
                 {liftFilter
-                  ? <>No loaded sessions include that lift{allLoaded?".":" yet — keep scrolling to load older history."}</>
+                  ? <>No loaded sessions include that lift{allLoaded?".":" yet, keep scrolling to load older history."}</>
                   : "No activity logged yet."}
               </div>
             </div>
@@ -8573,7 +8573,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <div style={{width:6,height:6,borderRadius:"50%",background:runDotColor,flexShrink:0}}/>
-                          <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1}}>{isRunSession?"RUN":"WORKOUT"} — {fmtDateRelative(sessionDate)}</div>
+                          <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1}}>{isRunSession?"RUN":"WORKOUT"}: {fmtDateRelative(sessionDate)}</div>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           {!isRunSession&&feelVal&&<div style={{fontSize:11,color:feelVal==="great"||feelVal==="good"?CA.green:feelVal==="rough"?CA.red:CA.accent,fontWeight:600}}>{feelVal}</div>}
@@ -8621,7 +8621,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                           {allPainFlags.filter(p=>!resolvedPain.includes(p.area.toLowerCase())).map((p,pi)=>(
                             <div key={pi} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,padding:"3px 8px"}}>
                               <span style={{color:"#ef4444",fontSize:11}}>⚠ {p.area}</span>
-                              <button onClick={()=>resolvePain(p.area)} title="Mark resolved — hides from active view" style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✓ resolved</button>
+                              <button onClick={()=>resolvePain(p.area)} title="Mark resolved: hides from active view" style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✓ resolved</button>
                             </div>
                           ))}
                         </div>
@@ -8636,7 +8636,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                     <div key={i} style={{background:"rgba(58,123,255,0.03)",border:`1px solid ${CA.blue}30`,borderRadius:12,padding:14,marginBottom:10}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
                         <div style={{width:6,height:6,borderRadius:"50%",background:CA.blue,flexShrink:0}}/>
-                        <div style={{color:CA.blue,fontSize:11,fontWeight:700,letterSpacing:1}}>FORM CHECK — {fmtDateRelative(w.created_at)}</div>
+                        <div style={{color:CA.blue,fontSize:11,fontWeight:700,letterSpacing:1}}>FORM CHECK: {fmtDateRelative(w.created_at)}</div>
                       </div>
                       <div style={{color:CA.muted2,fontSize:12,marginBottom:6}}>{w.raw_message}</div>
                       {w.bot_reply&&<div style={{color:CA.text,fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{w.bot_reply}</div>}
@@ -8656,9 +8656,9 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                 {liftFilter
                   /* While filtering, the count has to be about the FILTER — saying
                      "6 sessions" over two visible cards reads as a bug. */
-                  ? `${timeline.length} of ${sessionCount} loaded session${sessionCount===1?"":"s"} include ${liftChips.find(c=>c.id===liftFilter)?.name||"this lift"}${allLoaded?"":" — scroll for older history"}`
+                  ? `${timeline.length} of ${sessionCount} loaded session${sessionCount===1?"":"s"} include ${liftChips.find(c=>c.id===liftFilter)?.name||"this lift"}${allLoaded?"":", scroll for older history"}`
                   : allLoaded
-                    ? `${sessionCount} session${sessionCount===1?"":"s"} — that's everything`
+                    ? `${sessionCount} session${sessionCount===1?"":"s"}, that's everything`
                     : `Showing ${sessionCount} of ${totalSessions} sessions`}
               </div>
               {!allLoaded&&(
@@ -8784,7 +8784,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 
   const save = async () => {
     if(!session.entries.every(e=>e.id)){
-      setErr("This workout hasn't finished syncing yet — try again in a moment.");
+      setErr("This workout hasn't finished syncing yet, try again in a moment.");
       return;
     }
     setSaving(true);
@@ -8977,7 +8977,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       await sbUpdateWhere("program_drafts",`?id=eq.${confirming.draft.id}`,{status:"applied",updated_at:new Date().toISOString()});
       setConfirming(null);
       load();
-    } catch(e){ setErr("Couldn't save that — try again in a sec."); }
+    } catch(e){ setErr("Couldn't save that, try again in a sec."); }
     setBusy(false);
   };
   const deleteDraft = async (d) => {
@@ -8987,7 +8987,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       await sbDelete("program_drafts",`?id=eq.${d.id}`);
       setDrafts(prev=>prev.filter(x=>x.id!==d.id));
       setDeleteArm(null);
-    } catch(e){ setErr("Couldn't delete that draft — try again."); }
+    } catch(e){ setErr("Couldn't delete that draft, try again."); }
     setBusy(false);
   };
 
@@ -9001,9 +9001,9 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     const adds = confirming.diff.filter(d=>d.type==="add").length;
     return (
       <div>
-        <div style={sub}>Review — replaces your current program</div>
+        <div style={sub}>Review: replaces your current program</div>
         <div style={{color:CA.muted2,fontSize:12,marginBottom:10}}>
-          {athlete.program_text?`${dels} line${dels!==1?"s":""} out, ${adds} in. Everything shown is the exact change:`:"No current program — this saves as-is:"}
+          {athlete.program_text?`${dels} line${dels!==1?"s":""} out, ${adds} in. Everything shown is the exact change:`:"No current program, this saves as-is:"}
         </div>
         <div style={{border:`1px solid ${CA.border}`,borderRadius:10,background:"rgba(5,10,24,.5)",padding:"10px 12px",maxHeight:280,overflowY:"auto",marginBottom:12}}>
           {confirming.diff.map((d,i)=>(
@@ -9032,7 +9032,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
       {loaded&&drafts.length===0&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
-          Nothing here yet. When {viewer==="coach"?"you build":"you and Joe build"} a program in the Builder, parked interviews and finished drafts wait here — nothing touches the live program until it's saved.
+          Nothing here yet. When {viewer==="coach"?"you build":"you and Joe build"} a program in the Builder, parked interviews and finished drafts wait here, nothing touches the live program until it's saved.
         </div>
       )}
       {drafts.map(d=>(
@@ -9045,7 +9045,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
               {d.status==="interview"?"Parked":"Ready"}
             </span>
             {d.status==="draft"&&parseTimeline(d.blueprint?.timeline?.value).start&&(
-              <span title="The start date this draft was planned for — Joe offers to swap it in when the current block wraps"
+              <span title="The start date this draft was planned for, Joe offers to swap it in when the current block wraps"
                 style={{color:CA.muted,fontSize:10.5,border:`1px solid ${CA.border}`,borderRadius:6,padding:"1px 7px"}}>
                 planned for {fmtD(parseTimeline(d.blueprint?.timeline?.value).start)}
               </span>
@@ -9058,14 +9058,14 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
             </pre>
           )}
           {d.status==="interview"&&(
-            <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Saved mid-interview — the Builder picks up exactly where it stopped.</div>
+            <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Saved mid-interview, the Builder picks up exactly where it stopped.</div>
           )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {d.status==="draft"&&!locked&&(
               <button onClick={()=>startConfirm(d)} style={miniBtn(true)}>Save to My Program</button>
             )}
             {d.status==="draft"&&locked&&(
-              <span style={{color:CA.muted,fontSize:11,alignSelf:"center"}}>🔒 Coach-locked — ask your coach to apply it.</span>
+              <span style={{color:CA.muted,fontSize:11,alignSelf:"center"}}>🔒 Coach-locked, ask your coach to apply it.</span>
             )}
             {d.status==="draft"&&onResume&&(
               <button onClick={()=>onResume(d)} title="Opens the Builder: edit by hand or tell Joe what to change" style={miniBtn(false)}>Open & edit</button>
@@ -9176,7 +9176,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
     try {
       await sbUpdateWhere("program_history",`?id=eq.${b.id}`,{block_name:n});
       setBlocks(prev=>prev.map(x=>x.id===b.id?{...x,block_name:n}:x));
-    } catch(e){ setErr("Couldn't save the name — try again."); }
+    } catch(e){ setErr("Couldn't save the name, try again."); }
   };
 
   const advancePhase = async () => {
@@ -9188,7 +9188,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       // phase 2 starts now" for programs with internal phases.
       const did = await startNextBlock({athleteId:athlete.id,programText:athlete.program_text||""},{sbRead,sbInsert,sbUpdateWhere,askClaude});
       if(did) load();
-    } catch(e){ setErr("Couldn't close the phase — try again in a sec."); }
+    } catch(e){ setErr("Couldn't close the phase, try again in a sec."); }
     setBusy(false);
   };
 
@@ -9206,7 +9206,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
           </span>
         ):(
           <button onClick={()=>{setEditingName(b.id);setNameInput(b.block_name||"");}}
-            title="Name this phase — yours to call whatever you want"
+            title="Name this phase, yours to call whatever you want"
             style={{background:"none",border:"none",padding:0,cursor:"pointer",color:CA.text,fontSize:13,fontWeight:600,fontFamily:"'DM Sans'",display:"flex",alignItems:"center",gap:6,textAlign:"left"}}>
             {nameOf(b)}<span style={{color:CA.faint,fontSize:10}}>✎</span>
           </button>
@@ -9218,7 +9218,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
         <span style={chip}>{weekChip(b)}</span>
         <span style={chip}>{sessionsIn(b)} session{sessionsIn(b)!==1?"s":""} logged</span>
         {isCurrent&&b.ends_at&&(
-          <span title="The planned end of this phase — Joe checks in when it arrives" style={chip}>wraps {fmtD(b.ends_at)}</span>
+          <span title="The planned end of this phase, Joe checks in when it arrives" style={chip}>wraps {fmtD(b.ends_at)}</span>
         )}
       </div>
       {b.block_name&&(b.block_summary||firstLine(b.program_text))&&(
@@ -9235,7 +9235,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:2}}>
           {nextArm?(
             <>
-              <button onClick={advancePhase} disabled={busy} style={miniBtn(true,CA.amber)}>{busy?"Closing…":"Yes — close it & start the next"}</button>
+              <button onClick={advancePhase} disabled={busy} style={miniBtn(true,CA.amber)}>{busy?"Closing…":"Yes, close it & start the next"}</button>
               <button onClick={()=>setNextArm(false)} style={miniBtn(false)}>Not yet</button>
             </>
           ):(
@@ -9247,7 +9247,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       )}
       {isCurrent&&nextArm&&(
         <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.6,marginTop:8}}>
-          This closes the current phase: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh phase starts on the same program. Do this when you're moving on — like phase 1 → phase 2 of a bigger plan.
+          This closes the current phase: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh phase starts on the same program. Do this when you're moving on, like phase 1 → phase 2 of a bigger plan.
         </div>
       )}
     </div>
@@ -9262,7 +9262,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
       {loaded&&!current&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
-          No active phase. Save a program — or build one with Joe — and it starts a fresh phase here, tracked from day one.
+          No active phase. Save a program, or build one with Joe, and it starts a fresh phase here, tracked from day one.
         </div>
       )}
       {current&&phaseCard(current,true)}
@@ -9270,7 +9270,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       <div style={{...sub,marginTop:18}}>Past phases</div>
       {loaded&&past.length===0&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
-          Nothing finished yet. When a phase wraps up, it lands here with Joe's recap of what actually happened — the receipts the next program gets built on.
+          Nothing finished yet. When a phase wraps up, it lands here with Joe's recap of what actually happened: the receipts the next program gets built on.
         </div>
       )}
       {past.map(b=>phaseCard(b,false))}
@@ -9534,7 +9534,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
       setEditVal("");
     } catch(_){
       // A4: a swallowed failure used to close the editor looking exactly like a success.
-      setManualMsg("Couldn't save that — check your connection and try again.");
+      setManualMsg("Couldn't save that, check your connection and try again.");
     }
   };
   // A4: remove a mistyped actual 1RM — the estimate takes back over. This was the
@@ -9549,7 +9549,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
       setEditingKey(null);
       setEditVal("");
     } catch(_){
-      setManualMsg("Couldn't remove that — try again.");
+      setManualMsg("Couldn't remove that, try again.");
     }
   };
 
@@ -9698,7 +9698,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
           <div>
             <div style={{color:CA.cyan,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>STRENGTH PROGRESS</div>
             {exercises.filter(ex=>ex.entries.length>0).length===0?(
-              <AwaitingSignal hint="Log a few weighted lifts and your strength curve builds itself — est. 1RM over time, per exercise."/>
+              <AwaitingSignal hint="Log a few weighted lifts and your strength curve builds itself: est. 1RM over time, per exercise."/>
             ):exercises.filter(ex=>ex.entries.length>0).map((ex,i)=>(
               <div key={i} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -9734,7 +9734,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
             const pd=typeof w.parsed_data==="string"?JSON.parse(w.parsed_data):(w.parsed_data||{});
             return{date:effectiveDate(w),run:pd.run_data};
           }).sort((a,b)=>a.date-b.date);
-          if(runs.length===0) return <AwaitingSignal hint="Tell Coach Joe about a run — distance, pace, heart rate — and your pace and mileage trends light up here."/>;
+          if(runs.length===0) return <AwaitingSignal hint="Tell Coach Joe about a run (distance, pace, heart rate) and your pace and mileage trends light up here."/>;
           const paceToMin=(p)=>{if(!p)return null;const pts=p.split(":");if(pts.length<2)return null;const m=parseFloat(pts[0]),s=parseFloat(pts[1]);return isNaN(m)||isNaN(s)?null:Math.round((m+s/60)*100)/100;};
           const distData=runs.filter(r=>r.run.distance_miles||r.run.distance_km).map(r=>({label:fmtDateShort(r.date),y:r.run.distance_miles||r.run.distance_km}));
           const paceData=runs.filter(r=>r.run.pace_per_mile||r.run.pace_per_km).map(r=>({label:fmtDateShort(r.date),y:paceToMin(r.run.pace_per_mile||r.run.pace_per_km)})).filter(d=>d.y!==null);
@@ -9743,7 +9743,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
             <div>
               <div style={{color:CA.blue,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>RUNNING PROGRESS</div>
               {distData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Distance per run</div><LineChart data={distData} color={CA.blue} palette={CA} unit=" mi"/></div>}
-              {paceData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:4}}>Pace (min/mi) — lower is faster</div><LineChart data={paceData} color={CA.green} palette={CA} unit=""/></div>}
+              {paceData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:4}}>Pace (min/mi), lower is faster</div><LineChart data={paceData} color={CA.green} palette={CA} unit=""/></div>}
               {hrData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Avg heart rate (bpm)</div><LineChart data={hrData} color={CA.red} palette={CA} unit=" bpm"/></div>}
               {distData.length<2&&paceData.length<2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:16,color:CA.muted2,fontSize:12}}>Log more runs to see trend charts.</div>}
             </div>
@@ -9755,7 +9755,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
           <div>
             <div style={{color:CA.cyan,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:6}}>YOUR 1RMs</div>
             <div style={{color:CA.muted2,fontSize:11,marginBottom:14,lineHeight:1.5}}>
-              Set your actual 1RM here, or just tell Coach Joe in chat when you hit one (e.g. "hit a true 1RM of 315 on squat"). Your actual 1RM always overrides the estimate for program math — until then, programming uses your best estimated 1RM.
+              Set your actual 1RM here, or just tell Coach Joe in chat when you hit one (e.g. "hit a true 1RM of 315 on squat"). Your actual 1RM always overrides the estimate for program math; until then, programming uses your best estimated 1RM.
             </div>
             {prList.length===0?(
               <AwaitingSignal hint="Log some lifts, or tell Coach Joe an actual 1RM in chat, and your maxes start tracking here."/>
@@ -9781,7 +9781,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                       <button onClick={()=>{setEditingKey(null);setEditVal("");setManualMsg("");}} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:13}}>Cancel</button>
                     </div>
                     {row.manual&&(
-                      <button onClick={()=>removeManual(row)} style={{marginTop:8,background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,padding:0}}>Remove actual 1RM — go back to the estimate</button>
+                      <button onClick={()=>removeManual(row)} style={{marginTop:8,background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,padding:0}}>Remove actual 1RM, go back to the estimate</button>
                     )}
                     {manualMsg&&<div style={{color:"#ef4444",fontSize:11,marginTop:6}}>{manualMsg}</div>}
                   </div>
@@ -9806,7 +9806,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
         <div onClick={()=>setShowRankInfo(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600,padding:24}}>
           <div onClick={e=>e.stopPropagation()} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:16,padding:"20px 22px",maxWidth:360,width:"100%"}}>
             <div style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:1,marginBottom:4}}>THE RANKS</div>
-            <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5,marginBottom:14}}>How strong is the lift, as a multiple of your bodyweight — squat shown, tuned to your bodyweight and age{bodyweight?"":" (add your weight for exact numbers)"}. Every lift scales to its own standard.</div>
+            <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5,marginBottom:14}}>How strong is the lift, as a multiple of your bodyweight (squat shown), tuned to your bodyweight and age{bodyweight?"":" (add your weight for exact numbers)"}. Every lift scales to its own standard.</div>
             <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:14}}>
               {TIER_NAMES.map((t,ti)=>ti).reverse().map(ti=>(
                 <div key={ti} style={{display:"flex",alignItems:"baseline",gap:8}}>
@@ -9831,7 +9831,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
           <div onClick={e=>e.stopPropagation()} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:16,padding:"20px 22px",maxWidth:340,width:"100%"}}>
             <div style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:1,marginBottom:8}}>STRENGTH SCORE</div>
             <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginBottom:14}}>
-              Every lift you've ranked earns points for the level it's reached — and each level is worth more than the last. Rank up any lift, or add a new one, and your score climbs.
+              Every lift you've ranked earns points for the level it's reached, and each level is worth more than the last. Rank up any lift, or add a new one, and your score climbs.
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:16}}>
               {TIER_NAMES.map((t,ti)=>(
@@ -10088,7 +10088,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
       await sbUpdate("athletes",athlete.id,{proof_enabled:proofEnabled,proof_schedule_dow:proofDow,proof_schedule_hour:proofHour,proof_timezone:tz});
       onCoachUpdate&&onCoachUpdate({proof_enabled:proofEnabled,proof_schedule_dow:proofDow,proof_schedule_hour:proofHour,proof_timezone:tz});
       setProofSaveMsg("Saved.");
-    }catch(e){ setProofSaveMsg("Couldn't save — try again."); }
+    }catch(e){ setProofSaveMsg("Couldn't save, try again."); }
     setProofSaving(false);
     setTimeout(()=>setProofSaveMsg(""),4000);
   };
@@ -10102,7 +10102,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
       if(!r.ok) setRunNowMsg(j.error||"Couldn't generate right now.");
       else if(j.ok===false) setRunNowMsg(j.reason||"Already generated today.");
       else {
-        setRunNowMsg("✓ Your Proof Feed is ready — check My Log → Proof.");
+        setRunNowMsg("✓ Your Proof Feed is ready, check My Log → Proof.");
         // Pull the just-generated digest into the app so the Proof tab shows it
         // without a manual reload.
         try{
@@ -10155,7 +10155,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
       setCancelAtPeriodEnd(j.cancel_at_period_end);
       setSubStatus(j.status||subStatus);
       onCoachUpdate({cancel_at_period_end:j.cancel_at_period_end,subscription_status:j.status,current_period_end:j.current_period_end,trial_end:j.trial_end});
-      setActionMsg({ok:true,text:j.cancel_at_period_end?"Your plan is set to cancel — you keep access until the date above.":"Your plan will continue."});
+      setActionMsg({ok:true,text:j.cancel_at_period_end?"Your plan is set to cancel, you keep access until the date above.":"Your plan will continue."});
     } catch(e){ setActionMsg({ok:false,text:"Connection error."}); }
     setActionBusy(false);
   };
@@ -10368,7 +10368,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                   {cancelAtPeriodEnd
                     ? `You'll keep access until ${fmtDate(renewalDate)}.`
                     : isTrialing
-                      ? `Free trial ends ${fmtDate(renewalDate)} — first charge then.`
+                      ? `Free trial ends ${fmtDate(renewalDate)}, first charge then.`
                       : `Renews ${fmtDate(renewalDate)}.`}
                 </div>
               )}
@@ -10439,7 +10439,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
           )}
           {planChanged&&selectedTier==="free"&&(
             <div style={{marginTop:8,color:CA.muted2,fontSize:11,lineHeight:1.5,textAlign:"center"}}>
-              To move to Free, cancel your current plan below — you'll keep access until the period ends.
+              To move to Free, cancel your current plan below, you'll keep access until the period ends.
             </div>
           )}
           {showUpgradePay&&(
@@ -10484,7 +10484,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
           <div style={{marginTop:4,marginBottom:16}}>
             <div className="setgrp" style={{marginBottom:8}}>TESTER CODES</div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{color:CA.muted2,fontSize:11,marginBottom:2,lineHeight:1.5}}>Give a friend the full app free — they enter the code at checkout and their plan is 100% off for life. 25 uses per code, shared across testers.</div>
+              <div style={{color:CA.muted2,fontSize:11,marginBottom:2,lineHeight:1.5}}>Give a friend the full app free: they enter the code at checkout and their plan is 100% off for life. 25 uses per code, shared across testers.</div>
               {testerCodes.map((g,i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:CA.navy3,border:`1px solid ${CA.blue}66`,borderRadius:10,padding:"9px 12px"}}>
                   <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
@@ -10502,7 +10502,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
             <div className="setgrp" style={{marginBottom:8}}>{hasFounder?"YOUR FOUNDER GIFT CODE":"GIFT WILCO TO 4 FRIENDS"}</div>
             {codes.length>0 ? (
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                <div style={{color:CA.muted2,fontSize:11,marginBottom:2,lineHeight:1.5}}>{hasFounder?"Share this code with anyone — each person gets their first month of Pro free. Reusable, no limit.":"Each code gives a friend their first month of Pro free. Single use."}</div>
+                <div style={{color:CA.muted2,fontSize:11,marginBottom:2,lineHeight:1.5}}>{hasFounder?"Share this code with anyone: each person gets their first month of Pro free. Reusable, no limit.":"Each code gives a friend their first month of Pro free. Single use."}</div>
                 {codes.map((g,i)=>{
                   const redeemed = g.status==="redeemed" && !g.unlimited;
                   return (
@@ -10556,7 +10556,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
             </div>
             <div style={{color:CA.muted,fontSize:11,lineHeight:1.5,textAlign:"center"}}>
               {isTrialing
-                ? "Cancel now and you won't be charged — you keep access until your trial ends."
+                ? "Cancel now and you won't be charged, you keep access until your trial ends."
                 : "Cancel anytime. You keep access until the end of your billing period; no further charges."}
             </div>
           </div>

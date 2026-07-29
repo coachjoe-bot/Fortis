@@ -683,7 +683,7 @@ export function buildCoachQuestionBank(team) {
     q.push({
       id: "reach_out", kind: "reach_out", deeper: false, action: false, // suggestion, not an action
       meta: { names: uniqDrift },
-      text: `${uniqDrift.length > 1 ? `${uniqDrift.slice(0, -1).join(", ")} and ${uniqDrift.slice(-1)} are` : `${uniqDrift[0]} is`} slipping off the plan. Might be worth a word when you get the chance — no messages get sent, just a nudge for you.`,
+      text: `${uniqDrift.length > 1 ? `${uniqDrift.slice(0, -1).join(", ")} and ${uniqDrift.slice(-1)} are` : `${uniqDrift[0]} is`} slipping off the plan. Might be worth a word when you get the chance, no messages get sent, just a nudge for you.`,
     });
   }
 
@@ -695,7 +695,7 @@ export function buildCoachQuestionBank(team) {
     text: `What's the main goal for this block?` });
   q.push({ id: "team_response", kind: "team_response", deeper: false, context: true,
     options: ["Fresh, ready for more", "Holding up well", "Getting tired", "Beat up"],
-    text: `How are they responding to the current program — fresh, holding up, or running down?` });
+    text: `How are they responding to the current program: fresh, holding up, or running down?` });
   q.push({ id: "athlete_notes", kind: "context_text", deeper: true, context: true,
     text: `Anything about specific athletes I should keep in mind next week?` });
 
