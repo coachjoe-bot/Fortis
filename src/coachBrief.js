@@ -112,7 +112,7 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
     const area = (inj && (((inj.recurring || [])[0] || {}).area || (inj.active || [])[0])) || null;
     const templates = drafted ? [
       `Coach Joe drafted a change for ${name}'s program${liftNote}: "${suggestion}".${context}`,
-      `There's a change request waiting on ${name}${liftNote} — Joe suggests: "${suggestion}".${context}`,
+      `There's a change request waiting on ${name}${liftNote}, Joe suggests: "${suggestion}".${context}`,
       `Joe flagged ${name}'s program${liftNote}: "${suggestion}".${context}`,
     ] : [
       `${name} asked for a change: "${suggestion}".`,
@@ -152,7 +152,7 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
     const suggestion = areaSuggestion(area);
     const templates = [
       `${name}'s ${area} has flagged ${count > 1 ? `${count} sessions running` : "this week"}. I'd ${suggestion}.`,
-      `${name} keeps flagging ${area} — ${count} session${plural(count)} now. Time to ${suggestion}.`,
+      `${name} keeps flagging ${area}: ${count} session${plural(count)} now. Time to ${suggestion}.`,
       `${area} is still bugging ${name} (${count}x). Worth pulling back: ${suggestion}.`,
     ];
     const prose = pick(templates, dateKey, beatIndex);
@@ -184,9 +184,9 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
     }
     const daysTxt = days != null ? `${days} day${plural(days)}` : "a bit";
     const templates = [
-      `${name}'s gone quiet — ${daysTxt}, and they were training the week before. Season over, or worth a conversation?`,
+      `${name}'s gone quiet: ${daysTxt}, and they were training the week before. Season over, or worth a conversation?`,
       `${name} hasn't logged in ${daysTxt} after a solid week before that. Worth checking in.`,
-      `Nothing from ${name} in ${daysTxt} — they were training regularly before this. Flagging it.`,
+      `Nothing from ${name} in ${daysTxt}, they were training regularly before this. Flagging it.`,
     ];
     const prose = pick(templates, dateKey, beatIndex);
     return {
@@ -215,7 +215,7 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
     const liftNote = gapLift && gapLift.volumeGapPct >= 15 ? ` Biggest gap: ${gapLift.lift} (${gapLift.volumeGapPct}% under).` : "";
     const templates = [
       `${name} hit ${sessionsCite} this week (${score}% adherence).${liftNote}`,
-      `${name}'s adherence is slipping — ${score}% this week, ${sessionsCite}.${liftNote}`,
+      `${name}'s adherence is slipping: ${score}% this week, ${sessionsCite}.${liftNote}`,
       `${score}% adherence for ${name} this week (${sessionsCite}).${liftNote}`,
     ];
     const prose = pick(templates, dateKey, beatIndex);
@@ -229,7 +229,7 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
       meta: { score, sessionsCite },
       actions: [
         { id: "handled", kind: "decision", label: "I'll handle it", payload: { decision: "handled" } },
-        { id: "trim", kind: "prefill_program", label: "Trim their week", payload: { suggestion: `Trim the week down — they hit ${sessionsCite}. Cut a day or drop accessory volume before touching the main lifts.` } },
+        { id: "trim", kind: "prefill_program", label: "Trim their week", payload: { suggestion: `Trim the week down: they hit ${sessionsCite}. Cut a day or drop accessory volume before touching the main lifts.` } },
         { id: "dismiss", kind: "decision", label: "Not a concern", payload: { decision: "dismiss" } },
         OPEN_ATHLETE_ACTION(athleteId),
       ],
@@ -246,14 +246,14 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
   const durationTxt = stuck ? (wks >= 4 ? `${Math.round(wks / 4)} month${plural(Math.round(wks / 4))}` : `~${wks} week${plural(wks)}`) : "the last 3 sessions";
   const loadTxt = pl ? `${pl.weight}x${pl.reps}` : "current numbers";
   const stuckTemplates = [
-    `${name}'s ${lift} has been parked at ${loadTxt} for ${durationTxt} — that's a programming call, not an effort problem.`,
-    `${lift} is stuck for ${name} — ${durationTxt} at ${loadTxt}. Worth changing the stimulus before you change the athlete.`,
+    `${name}'s ${lift} has been parked at ${loadTxt} for ${durationTxt}, that's a programming call, not an effort problem.`,
+    `${lift} is stuck for ${name}: ${durationTxt} at ${loadTxt}. Worth changing the stimulus before you change the athlete.`,
     `${name}'s ${lift} hasn't moved in ${durationTxt} (still ${loadTxt}). Time for a deload or a rep-range swap.`,
   ];
   const freshTemplates = [
-    `${name}'s ${lift} has gone flat across ${durationTxt}, still ${loadTxt} — early, but worth watching.`,
+    `${name}'s ${lift} has gone flat across ${durationTxt}, still ${loadTxt}, early, but worth watching.`,
     `${lift} looks flat for ${name} over ${durationTxt} (${loadTxt}). Not urgent yet, keep an eye on it.`,
-    `${name}'s ${lift} e1RM hasn't budged across ${durationTxt} — ${loadTxt}. Might be noise, might not.`,
+    `${name}'s ${lift} e1RM hasn't budged across ${durationTxt}: ${loadTxt}. Might be noise, might not.`,
   ];
   const prose = pick(stuck ? stuckTemplates : freshTemplates, dateKey, beatIndex);
   return {
@@ -265,7 +265,7 @@ function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
     flag: "plateau",
     meta: { lift, spanDays: pl ? pl.spanDays : null, weight: pl ? pl.weight : null, reps: pl ? pl.reps : null },
     actions: [
-      { id: "prefill", kind: "prefill_program", label: "Draft the change", payload: { suggestion: `${lift}: plateaued at ${loadTxt} for ${durationTxt} — change the rep range, add a deload, or swap the variation.` } },
+      { id: "prefill", kind: "prefill_program", label: "Draft the change", payload: { suggestion: `${lift}: plateaued at ${loadTxt} for ${durationTxt}, change the rep range, add a deload, or swap the variation.` } },
       { id: "handled", kind: "decision", label: "I'll handle it", payload: { decision: "handled" } },
       { id: "dismiss", kind: "decision", label: "Not a concern", payload: { decision: "dismiss" } },
       OPEN_ATHLETE_ACTION(athleteId),
@@ -290,35 +290,35 @@ function buildTrendBeat(D, dateKey, beatIndex) {
   if (spike) {
     const templates = useCurrent
       ? [
-          `Team volume's up ${pct}% over four weeks — worth keeping an eye on the load.`,
+          `Team volume's up ${pct}% over four weeks, worth keeping an eye on the load.`,
           `Volume's climbing fast, ${pct}% over the last month. Watch for overreaching.`,
-          `Four-week volume trend is up ${pct}% — good sign, just don't let it run away from you.`,
+          `Four-week volume trend is up ${pct}%, good sign, just don't let it run away from you.`,
         ]
       : [
-          `Last week's volume ran ${pct}% over the month's start — worth keeping an eye on the load.`,
+          `Last week's volume ran ${pct}% over the month's start, worth keeping an eye on the load.`,
           `Volume had climbed ${pct}% by last week. Watch for overreaching.`,
-          `Last complete week came in ${pct}% over four weeks ago — good sign, just don't let it run away from you.`,
+          `Last complete week came in ${pct}% over four weeks ago, good sign, just don't let it run away from you.`,
         ];
     return { text: pick(templates, dateKey, beatIndex), tag: "volume climbing" };
   }
   if (D.teamAdh != null && D.teamAdh < 60) {
     const templates = [
-      `Team adherence sits at ${D.teamAdh}% right now — worth a look at what's slipping.`,
+      `Team adherence sits at ${D.teamAdh}% right now, worth a look at what's slipping.`,
       `Adherence is soft this week, ${D.teamAdh}% team-wide. Something's getting in the way.`,
-      `${D.teamAdh}% team adherence — below where you'd want it.`,
+      `${D.teamAdh}% team adherence, below where you'd want it.`,
     ];
     return { text: pick(templates, dateKey, beatIndex), tag: "adherence slipping" };
   }
   if (D.prThisWk > 0) {
     const templates = [
-      `${D.prThisWk} true PR${plural(D.prThisWk)} landed this week — the roster's trending up.`,
+      `${D.prThisWk} true PR${plural(D.prThisWk)} landed this week, the roster's trending up.`,
       `${D.prThisWk} real PR${plural(D.prThisWk)} this week. Momentum's there.`,
-      `Roster banked ${D.prThisWk} true PR${plural(D.prThisWk)} this week — keep the loading honest.`,
+      `Roster banked ${D.prThisWk} true PR${plural(D.prThisWk)} this week, keep the loading honest.`,
     ];
     return { text: pick(templates, dateKey, beatIndex), tag: "PRs rolling in" };
   }
   const templates = [
-    `Team volume's holding steady week to week — nothing alarming either direction.`,
+    `Team volume's holding steady week to week, nothing alarming either direction.`,
     `Volume trend is flat and healthy. Nothing to react to here.`,
     `Load's staying in a steady band across the roster.`,
   ];
@@ -343,7 +343,7 @@ function buildQuestionBeats(concernBeats, dateKey, answeredIds = new Set()) {
       return {
         id: `quiet:${b.athleteId}`,
         text: `Anything going on with ${b.athleteName} outside the gym I should factor in?`,
-        chips: ["Season's over", "Schedule crunch", "Not sure — I'll ask"],
+        chips: ["Season's over", "Schedule crunch", "Not sure, I'll ask"],
       };
     },
     injury: () => {
@@ -420,7 +420,7 @@ export function buildMorningBrief({ D, athletes = [], changeRequests = [], clear
   if (!roster) {
     beats.push({
       id: "opening", kind: "opening",
-      prose: "No roster loaded yet — the brief will fill in once athletes are added.",
+      prose: "No roster loaded yet, the brief will fill in once athletes are added.",
       actions: [],
     });
     beats.push({ id: "allclear", kind: "allclear", prose: "Nothing to review yet.", actions: [] });
@@ -474,7 +474,7 @@ export function buildMorningBrief({ D, athletes = [], changeRequests = [], clear
   if (concernCount > 0) {
     beats.push(...concernBeats);
   } else {
-    beats.push({ id: "allclear", kind: "allclear", prose: "Everything looks healthy — nothing needs you today.", actions: [] });
+    beats.push({ id: "allclear", kind: "allclear", prose: "Everything looks healthy, nothing needs you today.", actions: [] });
   }
 
   // Trend beat — one plain-English sentence, no actions.
@@ -489,9 +489,9 @@ export function buildMorningBrief({ D, athletes = [], changeRequests = [], clear
   if (wins.length) {
     const top = wins.slice(0, 2);
     const winTemplates = [
-      `Worth sharing: ${top.map((w) => `${w.title} — ${w.detail}`).join(". Also: ")}.`,
-      `Something to put in front of the team: ${top.map((w) => `${w.title} — ${w.detail}`).join(". And: ")}.`,
-      `Share-worthy this week: ${top.map((w) => `${w.title} — ${w.detail}`).join(". Plus: ")}.`,
+      `Worth sharing: ${top.map((w) => `${w.title}: ${w.detail}`).join(". Also: ")}.`,
+      `Something to put in front of the team: ${top.map((w) => `${w.title}: ${w.detail}`).join(". And: ")}.`,
+      `Share-worthy this week: ${top.map((w) => `${w.title}: ${w.detail}`).join(". Plus: ")}.`,
     ];
     beats.push({
       id: "wins", kind: "wins", prose: pick(winTemplates, dateKey, 700),
@@ -538,9 +538,9 @@ export function decisionNote(beat, actionId, freeText) {
 
   let note = `${name} ${detail} → coach: ${actionLabel}`;
   if (freeText && String(freeText).trim()) {
-    const room = 200 - note.length - 4; // room for ` — "…"` framing
+    const room = 200 - note.length - 4; // room for `: "…"` framing
     const ft = room > 3 ? clamp(String(freeText).trim(), room) : "";
-    if (ft) note += ` — "${ft}"`;
+    if (ft) note += `: "${ft}"`;
   }
   return clamp(note, 200);
 }

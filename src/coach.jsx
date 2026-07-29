@@ -41,7 +41,7 @@ import { lineDiff, diffStats, findPlacement, mergeGuard } from "./programDiff.js
 // (source_hash mismatch) is parsed right here (Haiku, hash-guarded, ≤4/load) and
 // upserted through the gateway. KEEP THE PROMPT VERBATIM-IN-SYNC with
 // parseProgramIfNeeded in api/_proof.js so both paths cache identical shapes.
-const PARSE_SYSTEM = `You convert a strength athlete's written training program into STRICT JSON. No prose, no markdown — JSON only. Shape:
+const PARSE_SYSTEM = `You convert a strength athlete's written training program into STRICT JSON. No prose, no markdown, JSON only. Shape:
 {"blocks":[{"name":string,"weeks":number,"start":string|null,"days":[{"day":string,"label":string,"exercises":[{"name":string,"sets":number,"reps":number,"pct_by_week":number[],"ref_1rm_lift":string|null}]}]}],"ref_1rms":{}}
 Rules: sets/reps are the prescribed working sets per session. pct_by_week is %1RM per week of the block (empty array if the program gives no percentages). ref_1rm_lift is which max the % is of (usually the lift itself). If the program has no blocks/weeks, use one block with weeks=1. Extract every exercise you can. Leave ref_1rms as {} (filled later from real data).`;
 const sha256hex = async (text)=>{
@@ -189,7 +189,7 @@ function SchoolsList({schools,coaches,onRefresh,me}) {
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({auth:getAuth(),coachName:newCoachName.trim(),coachEmail:newCoachEmail.trim().toLowerCase(),accessCode,schoolName:school.name})
       }).catch(()=>{});
-      setAddCoachSuccess(`✓ ${newCoachName.trim()} added as ${accessCode} — invite sent!`);
+      setAddCoachSuccess(`✓ ${newCoachName.trim()} added as ${accessCode}, invite sent!`);
       setNewCoachName(""); setNewCoachEmail("");
       onRefresh();
       setTimeout(()=>{ setAddingCoachFor(null); setAddCoachSuccess(""); },2500);
@@ -267,7 +267,7 @@ function SchoolsList({schools,coaches,onRefresh,me}) {
             {isAddingHere&&(
               <div style={{padding:"14px 16px",background:CA.navy3,borderBottom:`1px solid ${CA.border}`}}>
                 <div style={{color:CA.muted,fontSize:11,letterSpacing:1,marginBottom:10}}>
-                  ADD COACH TO {s.name.toUpperCase()} — code will be <span style={{color:CA.accent,fontWeight:700}}>{s.code}{String((coaches.filter(c=>c.school_id===s.id).reduce((m,c)=>Math.max(m,c.coach_number||0),0))+1).padStart(2,"0")}</span>
+                  ADD COACH TO {s.name.toUpperCase()}: code will be <span style={{color:CA.accent,fontWeight:700}}>{s.code}{String((coaches.filter(c=>c.school_id===s.id).reduce((m,c)=>Math.max(m,c.coach_number||0),0))+1).padStart(2,"0")}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                   <input value={newCoachName} onChange={e=>setNewCoachName(e.target.value)} placeholder="Coach name" style={inpA()}/>
@@ -359,7 +359,7 @@ function CoachesList({coaches,schools,onRefresh}) {
           <div key={i} style={{borderBottom:`1px solid ${CA.border}`}}>
             {isEditing ? (
               <div style={{padding:"12px 16px",background:CA.navy3}}>
-                <div style={{color:CA.muted,fontSize:11,letterSpacing:1,marginBottom:8}}>EDIT COACH — <span style={{color:CA.accent}}>{c.access_code}</span></div>
+                <div style={{color:CA.muted,fontSize:11,letterSpacing:1,marginBottom:8}}>EDIT COACH: <span style={{color:CA.accent}}>{c.access_code}</span></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                   <input value={editName} onChange={e=>setEditName(e.target.value)} placeholder="Coach name" style={inpA()}/>
                   <input type="email" value={editEmail} onChange={e=>setEditEmail(e.target.value)} placeholder="Email" style={inpA()}/>
@@ -601,7 +601,7 @@ function SchoolOnboardingForm({onCreated,me}) {
       {/* Coach slots */}
       <div style={{marginBottom:16}}>
         <div style={{color:CA.muted,fontSize:11,letterSpacing:1,marginBottom:10}}>
-          COACHES — codes: <span style={{color:CA.accent,fontWeight:700}}>{schoolCode||"???"}01</span>, <span style={{color:CA.accent,fontWeight:700}}>{schoolCode||"???"}02</span>…
+          COACHES, codes: <span style={{color:CA.accent,fontWeight:700}}>{schoolCode||"???"}01</span>, <span style={{color:CA.accent,fontWeight:700}}>{schoolCode||"???"}02</span>…
         </div>
         {coaches.slice(0,maxCoaches).map((c,i)=>(
           <div key={i} style={{display:"grid",gridTemplateColumns:"56px 1fr 1fr",gap:8,marginBottom:8,alignItems:"center"}}>
@@ -1028,7 +1028,7 @@ function CoachDashboard({coach,onLogout}) {
     setAssignError("");
     try {
       const targetCoach = assignCoachId ? allCoaches.find(c=>c.id===assignCoachId) : null;
-      if(assignCoachId && !targetCoach){ setAssignError("Coach not found — try again."); setAssignSaving(false); return; }
+      if(assignCoachId && !targetCoach){ setAssignError("Coach not found, try again."); setAssignSaving(false); return; }
       // Unassigning as MASTER means "remove from any school". Unassigning as an
       // ADMIN must keep school_id — that's the only thing keeping the athlete in
       // their school's Unassigned bucket instead of vanishing from every roster.
@@ -1353,7 +1353,7 @@ function CoachDashboard({coach,onLogout}) {
               <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:24}}>
                 <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:16,padding:24,width:"100%",maxWidth:500}}>
                   <div style={{fontFamily:"'Bebas Neue'",fontSize:20,color:CA.accent,letterSpacing:2,marginBottom:4}}>BULK ASSIGN PROGRAM</div>
-                  <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Assigning to {selectedIds.size} athlete{selectedIds.size!==1?"s":""} — overwrites any existing program.</div>
+                  <div style={{color:CA.muted,fontSize:12,marginBottom:10}}>Assigning to {selectedIds.size} athlete{selectedIds.size!==1?"s":""}, overwrites any existing program.</div>
                   {/* Name exactly whose tuned programs are about to be wiped. Every
                       selected athlete's program_text and program_locked is already in
                       memory; the generic warning above meant a coach couldn't see they
@@ -1363,7 +1363,7 @@ function CoachDashboard({coach,onLogout}) {
                     const sel = athletes.filter(a=>selectedIds.has(a.id));
                     const withProgram = sel.filter(a=>a.program_text&&a.program_text.trim());
                     if(!withProgram.length) return (
-                      <div style={{color:CA.muted2,fontSize:11.5,marginBottom:14}}>None of the selected athletes have a program yet — nothing will be overwritten.</div>
+                      <div style={{color:CA.muted2,fontSize:11.5,marginBottom:14}}>None of the selected athletes have a program yet, nothing will be overwritten.</div>
                     );
                     const names = withProgram.map(a=>`${a.name}${a.program_locked?" 🔒":""}`);
                     const rest = sel.length - withProgram.length;
@@ -1371,7 +1371,7 @@ function CoachDashboard({coach,onLogout}) {
                       <div style={{background:`${CA.amber}12`,border:`1px solid ${CA.amber}55`,borderRadius:9,padding:"9px 12px",marginBottom:14}}>
                         <div style={{color:CA.amber,fontSize:10.5,fontWeight:700,letterSpacing:1,marginBottom:4}}>WILL OVERWRITE {withProgram.length} EXISTING PROGRAM{withProgram.length>1?"S":""}</div>
                         <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.55}}>{names.join(", ")}</div>
-                        {rest>0&&<div style={{color:CA.muted,fontSize:11,marginTop:4}}>{rest} other{rest>1?"s":""} — no program yet</div>}
+                        {rest>0&&<div style={{color:CA.muted,fontSize:11,marginTop:4}}>{rest} other{rest>1?"s":""}, no program yet</div>}
                       </div>
                     );
                   })()}
@@ -1470,17 +1470,17 @@ function CoachDashboard({coach,onLogout}) {
                   {pushSupported()&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:"14px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:14}}>
                     <div style={{flex:1}}>
                       <div style={{fontWeight:700,fontSize:13.5,color:CA.text}}>Push notifications on this device</div>
-                      <div style={{color:CA.muted,fontSize:12,marginTop:2}}>{pushOn?"On — you'll get the alerts you've toggled below.":"Turn on to get alerts on this device."}</div>
+                      <div style={{color:CA.muted,fontSize:12,marginTop:2}}>{pushOn?"On: you'll get the alerts you've toggled below.":"Turn on to get alerts on this device."}</div>
                     </div>
                     <button onClick={togglePush} disabled={pushBusy} style={{background:pushOn?"transparent":CA_BTN,color:pushOn?CA.muted:"#fff",border:`1px solid ${pushOn?CA.border:CA.accent}`,boxShadow:pushOn?"none":`0 4px 16px ${CA_GLOW}`,borderRadius:9,padding:"8px 16px",fontWeight:700,fontSize:12.5,cursor:"pointer",fontFamily:"'DM Sans'",opacity:pushBusy?0.6:1}}>{pushBusy?"…":pushOn?"Turn off":"Enable"}</button>
                   </div>}
                   <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,overflow:"hidden"}}>
                     <Row title="Athlete injury / pain" desc="When an athlete flags pain in a session." pkey="injury"/>
-                    <Row title="Big PR" desc="Only real improvements on ranked lifts — never a first-time baseline." pkey="big_pr"/>
+                    <Row title="Big PR" desc="Only real improvements on ranked lifts, never a first-time baseline." pkey="big_pr"/>
                     <Row title="Athlete inactive" desc="When someone on your roster goes quiet." pkey="inactive"/>
                     <Row title="Coach's Edition ready" desc="Your weekly + monthly team report, the moment it's generated." pkey="digest"/>
                   </div>
-                  <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>WILCO never messages your athletes on your behalf — these alerts go only to you.</div>
+                  <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>WILCO never messages your athletes on your behalf, these alerts go only to you.</div>
                 </div>
               );
             })()}
@@ -1750,8 +1750,8 @@ function CoachDashboard({coach,onLogout}) {
                     </button>
                     {recalcStatus&&(
                       <div style={{fontSize:13,color:recalcStatus==="done"?CA.green:recalcStatus==="error"?CA.red:CA.muted2,fontWeight:recalcStatus==="done"||recalcStatus==="error"?600:400}}>
-                        {recalcStatus==="done"?"✓ Done — all PRs updated"
-                          :recalcStatus==="error"?"✗ Something went wrong — check console"
+                        {recalcStatus==="done"?"✓ Done, all PRs updated"
+                          :recalcStatus==="error"?"✗ Something went wrong, check console"
                           :recalcStatus}
                       </div>
                     )}
@@ -1939,7 +1939,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
     const recentTrue=truePRs.filter(p=>new Date(p.created_at||p.date||0).getTime()>=weekAgo).sort((a,b)=>b.gain-a.gain);
     const seenAth=new Set(); const personalWins=[];
     for(const p of recentTrue){ if(seenAth.has(p.athlete_id))continue; seenAth.add(p.athlete_id);
-      personalWins.push({icon:"🏆",title:(athletes.find(a=>a.id===p.athlete_id)||{}).name||"Athlete",detail:`${p.exercise} ${fmtWeight(p.weight,p.unit)} — +${Math.round(p.gain)} lbs e1RM`}); }
+      personalWins.push({icon:"🏆",title:(athletes.find(a=>a.id===p.athlete_id)||{}).name||"Athlete",detail:`${p.exercise} ${fmtWeight(p.weight,p.unit)}, +${Math.round(p.gain)} lbs e1RM`}); }
     const statWins=[];
     if(prThisWk>0) statWins.push({icon:"🔥",title:`${prThisWk} true PR${prThisWk!==1?"s":""}`,detail:"across the roster this week"});
     // displayForKey: movers carry the NORMALIZED lift name ("bench press") — map it
@@ -1982,12 +1982,12 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
         const gone = r.daysSince > 28;
         triage.push({
           id:r.a.id, sev: gone?"crit":"warn", kind:"Quiet", name:r.a.name,
-          what: gone ? `dark ${Math.floor(r.daysSince/7)} weeks — still on the roster?` : `no session in ${r.daysSince} days`,
+          what: gone ? `dark ${Math.floor(r.daysSince/7)} weeks, still on the roster?` : `no session in ${r.daysSince} days`,
         });
       } else if(todayIdx>=3 && r.score!=null && r.score<55){
         const b=r.adhB;
         let why="";
-        if(b){ const parts=[["skipping prescribed lifts",b.E],["cutting sets short",b.V],...(b.W!=null?[["working lighter than prescribed",b.W]]:[])].sort((x,y)=>x[1]-y[1]); why=` — ${parts[0][0]}`; }
+        if(b){ const parts=[["skipping prescribed lifts",b.E],["cutting sets short",b.V],...(b.W!=null?[["working lighter than prescribed",b.W]]:[])].sort((x,y)=>x[1]-y[1]); why=`: ${parts[0][0]}`; }
         triage.push({id:r.a.id,sev:"warn",kind:"Adherence",name:r.a.name,what:`adherence slipping (${r.score}%)${why}`});
       } else if(r.plateau){
         const pl=r.plateau;
@@ -2017,8 +2017,8 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
   const adhTip = (r)=>{
     if(r.score==null) return "No program to grade against";
     const b=r.adhB;
-    if(!b) return `${r.score}% — sessions vs prescribed days (program not parsed yet)`;
-    return `${r.score}% · Exercises ${b.E}% · Volume ${b.V}%${b.W!=null?` · Weights ${b.W}%`:""} — weighted 50/30/20, pro-rated for mid-week`;
+    if(!b) return `${r.score}%, sessions vs prescribed days (program not parsed yet)`;
+    return `${r.score}% · Exercises ${b.E}% · Volume ${b.V}%${b.W!=null?` · Weights ${b.W}%`:""} (weighted 50/30/20, pro-rated for mid-week)`;
   };
   // Hover tooltip shared across every chart data point.
   // rAF-throttled: onMouseMove fires at pointer rate (60-120Hz) and each setTip
@@ -2090,10 +2090,10 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
 
         {/* Program adherence + heatmap — widest tile */}
         <OverviewCard style={span(4)} title="Program adherence · this week"
-          readout={D.teamAdh==null?`No parsed programs yet — assign & lock programs to track adherence.`:`Team average. ${D.noProgram>0?`${D.noProgram} without a program (excluded).`:"Everyone has a program."}`}
+          readout={D.teamAdh==null?`No parsed programs yet, assign & lock programs to track adherence.`:`Team average. ${D.noProgram>0?`${D.noProgram} without a program (excluded).`:"Everyone has a program."}`}
           tone={D.teamAdh==null?null:(D.teamAdh>=80?{k:"good",t:"Healthy"}:D.teamAdh>=60?{k:"warn",t:"Slipping"}:{k:"crit",t:"At risk"})}>
           <div style={{fontFamily:"'Bebas Neue'",fontSize:46,color:adhColor(D.teamAdh),lineHeight:.9}}>{D.teamAdh==null?"—":Math.round(adhCU)}<span style={{fontSize:18,color:CA.muted}}> {D.teamAdh==null?"":"% team avg"}</span></div>
-          <div style={{fontSize:10.5,color:CA.muted,marginTop:4}}>Exercise choice 50 · volume 30 · weight 20 — graded red → green</div>
+          <div style={{fontSize:10.5,color:CA.muted,marginTop:4}}>Exercise choice 50 · volume 30 · weight 20, graded red → green</div>
           <div style={{maxHeight:showAllHeat?340:"none",overflowY:showAllHeat?"auto":"visible"}}>
           <div style={{display:"grid",gridTemplateColumns:"92px repeat(7,minmax(0,1fr)) 42px",gap:5,alignItems:"center",marginTop:14}}>
             <span/>{D.dayLabels.map((l,i)=><span key={i} style={{fontSize:10,color:i===D.todayIdx?CA.cyan:CA.muted,textAlign:"center",fontWeight:i===D.todayIdx?800:400}}>{l.l}<div style={{fontSize:8,opacity:.75}}>{l.d}</div></span>)}
@@ -2105,7 +2105,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
                 return <i key={`c${ri}-${di}`} className="c-fade"
                   onClick={()=>{ if(d===1) setDayPick(picked?null:{athleteId:r.a.id,di}); }}
                   style={{aspectRatio:"1",borderRadius:3,background:d==null?"transparent":r.hasProgram?cell(d):(d?CA.accent:CA.navy3),opacity:d==null?1:r.hasProgram?1:.55,border:picked?`2px solid ${CA.cyan}`:d==null?`1px dashed ${CA.border}`:`1px solid ${CA.line2}22`,boxShadow:picked?`0 0 8px ${CA.cyan}66`:"none",cursor:d===1?"pointer":"default",["--d"]:`${Math.min(780,(ri*7+di)*16)}ms`}}
-                  {...tipOn(`${r.a.name.split(" ")[0]} · ${D.dayLabels[di].full} ${D.dayLabels[di].d}: ${d==null?"upcoming":d?"logged a session — tap to inspect":"no session"}${r.hasProgram?"":" (no program)"}`)}/>;
+                  {...tipOn(`${r.a.name.split(" ")[0]} · ${D.dayLabels[di].full} ${D.dayLabels[di].d}: ${d==null?"upcoming":d?"logged a session, tap to inspect":"no session"}${r.hasProgram?"":" (no program)"}`)}/>;
               }),
               <span key={`s${ri}`} style={{fontSize:11,fontWeight:800,textAlign:"right",color:adhColor(r.score),cursor:"pointer"}} {...tipOn(adhTip(r))}>{r.score==null?"—":`${r.score}`}</span>
             ])}
@@ -2126,7 +2126,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
           readout={`${D.activeCount} of ${athletes.length} logged at least once.`}
           tone={D.activePct>=70?{k:"good",t:"Healthy"}:D.activePct>=50?{k:"warn",t:"Watch"}:{k:"crit",t:"Low"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",paddingTop:6}}>
-            <svg viewBox="0 0 120 120" style={{width:"100%",maxWidth:150}} {...tipOn(`${D.activeCount} of ${athletes.length} active — ${D.activePct}%`)}>
+            <svg viewBox="0 0 120 120" style={{width:"100%",maxWidth:150}} {...tipOn(`${D.activeCount} of ${athletes.length} active (${D.activePct}%)`)}>
               <circle cx="60" cy="60" r="50" fill="none" stroke={CA.navy3} strokeWidth="12"/>
               <circle cx="60" cy="60" r="50" fill="none" stroke={CA.cyan} strokeWidth="12" strokeLinecap="round"
                 strokeDasharray={2*Math.PI*50} strokeDashoffset={2*Math.PI*50*(1-(mounted?D.activePct:0)/100)} transform="rotate(-90 60 60)"
@@ -2183,10 +2183,10 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
                 )}
                 <div style={{fontSize:10.5,fontWeight:800,letterSpacing:.8,textTransform:"uppercase",color:CA.muted,margin:"12px 0 6px"}}>Why {first}'s week = <span style={{color:adhColor(r.score)}}>{r.score==null?"—":`${r.score}%`}</span></div>
                 {!b&&<div style={{fontSize:11.5,color:CA.muted}}>{
-                  parsingIds&&parsingIds.has(r.a.id) ? "Parsing this program now — tap the cell again in a moment."
-                  : !r.hasProgram ? "No program assigned — nothing to grade against."
-                  : r.adherence ? "This program has no gradeable lifts — it reads as a note, not a prescription. Score is sessions vs prescribed days."
-                  : "Coach Joe is still reading this program — full exercise-level grading kicks in on its own. For now the score counts sessions against prescribed days."
+                  parsingIds&&parsingIds.has(r.a.id) ? "Parsing this program now, tap the cell again in a moment."
+                  : !r.hasProgram ? "No program assigned, nothing to grade against."
+                  : r.adherence ? "This program has no gradeable lifts. It reads as a note, not a prescription. Score is sessions vs prescribed days."
+                  : "Coach Joe is still reading this program, full exercise-level grading kicks in on its own. For now the score counts sessions against prescribed days."
                 }</div>}
                 {b&&[["Exercise choice",b.E,.5],["Volume (sets×reps)",b.V,.3],["Working weight",b.W,.2]].map(([lab,v,wt],i)=>v==null?null:(
                   <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"2px 0"}}>
@@ -2215,7 +2215,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
         {/* Sessions/day — fixed Mon–Sun; today plotted hollow, excluded from line + slope */}
         <OverviewCard style={span(3)} title="Sessions / day · this week"
           trend={{dir:!D.trendKnown||D.lastHalf>=D.firstHalf?"up":"down",txt:`${D.dayCounts.slice(0,D.todayIdx+1).reduce((a,b)=>a+b,0)} so far`}}
-          readout={!D.trendKnown?"Week just started — trend fills in as sessions come in.":D.lastHalf>=D.firstHalf?"Holding or climbing into the week.":"Sliding off through the week — worth a nudge."}
+          readout={!D.trendKnown?"Week just started, trend fills in as sessions come in.":D.lastHalf>=D.firstHalf?"Holding or climbing into the week.":"Sliding off through the week, worth a nudge."}
           tone={!D.trendKnown?null:D.lastHalf>=D.firstHalf?{k:"good",t:"Healthy"}:{k:"warn",t:"Watch"}}>
           <ChartBox h={96}>{w=>{
             const px=i=>5+(w-10)*(i/6), py=v=>84-72*(v/sMax);
@@ -2239,7 +2239,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
         {/* True PRs bars */}
         <OverviewCard style={span(3)} title="True PRs · 6 wk"
           trend={{dir:"up",txt:`${D.prThisWk} this wk`}}
-          readout={D.prThisWk>0?`Real improvements over prior bests — baselines excluded.`:`No new bests logged this week yet.`}
+          readout={D.prThisWk>0?`Real improvements over prior bests (baselines excluded).`:`No new bests logged this week yet.`}
           tone={D.prThisWk>0?{k:"good",t:"Momentum"}:null}>
           <ChartBox h={96}>{w=>{
             const n=D.prWeeks.length, slot=w/n, barW=Math.min(30,slot*0.5);
@@ -2259,7 +2259,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
             waits for enough of the week to exist. */}
         <OverviewCard style={span(6)} title="Team volume · 4 wk"
           trend={{dir:(D.todayIdx>=5?D.volWeeks[3]:D.volWeeks[2])>=D.volWeeks[0]?"up":"down",txt:"working sets"}}
-          readout={(D.todayIdx>=5?D.volWeeks[3]:D.volWeeks[2])>D.volWeeks[0]*1.5?"Sharp jump vs 4 weeks ago — watch load spikes.":"Gradual, inside a safe band."}
+          readout={(D.todayIdx>=5?D.volWeeks[3]:D.volWeeks[2])>D.volWeeks[0]*1.5?"Sharp jump vs 4 weeks ago, watch load spikes.":"Gradual, inside a safe band."}
           tone={(D.todayIdx>=5?D.volWeeks[3]:D.volWeeks[2])>D.volWeeks[0]*1.5?{k:"warn",t:"Watch"}:{k:"good",t:"Healthy"}}>
           <ChartBox h={80}>{w=>{
             const px=i=>6+(w-12)*(i/(D.volWeeks.length-1)), py=v=>70-60*(v/volMax);
@@ -2314,7 +2314,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
         <div style={{background:`linear-gradient(180deg,${CA.navy3},${CA.navy2})`,border:`1px solid ${CA.accent}44`,borderRadius:14,padding:16}}>
           <div style={{fontSize:11,letterSpacing:1.1,textTransform:"uppercase",color:CA.accent,fontWeight:700}}>Wins this week</div>
           {D.wins.length===0
-            ? <div style={{fontSize:12,color:CA.muted2,marginTop:12}}>No wins logged yet this week — check back as sessions come in.</div>
+            ? <div style={{fontSize:12,color:CA.muted2,marginTop:12}}>No wins logged yet this week, check back as sessions come in.</div>
             : <div style={{marginTop:12}}>
                 {D.wins.map((w,i)=>(
                   <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<D.wins.length-1?`1px solid ${CA.border}80`:"none"}}>
@@ -2354,7 +2354,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
             <div style={{fontSize:11,letterSpacing:1.1,textTransform:"uppercase",color:CA.red,fontWeight:700,marginBottom:10}}>Pain flags this week</div>
             {D.weekPain.slice(0,8).map((p,i)=>(
               <div key={i} style={{padding:"5px 0",borderBottom:`1px solid ${CA.border}40`,fontSize:12}}>
-                <span style={{color:CA.text,fontWeight:600}}>{p.name}</span><span style={{color:CA.muted}}> — {p.areas}</span>
+                <span style={{color:CA.text,fontWeight:600}}>{p.name}</span><span style={{color:CA.muted}}>: {p.areas}</span>
               </div>
             ))}
           </div>
@@ -2433,7 +2433,7 @@ function MorningBrief({D,athletes,changeRequests,coach,school,briefContext,onOpe
       exportWins({newPRs:D.prThisWk,notablePRs:D.notablePRs,activePct:D.activePct,adherenceAvg:D.teamAdh},coach,school).then((r)=>{
         // Never claim "Shared" unless navigator.share actually resolved — WILCO
         // can't share on the coach's behalf, and it isn't a messaging app.
-        const chip = r==="shared" ? "Sent — check your Photos ✓" : r==="downloaded" ? "Saved ✓" : r==="preview" ? "Image ready ✓" : null;
+        const chip = r==="shared" ? "Sent, check your Photos ✓" : r==="downloaded" ? "Saved ✓" : r==="preview" ? "Image ready ✓" : null;
         if(chip) setOutcomes(o=>({...o,[beat.id]:chip}));
       });
       return;
@@ -2492,7 +2492,7 @@ function MorningBrief({D,athletes,changeRequests,coach,school,briefContext,onOpe
       }
       if(!viaChip){
         // One-sentence reaction before moving on (Haiku, ~160 tok) — chips skip AI entirely.
-        const sys=`You are WILCO, a strength coach's AI assistant. React to the coach's answer in ONE short, direct sentence — acknowledge it and note one concrete implication if there is one. No follow-up question. Team: ${D.activeCount}/${athletes.length} trained this week, adherence ${D.teamAdh??"n/a"}%.${contextBlock}`;
+        const sys=`You are WILCO, a strength coach's AI assistant. React to the coach's answer in ONE short, direct sentence: acknowledge it and note one concrete implication if there is one. No follow-up question. Team: ${D.activeCount}/${athletes.length} trained this week, adherence ${D.teamAdh??"n/a"}%.${contextBlock}`;
         const reply=await askClaude(sys,`Q: "${beat.question.text}"\nCoach: "${t}"`,160,[],"claude-haiku-4-5","coach_brief");
         if(reply) setQMsgs(m=>({...m,[beat.id]:[...(m[beat.id]||[]),{role:"wilco",text:reply}]}));
       }
@@ -2561,7 +2561,7 @@ function MorningBrief({D,athletes,changeRequests,coach,school,briefContext,onOpe
                     </div>
                   )}
                   <div style={{display:"flex",gap:8}}>
-                    <input value={inputs[b.id]||""} onChange={e=>setInputs(v=>({...v,[b.id]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")answerQuestion(b,inputs[b.id],false);}} placeholder="Type a reply — or tap a chip" disabled={busy}
+                    <input value={inputs[b.id]||""} onChange={e=>setInputs(v=>({...v,[b.id]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")answerQuestion(b,inputs[b.id],false);}} placeholder="Type a reply, or tap a chip" disabled={busy}
                       style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:9,padding:"9px 12px",color:CA.text,fontSize:13,outline:"none",fontFamily:"'DM Sans'"}}/>
                     <button disabled={busy||!(inputs[b.id]||"").trim()} onClick={()=>answerQuestion(b,inputs[b.id],false)} style={btnS(true)}>{busy?"…":"Send"}</button>
                   </div>
@@ -2572,7 +2572,7 @@ function MorningBrief({D,athletes,changeRequests,coach,school,briefContext,onOpe
           </div>
         );
       })}
-      <div style={{padding:"8px 0 2px",color:CA.muted,fontSize:11.5}}>Everything you decide here is remembered — it shapes next week's Coach's Edition.</div>
+      <div style={{padding:"8px 0 2px",color:CA.muted,fontSize:11.5}}>Everything you decide here is remembered, it shapes next week's Coach's Edition.</div>
     </div>
   );
 
@@ -2599,7 +2599,7 @@ function MorningBrief({D,athletes,changeRequests,coach,school,briefContext,onOpe
         <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,position:"sticky",top:100}}>
           <div style={{fontSize:10.5,letterSpacing:1.2,textTransform:"uppercase",color:CA.cyan,fontWeight:700,marginBottom:8}}>Your calls today</div>
           {myCalls.length===0
-            ? <div style={{fontSize:12,color:CA.muted}}>Decisions you make land here — and in next week's Edition.</div>
+            ? <div style={{fontSize:12,color:CA.muted}}>Decisions you make land here, and in next week's Edition.</div>
             : myCalls.map((c,i)=><div key={i} style={{fontSize:12,color:CA.muted2,padding:"4px 0",borderBottom:i<myCalls.length-1?`1px solid ${CA.border}60`:"none"}}>{c}</div>)}
         </div>
       </div>
@@ -2777,7 +2777,7 @@ async function exportWins(team, coach, school){
     const blob = await new Promise((res)=>cv.toBlob(res,"image/png"));
     const file = blob ? new File([blob],"wilco-wins.png",{type:"image/png"}) : null;
     if(file && navigator.canShare && navigator.canShare({files:[file]})){
-      try{ await navigator.share({files:[file],title:"WILCO — Wins This Week"}); return "shared"; }
+      try{ await navigator.share({files:[file],title:"WILCO: Wins This Week"}); return "shared"; }
       catch(err){ if(err?.name==="AbortError") return "canceled"; /* else fall through */ }
     }
     const coarse = typeof matchMedia==="function" && matchMedia("(pointer:coarse)").matches;
@@ -2796,7 +2796,7 @@ function showWinsOverlay(dataUrl){
   const ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(2,4,10,0.94);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;";
   const img=document.createElement("img");
-  img.src=dataUrl; img.alt="WILCO — Wins This Week";
+  img.src=dataUrl; img.alt="WILCO: Wins This Week";
   img.style.cssText="max-width:min(86vw,420px);max-height:70vh;border-radius:14px;box-shadow:0 8px 48px rgba(58,123,255,0.35);";
   const cap=document.createElement("div");
   cap.textContent="Press and hold the image, then tap “Add to Photos.”";
@@ -2812,10 +2812,10 @@ function showWinsOverlay(dataUrl){
 // Share-button label feedback: maps an exportWins outcome to what the button
 // should say for a few seconds (empty string = no change, e.g. user-canceled).
 const shareOutcomeLabel = (r) =>
-  r==="shared" ? "Sent — check your Photos ✓"
+  r==="shared" ? "Sent, check your Photos ✓"
   : r==="downloaded" ? "Saved ✓"
   : r==="preview" ? "" /* overlay is its own feedback */
-  : r==="failed" ? "Couldn't share — try again"
+  : r==="failed" ? "Couldn't share, try again"
   : "";
 
 // The Share-as-image button, with outcome feedback baked in: instead of the tap
@@ -2889,9 +2889,9 @@ function CoachCheckin({digest, team, coach, onRead}){
       // watched "Saving to your team context…". sbInsert already takes arrays.
       try{ await sbInsert("coach_context",rows); }catch(e){ console.error("coach_context write",e); }
       try{ await sbUpdate("proof_digests", digest.id, {is_read:true, content_json:{...c, checkin_done:true}}); onRead&&onRead(); }catch(e){ console.error(e); }
-      setMsgs(m=>[...m.filter(x=>x.text!=="Saving to your team context…"),{role:"sys",text:"✓ Saved — I'll build next week's edition around this."}]);
+      setMsgs(m=>[...m.filter(x=>x.text!=="Saving to your team context…"),{role:"sys",text:"✓ Saved, I'll build next week's edition around this."}]);
       setDone(true);
-    }catch(e){ setMsgs(m=>[...m,{role:"wilco",text:"Couldn't save that just now — try again in a moment."}]); }
+    }catch(e){ setMsgs(m=>[...m,{role:"wilco",text:"Couldn't save that just now, try again in a moment."}]); }
     setBusy(false);
   };
 
@@ -2919,7 +2919,7 @@ function CoachCheckin({digest, team, coach, onRead}){
     if(isAskingBack(t)){
       setBusy(true);
       try{
-        const sys=`You are WILCO, a strength coach's AI assistant. The coach asked a question mid-check-in. Answer it directly and briefly (1-3 sentences), grounded in the team read, then stop — don't move on. ${teamCtx()}`;
+        const sys=`You are WILCO, a strength coach's AI assistant. The coach asked a question mid-check-in. Answer it directly and briefly (1-3 sentences), grounded in the team read, then stop. Don't move on. ${teamCtx()}`;
         // Haiku, matching the Morning Brief's ask-back twin (coach.jsx ~2201) —
         // identical job (answer briefly from the team read, then stop) at ~10x
         // lower cost per turn in the usage_costs ledger.
@@ -2937,7 +2937,7 @@ function CoachCheckin({digest, team, coach, onRead}){
     if(!thin){
       setBusy(true);
       try{
-        const sys=`You are WILCO, a strength coach's AI assistant, mid-check-in with the coach. React to their answer in ONE short, natural sentence — acknowledge or reflect it like a real conversation. Do NOT ask a question, no lists, no emoji. ${teamCtx()}`;
+        const sys=`You are WILCO, a strength coach's AI assistant, mid-check-in with the coach. React to their answer in ONE short, natural sentence: acknowledge or reflect it like a real conversation. Do NOT ask a question, no lists, no emoji. ${teamCtx()}`;
         const reply=await askClaude(sys, `You asked: "${q.text}"\nThey answered: "${t}"`, 160, [], "claude-haiku-4-5", "coach_checkin");
         if(reply&&reply.trim()) setMsgs(m=>[...m,{role:"wilco",text:reply.trim()}]);
       }catch{}
@@ -2952,7 +2952,7 @@ function CoachCheckin({digest, team, coach, onRead}){
   return (
     <div style={{marginTop:18,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:16}}>
       <div style={{fontFamily:"'Bebas Neue'",fontSize:18,color:CA.accent,letterSpacing:1.5}}>YOUR CALLS &amp; CONTEXT</div>
-      <div style={{color:CA.muted,fontSize:12.5,margin:"3px 0 14px"}}>Talk it through — tap an option or type your own, ask me anything, push back. I'll remember it for next week.</div>
+      <div style={{color:CA.muted,fontSize:12.5,margin:"3px 0 14px"}}>Talk it through: tap an option or type your own, ask me anything, push back. I'll remember it for next week.</div>
       <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:400,overflowY:"auto",paddingRight:4}}>
         {msgs.map((m,i)=>(
           m.role==="sys"
@@ -2976,7 +2976,7 @@ function CoachCheckin({digest, team, coach, onRead}){
           </div>
         </div>
       )}
-      {done&&<div style={{marginTop:12,color:CA.muted,fontSize:13,fontStyle:"italic",fontFamily:EDITION_SERIF}}>That's the edition. I've got the context now — I'll build next week around it.</div>}
+      {done&&<div style={{marginTop:12,color:CA.muted,fontSize:13,fontStyle:"italic",fontFamily:EDITION_SERIF}}>That's the edition. I've got the context now, I'll build next week around it.</div>}
     </div>
   );
 }
@@ -3071,7 +3071,7 @@ function CoachEdition({digest, athletes, coach, school, onBack, onRead}){
             {team.notablePRs.slice(0,5).map((p,i,arr)=>(
               <div key={i} style={{display:"flex",alignItems:"center",gap:9,padding:"6px 0",borderBottom:i<arr.length-1?`1px solid ${CA.border}80`:"none"}}>
                 <span style={{width:24,height:24,borderRadius:6,background:`${CA.accent}22`,border:`1px solid ${CA.accent}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}}>🏆</span>
-                <div style={{flex:1,minWidth:0}}><span style={{color:CA.text,fontWeight:650,fontSize:13}}>{p.athlete}</span> <span style={{color:CA.muted,fontSize:12.5}}>{p.exercise} {fmtWeight(p.weight,p.unit)}{p.gain?` — +${p.gain} lbs e1RM`:""}</span></div>
+                <div style={{flex:1,minWidth:0}}><span style={{color:CA.text,fontWeight:650,fontSize:13}}>{p.athlete}</span> <span style={{color:CA.muted,fontSize:12.5}}>{p.exercise} {fmtWeight(p.weight,p.unit)}{p.gain?`, +${p.gain} lbs e1RM`:""}</span></div>
               </div>
             ))}
             <ShareWinsButton run={()=>exportWins(team,coach,school)}/>
@@ -3134,7 +3134,7 @@ function AccountTab({coach,allCoaches,school,athletes,coachCounts,loadAll}){
                   });
                   const newCode = res.accessCode;
                   fetch("/api/send-coach-invite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth:getAuth(),coachName:acName.trim(),coachEmail:acEmail.trim().toLowerCase(),accessCode:newCode,schoolName:school?.name||""})}).catch(()=>{});
-                  setAcOk(`✓ ${acName.trim()} added — invite sent.`); setAcCode(newCode);
+                  setAcOk(`✓ ${acName.trim()} added, invite sent.`); setAcCode(newCode);
                   setAcName("");setAcEmail("");
                   loadAll();
                 }catch(e){setAcErr(e.message||"Could not create coach. Try again.");}
@@ -3248,7 +3248,7 @@ function AccountTab({coach,allCoaches,school,athletes,coachCounts,loadAll}){
                           <div style={{color:CA.muted2,fontSize:13,lineHeight:1.6,marginBottom:16}}>
                             They'll lose access immediately and their seat frees up.
                             {n===null ? <> Any athletes they coach will move where you choose below.</>
-                              : n>0 ? <> They currently coach <b style={{color:CA.text}}>{n} athlete{n===1?"":"s"}</b> — who should take them?</>
+                              : n>0 ? <> They currently coach <b style={{color:CA.text}}>{n} athlete{n===1?"":"s"}</b>. Who should take them?</>
                               : <> They have no athletes assigned.</>}
                           </div>
                           {n!==0&&(
@@ -3383,7 +3383,7 @@ function GroupProgress({athletes,workouts,manualRMs,prs=[],analytics}){
 
       {tab==="strength"&&(
         <div>
-          <div style={{color:CA.accent,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>TEAM STRENGTH — AVG EST. 1RM BY WEEK</div>
+          <div style={{color:CA.accent,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>TEAM STRENGTH: AVG EST. 1RM BY WEEK</div>
           {D.strength.length===0
             ? <div style={{color:CA.muted,textAlign:"center",padding:40,fontSize:13}}>Not enough weighted training logged across weeks yet.</div>
             : D.strength.map((ex,i)=>(
@@ -3400,9 +3400,9 @@ function GroupProgress({athletes,workouts,manualRMs,prs=[],analytics}){
 
       {tab==="running"&&(
         <div>
-          <div style={{color:CA.blue,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>TEAM RUNNING — BY WEEK</div>
+          <div style={{color:CA.blue,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>TEAM RUNNING: BY WEEK</div>
           {D.distSeries.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Total distance / week</div><LineChart data={D.distSeries} color={CA.blue} unit=" mi" palette={CA}/></div>}
-          {D.paceSeries.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:4}}>Avg pace (min/mi) — lower is faster</div><LineChart data={D.paceSeries} color={CA.cyan} unit="" palette={CA}/></div>}
+          {D.paceSeries.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:4}}>Avg pace (min/mi), lower is faster</div><LineChart data={D.paceSeries} color={CA.cyan} unit="" palette={CA}/></div>}
           {D.hrSeries.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Avg heart rate (bpm)</div><LineChart data={D.hrSeries} color={CA.blue} unit=" bpm" palette={CA}/></div>}
           {D.distSeries.length<2&&D.paceSeries.length<2&&D.hrSeries.length<2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:16,color:CA.muted2,fontSize:12}}>Not enough runs logged across the roster to trend yet.</div>}
         </div>
@@ -3524,7 +3524,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
         .slice(0,8)
         .map(r=>r.note)
         .filter(Boolean);
-      const sys = `You are applying ONE change to a strength program for the coach who owns it. Return ONLY the complete updated program text — no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given — carry over the existing sets/reps/loading unless the request changes them.`;
+      const sys = `You are applying ONE change to a strength program for the coach who owns it. Return ONLY the complete updated program text: no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given, carry over the existing sets/reps/loading unless the request changes them.`;
       const parts = [`CURRENT PROGRAM:\n${base}`, `\nREQUESTED CHANGE: ${s.suggestion}`];
       if(s.placement) parts.push(`\nTARGET: ${s.placement.dayLabel||"unspecified day"} — currently "${s.placement.currentLine}"`);
       if(s.athleteWords) parts.push(`\nATHLETE'S OWN WORDS: "${s.athleteWords}"`);
@@ -3580,7 +3580,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
   // Merge failure escape hatch — keeps the OLD append-a-comment workflow alive so
   // a Claude hiccup never blocks the coach from getting the note into the program.
   const insertAsNote = () => {
-    setProgramText(t=>`${(t||athlete.program_text||"").trimEnd()}\n\n# From today's brief — edit into the program, then delete this note:\n# ${staged?.suggestion||""}`);
+    setProgramText(t=>`${(t||athlete.program_text||"").trimEnd()}\n\n# From today's brief, edit into the program, then delete this note:\n# ${staged?.suggestion||""}`);
     setStaged(null);
     setMergeState(null);
   };
@@ -3612,7 +3612,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       setStaged(null);
       setMergeState(null);
     } catch(e){
-      setProgramError("Save failed — " + (e?.message||"check your connection and try again."));
+      setProgramError("Save failed: " + (e?.message||"check your connection and try again."));
     }
     setProgramSaving(false);
   };
@@ -3653,7 +3653,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       setProgramSaved(true);
       setTimeout(()=>setProgramSaved(false),3000);
     } catch(e){
-      setProgramError("Save failed — " + (e?.message||"check your connection and try again."));
+      setProgramError("Save failed: " + (e?.message||"check your connection and try again."));
     }
     setProgramSaving(false);
   };
@@ -3671,7 +3671,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       setProgramSaved(true);
       setTimeout(()=>setProgramSaved(false),3000);
     } catch(e){
-      setProgramError("Undo failed — " + (e?.message||"check your connection and try again."));
+      setProgramError("Undo failed: " + (e?.message||"check your connection and try again."));
     }
     setUndoing(false);
   };
@@ -3686,7 +3686,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       const reader = new FileReader();
       const b64 = await new Promise((res,rej)=>{reader.onload=()=>res(reader.result.split(",")[1]);reader.onerror=rej;reader.readAsDataURL(file);});
       const extracted = await askClaude(
-        "You are reading a photo of an athlete's training program. Extract the full program text exactly as written. Preserve all structure — exercises, sets, reps, weights, days, weeks. Output plain text only, no commentary.",
+        "You are reading a photo of an athlete's training program. Extract the full program text exactly as written. Preserve all structure: exercises, sets, reps, weights, days, weeks. Output plain text only, no commentary.",
         "Extract the training program from this image.",600,[b64],"claude-sonnet-5","program_extract"
       );
       if(extracted) setProgramText(prev=>prev?prev+"\n\n"+extracted:extracted);
@@ -3706,7 +3706,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       await sbUpdate("athletes",athlete.id,{temp_program_text:null});
       setEndTempConfirm(false);
       onAthletePatched&&onAthletePatched(athlete.id,{temp_program_text:null});
-    } catch(err){ setEndTempError("Couldn't end it just now — try again."); }
+    } catch(err){ setEndTempError("Couldn't end it just now, try again."); }
     setEndingTemp(false);
   };
 
@@ -3838,7 +3838,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
           <div>
             {lastWorkout?(
               <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:16}}>
-                <div style={{color:CA.accent,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:8}}>LAST SESSION — {fmtDateShort(lastWorkout.created_at)}</div>
+                <div style={{color:CA.accent,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:8}}>LAST SESSION: {fmtDateShort(lastWorkout.created_at)}</div>
                 {lastWorkout.parsed_data?.run_data?(
                   <RunCard runData={lastWorkout.parsed_data.run_data} feel={lastWorkout.parsed_data.session_feel}/>
                 ):lastWorkout.parsed_data?.exercises?.length>0?(
@@ -3979,7 +3979,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
                           <div style={{width:6,height:6,borderRadius:"50%",background:runDotColor,flexShrink:0}}/>
-                          <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1}}>{isRunSession?"RUN":"WORKOUT"} — {fmtDateRelative(sessionDate)}</div>
+                          <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1}}>{isRunSession?"RUN":"WORKOUT"}: {fmtDateRelative(sessionDate)}</div>
                         </div>
                         {!isRunSession&&feelVal&&<div style={{fontSize:11,color:feelVal==="great"||feelVal==="good"?CA.green:feelVal==="rough"?CA.red:CA.accent,fontWeight:600}}>{feelVal}</div>}
                       </div>
@@ -4017,7 +4017,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                     <div key={i} style={{background:CA.navy3,border:`1px solid ${CA.blue}30`,borderRadius:12,padding:14,marginBottom:10}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
                         <div style={{width:6,height:6,borderRadius:"50%",background:CA.blue,flexShrink:0}}/>
-                        <div style={{color:CA.blue,fontSize:11,fontWeight:700,letterSpacing:1}}>FORM CHECK — {fmtDateRelative(w.created_at)}</div>
+                        <div style={{color:CA.blue,fontSize:11,fontWeight:700,letterSpacing:1}}>FORM CHECK: {fmtDateRelative(w.created_at)}</div>
                       </div>
                       <div style={{color:CA.muted2,fontSize:12,marginBottom:6}}>{w.raw_message}</div>
                       {w.bot_reply&&<div style={{color:CA.text,fontSize:12,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{w.bot_reply}</div>}
@@ -4030,7 +4030,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                   <div key={i} style={{marginBottom:10}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                       <div style={{width:6,height:6,borderRadius:"50%",background:CA.muted,flexShrink:0}}/>
-                      <div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>Q&A — {fmtDate(w.created_at)}</div>
+                      <div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>Q&A: {fmtDate(w.created_at)}</div>
                     </div>
                     <div style={{display:"flex",justifyContent:"flex-end",marginBottom:4}}>
                       <div style={{background:"linear-gradient(135deg,#3f7bff,#2258e0)",color:"#fff",borderRadius:"14px 14px 4px 14px",padding:"8px 12px",fontSize:12,maxWidth:"85%"}}>{w.raw_message}</div>
@@ -4130,7 +4130,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                     <LineChart data={ex.entries.map(e=>({label:fmtDateShort(e.date),y:e.e1rm}))} color={CA.cyan} unit={ex.unit==="kg"?"kg":"lbs"} palette={CA}/>
                   ):(
                     <div style={{background:CA.navy2,borderRadius:8,padding:"8px 12px",fontSize:12,color:CA.muted2}}>
-                      Logged once — log again to see a trend line.
+                      Logged once, log again to see a trend line.
                     </div>
                   )}
                 </div>
@@ -4195,7 +4195,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                   <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.5,marginBottom:6}}>In their words: "{staged.athleteWords.length>200?staged.athleteWords.slice(0,197)+"…":staged.athleteWords}"</div>
                 )}
                 <div style={{color:CA.muted2,fontSize:11.5,marginBottom:staged.why?6:8}}>
-                  {staged.placement ? `Slot: ${staged.placement.dayLabel||"unlabeled day"} — replaces "${staged.placement.currentLine}"` : "Placement: Joe will slot it where it fits"}
+                  {staged.placement ? `Slot: ${staged.placement.dayLabel||"unlabeled day"}, replaces "${staged.placement.currentLine}"` : "Placement: Joe will slot it where it fits"}
                 </div>
                 {staged.why&&<div style={{color:CA.muted,fontSize:11,marginBottom:8,fontStyle:"italic"}}>{staged.why}</div>}
                 {mergeState&&typeof mergeState==="object"&&mergeState.error&&(
@@ -4225,7 +4225,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
               <div style={{background:`${CA.accent}12`,border:`1px solid ${CA.accent}50`,borderRadius:12,padding:14,marginBottom:16}}>
                 <div style={{color:CA.accent,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:6}}>✈️ TEMPORARY PROGRAM ACTIVE</div>
                 <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6,marginBottom:10,whiteSpace:"pre-wrap"}}>{athlete.temp_program_text}</div>
-                <div style={{color:CA.muted,fontSize:11,marginBottom:10}}>Joe-bot is using this instead of the regular program. It normally reverts when {athlete.name} tells Joe-bot they're back — you can end it here if they forget.</div>
+                <div style={{color:CA.muted,fontSize:11,marginBottom:10}}>Joe-bot is using this instead of the regular program. It normally reverts when {athlete.name} tells Joe-bot they're back, you can end it here if they forget.</div>
                 {/* The banner used to say "reverts automatically" and give the coach
                     nothing: if the athlete never said the magic phrase, the real
                     program stayed on hold indefinitely and the coach could only
@@ -4245,7 +4245,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                 ):(
                   <button onClick={()=>setEndTempConfirm(true)}
                     style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11.5}}>
-                    End temp program — resume regular
+                    End temp program, resume regular
                   </button>
                 )}
                 {endTempError&&<div style={{color:CA.red,fontSize:11,marginTop:6}}>{endTempError}</div>}
@@ -4264,15 +4264,15 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             {athlete.program_text&&(
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
                 <div style={{width:8,height:8,borderRadius:"50%",background:athlete.temp_program_text?CA.muted:CA.blue,flexShrink:0}}/>
-                <div style={{color:athlete.temp_program_text?CA.muted:CA.blue,fontSize:12}}>{athlete.temp_program_text?"On hold — resumes when temporary program clears":"Joe-bot references this in every conversation with "+athlete.name}</div>
-                {!athlete.program_locked&&!athlete.temp_program_text&&<div style={{background:`${CA.blue}15`,border:`1px solid ${CA.blue}30`,borderRadius:6,padding:"2px 8px",color:CA.blue,fontSize:11}}>🔄 Live — updates when {athlete.name} describes their program to Joe-bot</div>}
+                <div style={{color:athlete.temp_program_text?CA.muted:CA.blue,fontSize:12}}>{athlete.temp_program_text?"On hold, resumes when temporary program clears":"Joe-bot references this in every conversation with "+athlete.name}</div>
+                {!athlete.program_locked&&!athlete.temp_program_text&&<div style={{background:`${CA.blue}15`,border:`1px solid ${CA.blue}30`,borderRadius:6,padding:"2px 8px",color:CA.blue,fontSize:11}}>🔄 Live: updates when {athlete.name} describes their program to Joe-bot</div>}
               </div>
             )}
 
             <textarea
               value={programText}
               onChange={e=>setProgramText(e.target.value)}
-              placeholder={"Paste or write the athlete's training program here...\n\nExamples:\n  Week 1: Squat 3×5, Bench 3×5, Deadlift 1×5\n  Week 2: Squat 3×5 +5lbs, Bench 3×5 +5lbs\n\nOr paste a full multi-week periodization plan — Joe-bot will read the whole thing."}
+              placeholder={"Paste or write the athlete's training program here...\n\nExamples:\n  Week 1: Squat 3×5, Bench 3×5, Deadlift 1×5\n  Week 2: Squat 3×5 +5lbs, Bench 3×5 +5lbs\n\nOr paste a full multi-week periodization plan, Joe-bot will read the whole thing."}
               rows={14}
               style={{width:"100%",background:CA.navy3,border:`1px solid ${programText!==(athlete.program_text||"")?CA.accent:CA.border}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:13,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"'DM Sans'",transition:"border-color 0.15s"}}
             />

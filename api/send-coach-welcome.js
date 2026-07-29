@@ -59,7 +59,7 @@ export default async function handler(req, res) {
     body: JSON.stringify({
       from:    FROM_EMAIL,
       to:      [coachEmail.trim().toLowerCase()],
-      subject: `${athleteName} just joined WILCO — you're set as their coach`,
+      subject: `${athleteName} just joined WILCO: you're set as their coach`,
       html
     })
   });
@@ -96,7 +96,7 @@ function buildWelcomeEmail({ athleteName, athleteSport, coachName, initial, join
 
       <p style="color:#1a1a2e;font-size:15px;margin:0 0 16px">Hi ${coachName},</p>
       <p style="color:#444;font-size:14px;line-height:1.7;margin:0 0 24px">
-        One of your athletes, <strong>${athleteName}</strong>, just signed up for WILCO — an AI-powered strength and conditioning app that helps high school athletes log workouts, track PRs, and get real-time coaching feedback.
+        One of your athletes, <strong>${athleteName}</strong>, just signed up for WILCO, an AI-powered strength and conditioning app that helps high school athletes log workouts, track PRs, and get real-time coaching feedback.
       </p>
 
       <!-- Athlete card -->
@@ -120,7 +120,7 @@ function buildWelcomeEmail({ athleteName, athleteSport, coachName, initial, join
           </td>
           <td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top">
             <div style="color:#1a1a2e;font-size:13px;font-weight:600;margin-bottom:3px">Full session log</div>
-            <div style="color:#888;font-size:12px;line-height:1.5">Every workout logged that week — date, exercises, sets, reps, and weight.</div>
+            <div style="color:#888;font-size:12px;line-height:1.5">Every workout logged that week: date, exercises, sets, reps, and weight.</div>
           </td>
         </tr>
         <tr>
@@ -144,7 +144,7 @@ function buildWelcomeEmail({ athleteName, athleteSport, coachName, initial, join
       </table>
 
       <p style="color:#888;font-size:13px;line-height:1.6;margin:0">
-        Reports go out every <strong>Monday morning</strong>. No account needed — they'll arrive right here in your inbox.
+        Reports go out every <strong>Monday morning</strong>. No account needed, they'll arrive right here in your inbox.
       </p>
 
     </div>

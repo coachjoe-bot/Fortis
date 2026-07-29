@@ -41,7 +41,7 @@ Bench Press 1x1 @ 190
 Incline DB Press 3x10 @ 60
 Chest-Supported Row 3x12 @ 120
 Tricep Pushdown 3x15 @ 45`,
-  notes: "Bench day. 175 moved fast last week — if the top sets feel crisp, 190 is there for a single.",
+  notes: "Bench day. 175 moved fast last week, if the top sets feel crisp, 190 is there for a single.",
 };
 
 // The scripted chat exchange the demo send plays. No AI call — the reply is
@@ -51,7 +51,7 @@ Tricep Pushdown 3x15 @ 45`,
 export const TOUR_SCRIPT = {
   pr: { exercise:"Bench Press", weight:190, unit:"lb" },
   session: 1,
-  reply: "Logged it. 190 on bench is a new max — that's the standard now. Rows and pushdowns in the book too. That's how a session should end.",
+  reply: "Logged it. 190 on bench is a new max, that's the standard now. Rows and pushdowns in the book too. That's how a session should end.",
 };
 
 // ── COPY ─────────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ export const athleteTourSteps = ({ free }) => free ? [
   { key:"chat", banner:"WILCO CHAT BOT", target:["chat","chat-input"], title:"TALK TO ME",
     parts:["WILCO is your AI strength coach. Text me like you'd text a real coach: workouts you finished, questions, a knee that's acting up. All of it goes in the box at the bottom."] },
   { key:"thanks", banner:null, target:null, title:"THANKS FOR USING WILCO",
-    parts:["We hope you love it as much as we do.\n— Joe"], cta:"Finish" },
+    parts:["We hope you love it as much as we do.\nJoe"], cta:"Finish" },
 ] : [
   { key:"chat", banner:"WILCO CHAT BOT", target:["chat","chat-input"], title:"TALK TO ME",
     parts:["WILCO is your AI strength coach. This chat is the whole app, really. Text me like you'd text a real coach: workouts you finished, questions, a knee that's acting up. All of it goes in the box at the bottom."] },
@@ -111,7 +111,7 @@ export const athleteTourSteps = ({ free }) => free ? [
   // the tutorial explains itself instead of putting teaching text in Joe's mouth.
   // noDim so the workout they just sent and Joe's reply stay readable behind it.
   { key:"logged", banner:"WILCO CHAT BOT", target:null, noDim:true, title:null,
-    parts:["See that? Sending it to chat logged the whole session and caught your PR. Anything else you tell me — injuries included — I take note of too."] },
+    parts:["See that? Sending it to chat logged the whole session and caught your PR. Anything else you tell me, injuries included, I take note of too."] },
 
   { key:"mylog", banner:"MY LOG", target:"mylog-btn", title:"MY LOG",
     parts:["Every session you've logged lives here. And once a week, The Proof drops. The Proof is a news-feed overview of your training: you zoom out from the day to day, see which direction you're headed and how close you are to your goals, and have a conversation with WILCO over any changes you want to make."] },
@@ -123,12 +123,12 @@ export const athleteTourSteps = ({ free }) => free ? [
     ] },
 
   { key:"thanks", banner:null, target:null, title:"THANKS FOR USING WILCO",
-    parts:["We hope you love it as much as we do.\n— Joe"], cta:"Finish" },
+    parts:["We hope you love it as much as we do.\nJoe"], cta:"Finish" },
 ];
 
 export const coachTourSteps = () => [
   { key:"overview", banner:"THE OVERVIEW TAB", target:"coach-tab-overview", title:"YOUR MORNING GLANCE",
-    parts:["Start here. Who trained, who's gone quiet, and what needs your eyes today — before you've had your coffee."] },
+    parts:["Start here. Who trained, who's gone quiet, and what needs your eyes today, before you've had your coffee."] },
   { key:"athletes", banner:"THE ATHLETES TAB", target:"coach-tab-athletes", title:"YOUR ROSTER",
     parts:[
       "Every athlete you coach lives here: their workout log, their numbers, and the training plan they're following.",
@@ -137,7 +137,7 @@ export const coachTourSteps = () => [
   { key:"reports", banner:"THE REPORTS TAB", target:"coach-tab-reports", title:"REPORTS",
     parts:["Weekly write-ups covering your whole roster. The story of your program, written while you coach it."] },
   { key:"thanks", banner:null, target:null, title:"THANKS FOR USING WILCO",
-    parts:["We hope you love it as much as we do.\n— Joe"], cta:"Finish" },
+    parts:["We hope you love it as much as we do.\nJoe"], cta:"Finish" },
 ];
 
 // Joe's first real message, landed the moment the first-run tour finishes (the
@@ -145,7 +145,7 @@ export const coachTourSteps = () => [
 // no-Quick-Log variant.
 export const tourWelcome = (firstName, free) => free
   ? `Welcome, ${firstName}. Tell me what you're training for and we'll get to work.`
-  : `Welcome, ${firstName}. Glad to see you've joined — let's get to work. Ready to log your first workout, or want to build your program first?`;
+  : `Welcome, ${firstName}. Glad to see you've joined, let's get to work. Ready to log your first workout, or want to build your program first?`;
 
 // ── OFFER POPUP ──────────────────────────────────────────────────────────────
 // Doubles as the app's welcome moment: it's the first thing a brand-new account

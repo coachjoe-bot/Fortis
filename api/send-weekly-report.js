@@ -83,7 +83,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         from: FROM_EMAIL,
         to:   [coach.email],
-        subject: `WILCO Weekly Progress Report — Week of ${weekLabel}`,
+        subject: `WILCO Weekly Progress Report: Week of ${weekLabel}`,
         html
       })
     });
@@ -217,7 +217,7 @@ function buildEmail(coach, workouts, prs, weekLabel, signupUrl) {
 
     const prRows = athPRs.map(p => {
       const e1rm = p.estimated_1rm || epley(p.weight, p.reps||1);
-      return `<li style="margin:4px 0;font-size:13px"><strong>${p.exercise}</strong> — ${p.weight}lbs × ${p.reps||1} rep${(p.reps||1)>1?"s":""} <span style="color:#888">(est. 1RM: ${e1rm}lbs)</span></li>`;
+      return `<li style="margin:4px 0;font-size:13px"><strong>${p.exercise}</strong>: ${p.weight}lbs × ${p.reps||1} rep${(p.reps||1)>1?"s":""} <span style="color:#888">(est. 1RM: ${e1rm}lbs)</span></li>`;
     }).join("");
 
     const painHtml = painAreas.length > 0
@@ -282,7 +282,7 @@ function buildEmail(coach, workouts, prs, weekLabel, signupUrl) {
     <div style="background:#fff;padding:28px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0">
       <p style="color:#1a1a2e;font-size:15px;margin:0 0 20px">Hi ${coach.name},</p>
       <p style="color:#444;font-size:14px;line-height:1.6;margin:0 0 24px">
-        Here's your weekly update from WILCO — a summary of what your athletes have been up to in the gym this week.
+        Here's your weekly update from WILCO, a summary of what your athletes have been up to in the gym this week.
       </p>
 
       ${athleteSections}
@@ -292,7 +292,7 @@ function buildEmail(coach, workouts, prs, weekLabel, signupUrl) {
     <div style="background:#0a1228;padding:28px;border-radius:0 0 12px 12px;text-align:center">
       <div style="color:#d4a017;font-size:18px;font-weight:700;letter-spacing:1px;margin-bottom:10px">BRING WILCO TO YOUR TEAM</div>
       <p style="color:#94a3b8;font-size:13px;line-height:1.7;margin:0 0 18px">
-        Get the full coaching dashboard — view every athlete's progress charts, log custom programs,
+        Get the full coaching dashboard: view every athlete's progress charts, log custom programs,
         and brand the app with your school or team's logo and colors. No tech setup required.
       </p>
       <a href="${signupUrl}" style="display:inline-block;background:#d4a017;color:#000;font-weight:700;font-size:14px;letter-spacing:1px;padding:13px 32px;border-radius:8px;text-decoration:none">

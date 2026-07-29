@@ -203,7 +203,7 @@ export const findChatProgram = (messages) => {
 //
 // Applies whether or not the athlete has a saved program: the merge bug came from the
 // conversation block, which is built for everyone.
-export const QL_SUPERSEDED = "[an earlier version of today's session that the athlete REJECTED — superseded, do not use any part of it]";
+export const QL_SUPERSEDED = "[an earlier version of today's session that the athlete REJECTED, superseded, do not use any part of it]";
 
 export const markSupersededPrograms = (messages) => {
   const list = Array.isArray(messages) ? messages : [];
