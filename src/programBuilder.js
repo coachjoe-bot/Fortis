@@ -84,7 +84,7 @@ export const blueprintPct = (bp, cells) =>
 // ("you signed up saying 4 days — still true for this block?"). A new block can
 // mean a new schedule, new gear, a finished goal; stale data must never silently
 // drive a draft. Confirmation is one word of friction; a wrong program is weeks.
-export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer = "athlete" }) {
+export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer = "athlete", liftProgress = "" }) {
   const bp = {};
   const set = (k, v) => { if (v && String(v).trim()) bp[k] = { value: "", source: "known", pending: String(v).trim() }; };
   // goal additionally passes the SMART gate on top of confirmation.
@@ -100,9 +100,17 @@ export function precharge({ athlete = {}, goals = [], lastBlock = null, viewer =
   if (lastBlock) {
     const range = lastBlock.applied_at ? ` (started ${String(lastBlock.applied_at).slice(0, 10)})` : "";
     // The recap (when a closed block has one) is the richest hand-off there is —
-    // it already says what moved and where the goal landed.
-    const gist = lastBlock.block_recap || lastBlock.block_summary
-      || (lastBlock.program_text || "").split("\n").find(l => l.trim()) || "on record";
+    // it already says what moved and where the goal landed. Short of a formal
+    // recap, fold in real lift-progress math from logged history (same
+    // first-vs-best e1RM-per-lift computation the main chat already runs) so the
+    // interview opens STATING what moved instead of asking from a blank slate
+    // (07-29 UX audit fix): the block summary alone names the block, it never
+    // says what actually happened during it.
+    const progress = liftProgress ? `${liftProgress} this block (from logs)` : "";
+    const gist = lastBlock.block_recap
+      || [lastBlock.block_summary, progress].filter(Boolean).join(". ")
+      || (lastBlock.program_text || "").split("\n").find(l => l.trim())
+      || "on record";
     set("handoff", `Previous block${range}: ${gist}`);
   }
   return bp;

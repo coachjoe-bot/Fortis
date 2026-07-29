@@ -217,7 +217,7 @@ function SchoolsList({schools,coaches,onRefresh,me}) {
 
   return (
     <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,overflow:"hidden",marginBottom:16}}>
-      <div style={{padding:"12px 16px",borderBottom:`1px solid ${CA.border}`,color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2}}>SCHOOLS / TEAMS</div>
+      <div style={{padding:"12px 16px",borderBottom:`1px solid ${CA.border}`,color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2}}>ORGANIZATIONS / TEAMS</div>
       {schools.map((s,i)=>{
         const coachCount = coachCountFor(s.id);
         const hasOpenSlot = coachCount < (s.max_coaches||3);
@@ -245,7 +245,7 @@ function SchoolsList({schools,coaches,onRefresh,me}) {
                 )}
                 {confirmDelete===s.id ? (
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{color:CA.muted,fontSize:11}}>Remove school + coaches?</span>
+                    <span style={{color:CA.muted,fontSize:11}}>Remove organization + coaches?</span>
                     <button onClick={()=>handleDelete(s)} disabled={deleting}
                       style={{background:CA.red,border:"none",color:"#fff",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>
                       {deleting?"...":"Yes, delete"}
@@ -271,7 +271,7 @@ function SchoolsList({schools,coaches,onRefresh,me}) {
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                   <input value={newCoachName} onChange={e=>setNewCoachName(e.target.value)} placeholder="Coach name" style={inpA()}/>
-                  <input type="email" value={newCoachEmail} onChange={e=>setNewCoachEmail(e.target.value)} placeholder="coach@school.edu" style={inpA()}/>
+                  <input type="email" value={newCoachEmail} onChange={e=>setNewCoachEmail(e.target.value)} placeholder="coach@yourteam.org" style={inpA()}/>
                 </div>
                 {addCoachErr&&<div style={{color:CA.red,fontSize:12,marginBottom:8}}>{addCoachErr}</div>}
                 {addCoachSuccess&&<div style={{color:CA.green,fontSize:12,marginBottom:8,fontWeight:600}}>{addCoachSuccess}</div>}
@@ -472,8 +472,8 @@ function SchoolOnboardingForm({onCreated,me}) {
   };
 
   const handleSubmit = async () => {
-    if(!schoolName.trim()){setErr("School name is required.");return;}
-    if(!schoolCode.trim()||schoolCode.length!==3){setErr("School code must be exactly 3 letters.");return;}
+    if(!schoolName.trim()){setErr("Organization name is required.");return;}
+    if(!schoolCode.trim()||schoolCode.length!==3){setErr("Organization code must be exactly 3 letters.");return;}
     const validCoaches=coaches.slice(0,maxCoaches).filter(c=>c.name.trim()&&c.email.trim());
     if(validCoaches.length===0){setErr("Add at least one coach with name and email.");return;}
     setSaving(true); setErr(""); setSuccess("");
@@ -500,7 +500,7 @@ function SchoolOnboardingForm({onCreated,me}) {
         max_athletes:maxAthletes,
         contact_email:contactEmail.trim()||null
       });
-      if(!schools?.length) throw new Error("Failed to create school — check if that 3-letter code is already taken.");
+      if(!schools?.length) throw new Error("Failed to create organization. Check if that 3-letter code is already taken.");
       const school=schools[0];
       // 3. Create coaches + send invites
       // Seats are minted by the server (identity add-coach): it assigns
@@ -541,12 +541,12 @@ function SchoolOnboardingForm({onCreated,me}) {
 
   return (
     <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:20,marginBottom:16}}>
-      <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2,marginBottom:16}}>ONBOARD NEW SCHOOL / TEAM</div>
+      <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2,marginBottom:16}}>ONBOARD NEW ORGANIZATION / TEAM</div>
 
       {/* Row 1: name + code */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 90px",gap:12,marginBottom:14}}>
         <div>
-          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>SCHOOL / TEAM NAME</label>
+          <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>ORGANIZATION / TEAM NAME</label>
           <input value={schoolName} onChange={e=>setSchoolName(e.target.value)} placeholder="Lincoln High School" style={inpA()}/>
         </div>
         <div>
@@ -560,7 +560,7 @@ function SchoolOnboardingForm({onCreated,me}) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div>
           <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>CONTACT EMAIL</label>
-          <input type="email" value={contactEmail} onChange={e=>setContactEmail(e.target.value)} placeholder="ad@school.edu" style={inpA()}/>
+          <input type="email" value={contactEmail} onChange={e=>setContactEmail(e.target.value)} placeholder="ad@yourteam.org" style={inpA()}/>
         </div>
         <div>
           <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>TIER</label>
@@ -588,7 +588,7 @@ function SchoolOnboardingForm({onCreated,me}) {
 
       {/* Logo upload */}
       <div style={{marginBottom:16}}>
-        <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>SCHOOL LOGO <span style={{color:CA.muted,fontWeight:400,letterSpacing:0}}>(optional — PNG, SVG, or JPG)</span></label>
+        <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>ORGANIZATION LOGO <span style={{color:CA.muted,fontWeight:400,letterSpacing:0}}>(optional, PNG, SVG, or JPG)</span></label>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           {logoPreview&&<img src={logoPreview} alt="Preview" style={{width:40,height:40,borderRadius:8,objectFit:"contain",background:"rgba(220,232,255,.92)",padding:3}}/>}
           <label style={{background:CA.navy3,border:`1px dashed ${CA.border}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",color:CA.muted2,fontSize:12,display:"inline-block"}}>
@@ -609,7 +609,7 @@ function SchoolOnboardingForm({onCreated,me}) {
               {(schoolCode||"???")+String(i+1).padStart(2,"0")}
             </div>
             <input value={c.name} onChange={e=>updateCoach(i,"name",e.target.value)} placeholder={`Coach ${i+1} name`} style={inpA()}/>
-            <input type="email" value={c.email} onChange={e=>updateCoach(i,"email",e.target.value)} placeholder="email@school.edu" style={inpA()}/>
+            <input type="email" value={c.email} onChange={e=>updateCoach(i,"email",e.target.value)} placeholder="email@yourteam.org" style={inpA()}/>
           </div>
         ))}
       </div>
@@ -617,7 +617,7 @@ function SchoolOnboardingForm({onCreated,me}) {
       {err&&<div style={{color:CA.red,fontSize:12,marginBottom:12}}>{err}</div>}
       {success&&<div style={{color:CA.green,fontSize:13,marginBottom:12,fontWeight:600}}>{success}</div>}
       <button onClick={handleSubmit} disabled={saving} style={btn(CA_BTN,"#fff",{opacity:saving?0.7:1,boxShadow:`0 6px 18px ${CA_GLOW}`})}>
-        {saving?"Creating school...":"Create School & Send Coach Invites →"}
+        {saving?"Creating organization...":"Create Organization & Send Coach Invites →"}
       </button>
     </div>
   );
@@ -1412,12 +1412,12 @@ function CoachDashboard({coach,onLogout}) {
                     </div>
                     <select value={assignCoachId} onChange={e=>setAssignCoachId(e.target.value)}
                       style={{width:"100%",background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px 12px",color:CA.text,fontSize:13,outline:"none",marginBottom:14}}>
-                      <option value="">{isMaster?"— Unassigned (remove from any school) —":"— Unassigned (stays in your school) —"}</option>
+                      <option value="">{isMaster?"Unassigned (remove from any organization)":"Unassigned (stays in your organization)"}</option>
                       {sortedCoaches.map(c=>{
                         const s = schoolsById[c.school_id];
                         return (
                           <option key={c.id} value={c.id}>
-                            {(s?.name||"No School")} — {c.name}{c.role==="admin"?" (Admin)":""}{c.access_code?` · ${c.access_code}`:""}
+                            {(s?.name||"No Organization")}: {c.name}{c.role==="admin"?" (Admin)":""}{c.access_code?` · ${c.access_code}`:""}
                           </option>
                         );
                       })}
@@ -2097,7 +2097,7 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
           <div style={{maxHeight:showAllHeat?340:"none",overflowY:showAllHeat?"auto":"visible"}}>
           <div style={{display:"grid",gridTemplateColumns:"92px repeat(7,minmax(0,1fr)) 42px",gap:5,alignItems:"center",marginTop:14}}>
             <span/>{D.dayLabels.map((l,i)=><span key={i} style={{fontSize:10,color:i===D.todayIdx?CA.cyan:CA.muted,textAlign:"center",fontWeight:i===D.todayIdx?800:400}}>{l.l}<div style={{fontSize:8,opacity:.75}}>{l.d}</div></span>)}
-            <span style={{fontSize:9,color:CA.muted,textAlign:"right",letterSpacing:.5}}>ADH</span>
+            <span style={{fontSize:9,color:CA.muted,textAlign:"right",letterSpacing:.5,cursor:"pointer"}} {...tipOn("Adherence. Scored mostly on doing the right exercises, then enough volume, then the right weight.")}>ADH</span>
             {heatRows.flatMap((r,ri)=>[
               <span key={`n${ri}`} style={{fontSize:11.5,color:CA.muted2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.a.name}</span>,
               ...r.days.map((d,di)=>{
@@ -3178,9 +3178,9 @@ function AccountTab({coach,allCoaches,school,athletes,coachCounts,loadAll}){
               return (
                 <div style={{maxWidth:600}}>
                   <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:20,marginBottom:16}}>
-                    <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2,marginBottom:14}}>SCHOOL ACCOUNT</div>
+                    <div style={{color:CA.accent,fontFamily:"'Bebas Neue'",fontSize:16,letterSpacing:2,marginBottom:14}}>ORGANIZATION ACCOUNT</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-                      <div><div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>SCHOOL</div><div style={{color:CA.text,fontWeight:600,fontSize:14,marginTop:2}}>{school?.name||"—"}</div></div>
+                      <div><div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>ORGANIZATION</div><div style={{color:CA.text,fontWeight:600,fontSize:14,marginTop:2}}>{school?.name||"—"}</div></div>
                       <div><div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>CODE</div><div style={{display:"flex",alignItems:"center",marginTop:2}}><span style={{color:CA.accent,fontWeight:700,fontSize:18,fontFamily:"'Bebas Neue'",letterSpacing:2}}>{school?.code||"—"}</span>{school?.code&&codeBtn(school.code)}</div></div>
                       <div><div style={{color:CA.muted,fontSize:10,letterSpacing:1}}>TIER</div><div style={{color:CA.text,fontSize:13,marginTop:2}}>{school?.tier||"—"}</div></div>
                       {/* +1 = the signed-in admin, who is pinned into the list below but filtered
@@ -3225,7 +3225,7 @@ function AccountTab({coach,allCoaches,school,athletes,coachCounts,loadAll}){
                       {atLimit?<div style={{color:CA.muted,fontSize:12,fontStyle:"italic"}}>Coach limit reached for your plan ({school?.max_coaches||3} max).</div>:(
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"center"}}>
                           <input value={acName} onChange={e=>setAcName(e.target.value)} placeholder="Coach name" style={inpA({padding:"9px 12px",fontSize:13})}/>
-                          <input type="email" value={acEmail} onChange={e=>setAcEmail(e.target.value)} placeholder="email@school.edu" style={inpA({padding:"9px 12px",fontSize:13})}/>
+                          <input type="email" value={acEmail} onChange={e=>setAcEmail(e.target.value)} placeholder="email@yourteam.org" style={inpA({padding:"9px 12px",fontSize:13})}/>
                           <button onClick={doAddCoach} disabled={acSaving} style={{background:CA_BTN,boxShadow:"0 4px 16px "+CA_GLOW,border:"none",color:"#fff",borderRadius:8,padding:"9px 14px",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"'Bebas Neue'",letterSpacing:1,whiteSpace:"nowrap",opacity:acSaving?0.7:1}}>
                             {acSaving?"Adding...":"Add Coach →"}
                           </button>

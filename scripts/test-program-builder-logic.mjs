@@ -57,6 +57,26 @@ console.log("precharge:");
   ok(/goal HIT/.test(bp.handoff?.pending || ""), "recap (not the one-liner) rides the hand-off when present");
 }
 
+// ── precharge folds real lift-progress into the hand-off when there's no recap
+// (07-29 UX audit fix: don't ask "what moved" when the logs already answer it) ─
+{
+  const bp = precharge({
+    athlete: {},
+    lastBlock: { block_summary: "4-day strength block", applied_at: "2026-07-01T00:00:00Z" },
+    liftProgress: "Squat 245→255, Bench 185→190",
+  });
+  ok(/Squat 245.*255/.test(bp.handoff?.pending || "") && /4-day strength block/.test(bp.handoff?.pending || ""), "lift-progress line joins the block summary when no recap exists");
+}
+{
+  // No recap AND no liftProgress (blank slate, brand new athlete, no history yet)
+  // must still degrade to the old summary/one-liner fallback, never throw.
+  const bp = precharge({
+    athlete: {},
+    lastBlock: { program_text: "Week 1\nSquat 3x5", applied_at: "2026-07-01T00:00:00Z" },
+  });
+  ok(/Week 1/.test(bp.handoff?.pending || ""), "falls back to program_text first line when summary and liftProgress are both empty");
+}
+
 // ── topic router: ONE file, priority order ───────────────────────────────────
 console.log("topic router:");
 ok(pickTopic({ blueprint: { red_flags: { value: "nagging knee pain" } }, viewer: "coach" }) === "return", "injury beats team");

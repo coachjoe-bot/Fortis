@@ -116,6 +116,34 @@ function bestNumbersLine(rows) {
     .map(x => `${x.name} ~${Math.round(x.est)} lb`).join(", ");
 }
 
+// Lift-progress delta for the Builder's "Last Phase" hand-off (07-29 UX audit
+// fix): first-vs-best e1RM per lift, scoped to logs since the block started, so
+// precharge() can open the interview stating what actually moved instead of
+// asking a question the app can already answer from the athlete's own logs.
+function liftDeltaLine(rows, sinceIso) {
+  const since = sinceIso ? new Date(sinceIso).getTime() : 0;
+  const inBlock = (Array.isArray(rows) ? rows : [])
+    .filter(w => { const t = new Date(w.created_at || w.effective_date || 0).getTime(); return Number.isFinite(t) && t >= since; })
+    .sort((a, b) => new Date(a.created_at || a.effective_date) - new Date(b.created_at || b.effective_date));
+  const byLift = {}; // canonical name -> {first e1RM logged this block, best since}
+  for (const w of inBlock) {
+    for (const e of w?.parsed_data?.exercises || []) {
+      if (!e?.name || !e.weight || !e.reps) continue;
+      const est = epley1RM(toLbs(Number(e.weight), e.unit), Number(e.reps));
+      if (!est || !Number.isFinite(est)) continue;
+      const k = normalizeExName(e.name);
+      if (!byLift[k]) byLift[k] = { name: e.name, first: est, best: est };
+      else if (est > byLift[k].best) byLift[k].best = est;
+    }
+  }
+  return Object.values(byLift)
+    .filter(x => Math.round(x.best) !== Math.round(x.first))
+    .sort((a, b) => (b.best - b.first) - (a.best - a.first))
+    .slice(0, 4)
+    .map(x => `${x.name} ${Math.round(x.first)}→${Math.round(x.best)}`)
+    .join(", ");
+}
+
 const DRAFTING_LINES = [
   "Reading your blueprint…",
   "Checking the schedule against the doctrine…",
@@ -245,7 +273,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       } catch (_) {}
       if (!on) return;
       bootRef.current = { goals, lastBlock: rebuildFrom ? null : lastBlock };
-      const bp = precharge({ athlete, goals, lastBlock, viewer });
+      const bp = precharge({ athlete, goals, lastBlock, viewer, liftProgress: liftDeltaLine(workoutHistory, lastBlock?.applied_at) });
       if (rebuildFrom) {
         const name = rebuildFrom.block_summary || (rebuildFrom.program_text || "").split("\n").find(l => l.trim()) || "a previous block";
         bp.handoff = { value: `REBUILD of a past block: ${name}. Its full text is the starting template — keep what worked, change what the interview surfaces.`, source: "known" };
