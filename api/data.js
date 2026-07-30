@@ -21,7 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
-import { crewPeerIds, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
+import { crewPeerIds, resolveCrewOrg, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
 
@@ -652,7 +652,9 @@ const CREW_CODE_LEN = 4;
 
 async function loadCallerAthlete(caller) {
   if (caller.role !== "athlete") throw httpErr(403, "This account can't use Crew");
-  const rows = await sbSelect("athletes", `?id=eq.${enc(caller.id)}&select=id,name,crew_org_key,crew_code,school_id,coach_id`);
+  // sport + crew_team come along because they resolve the caller's TEAM, which
+  // is what an org crew is scoped to since the 2026-07-30 review pass (#3).
+  const rows = await sbSelect("athletes", `?id=eq.${enc(caller.id)}&select=id,name,crew_org_key,crew_code,school_id,coach_id,sport,crew_team`);
   const me = rows[0];
   if (!me) throw httpErr(401, "Not authorized");
   return me;
@@ -684,9 +686,15 @@ function trainedDaysThisWeekByAthlete(workoutRows) {
 async function handleCrew(body, caller, res) {
   const action = String(body.action || "");
   const me = await loadCallerAthlete(caller);
+  // Resolved ONCE per request and threaded everywhere below, so no action can
+  // disagree with another about whether this caller is an org member. Since the
+  // 2026-07-30 review pass this is the ONLY org test in the gateway: a raw
+  // crew_org_key check would auto-crew informal coach links and test accounts
+  // again (finding #2), which is the bug that shipped the first time.
+  const org = await resolveCrewOrg(me);
 
   if (action === "crew-code-ensure") {
-    if (me.crew_org_key) throw httpErr(403, "Org accounts don't need a crew code");
+    if (org.isOrg) throw httpErr(403, "Org accounts don't need a crew code");
     if (me.crew_code) return res.status(200).json({ code: me.crew_code });
     let code = null;
     for (let tries = 0; tries < 8 && !code; tries++) {
@@ -703,15 +711,18 @@ async function handleCrew(body, caller, res) {
   }
 
   if (action === "crew-request") {
-    if (me.crew_org_key) throw httpErr(403, "Org accounts can't add a crew by code");
+    if (org.isOrg) throw httpErr(403, "Org accounts can't add a crew by code");
     const code = str(body.code, { max: 20, name: "code" }).toUpperCase();
-    const targets = await sbSelect("athletes", `?crew_code=eq.${enc(code)}&select=id,crew_org_key`);
+    const targets = await sbSelect("athletes", `?crew_code=eq.${enc(code)}&select=id,school_id,sport,crew_team`);
     const target = targets[0];
     if (!target) throw httpErr(404, "No athlete found with that code");
     if (String(target.id) === String(me.id)) throw httpErr(400, "That's your own code");
     // Org athletes can't be added by code either — enforced on BOTH sides so an
-    // org kid can never be pulled into someone's individual crew.
-    if (target.crew_org_key) throw httpErr(403, "That athlete can't be added by code");
+    // org kid can never be pulled into someone's individual crew. Resolved the
+    // same way as the caller's own membership, not off crew_org_key, so a
+    // school-linked athlete whose school isn't org-enabled stays addable.
+    const targetOrg = await resolveCrewOrg(target);
+    if (targetOrg.isOrg) throw httpErr(403, "That athlete can't be added by code");
     const myAccepted = await sbSelect("crew_edges", `?status=eq.accepted&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=id`);
     if (myAccepted.length >= CREW_CAP) throw httpErr(403, `Crew is full (max ${CREW_CAP})`);
     const [a, b] = orderedPair(me.id, target.id); // canonical ordering computed server-side — never trust a client-supplied order
@@ -745,7 +756,7 @@ async function handleCrew(body, caller, res) {
   if (action === "crew-remove") {
     // One-sided, silent — delete the row, no notification to the other side.
     // Not available on org membership — there is no edge to remove there.
-    if (me.crew_org_key) throw httpErr(403, "Org membership can't be removed from here");
+    if (org.isOrg) throw httpErr(403, "Org membership can't be removed from here");
     const id = str(body.id, { max: 64, name: "id" });
     const rows = await sbSelect("crew_edges", `?id=eq.${enc(id)}&status=eq.accepted&select=id,athlete_a,athlete_b`);
     const edge = rows[0];
@@ -755,14 +766,20 @@ async function handleCrew(body, caller, res) {
   }
 
   if (action === "crew-list") {
-    const peers = await crewPeerIds(me);
+    const peers = await crewPeerIds(me, undefined, org);
     // Pending requests (individual flow only — org membership has no request state).
     let pending = [];
-    if (!me.crew_org_key) {
+    if (!org.isOrg) {
       pending = await sbSelect("crew_edges", `?status=eq.pending&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=*`);
     }
+    // The caller's OWN goal, so the tab can show it back to them with the
+    // share toggle (finding #4: share_with_crew had no write path anywhere, so
+    // it was false for everyone and no goal ever reached a crew row). Returned
+    // whether or not they have peers — an athlete with an empty crew should
+    // still be able to see and set this.
+    const myGoal = await loadOwnGoal(me.id);
     if (!peers.length) {
-      return res.status(200).json({ isOrg: !!me.crew_org_key, code: me.crew_code || null, pending, roster: [] });
+      return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoal });
     }
     const idList = peers.map((id) => `"${id}"`).join(",");
     const [athletesRows, goalsRows, workoutRows, recentWorkoutRows] = await Promise.all([
@@ -791,10 +808,13 @@ async function handleCrew(body, caller, res) {
       const g = latestGoalByAthlete[a.id] || null;
       let goal = null;
       if (g) {
-        goal = { goalText: g.goal_text, parsedLift: g.parsed_lift, targetLbs: g.target_lbs, targetDate: g.target_date };
-        if (g.parsed_lift && g.target_lbs) {
-          goal.currentLbs = await bestE1rmLbsForLift(a.id, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
-        }
+        const cur = (g.parsed_lift && g.target_lbs)
+          ? await bestE1rmLbsForLift(a.id, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM })
+          : null;
+        // Display state decided server-side (aspiration / chasing / hit / quiet).
+        // `quiet` is the missed-dated-goal case and is deliberately NOT a miss —
+        // see goalDisplayState in api/_crew.js.
+        goal = goalDisplayState(g, cur);
       }
       // NOTE: compare_a/compare_b (V2 opt-in) are never selected/returned here at
       // all — there is no comparison surface in V1, org or individual. When V2
@@ -813,11 +833,11 @@ async function handleCrew(body, caller, res) {
         quietDays,
       });
     }
-    return res.status(200).json({ isOrg: !!me.crew_org_key, code: me.crew_code || null, pending, roster });
+    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoal });
   }
 
   if (action === "crew-feed") {
-    const peers = await crewPeerIds(me);
+    const peers = await crewPeerIds(me, undefined, org);
     const ids = [...new Set([...peers, me.id])]; // peer set ∪ caller's own id
     if (!ids.length) return res.status(200).json([]);
     const idList = ids.map((id) => `"${id}"`).join(",");
@@ -835,6 +855,17 @@ async function handleCrew(body, caller, res) {
     return res.status(200).json(inWindow.map((m) => ({ ...m, athleteName: nameById[m.athlete_id] || null, reactions: reactionsByMoment[m.id] || [] })));
   }
 
+  // Goal sharing opt-in (finding #4). Default is OFF and stays OFF until the
+  // athlete flips it here — this is the only write path to share_with_crew, and
+  // it can only ever touch the CALLER's own most recent goal.
+  if (action === "crew-goal-share") {
+    const share = body.share === true;
+    const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(me.id)}&order=created_at.desc&limit=1&select=id`);
+    if (!rows[0]) throw httpErr(404, "No goal to share yet");
+    await sbWrite({ method: "PATCH", table: "athlete_goals", query: `?id=eq.${enc(rows[0].id)}&athlete_id=eq.${enc(me.id)}`, body: { share_with_crew: share }, prefer: "return=minimal" });
+    return res.status(200).json({ ok: true, share, myGoal: await loadOwnGoal(me.id) });
+  }
+
   if (action === "crew-react") {
     const momentId = str(body.momentId, { max: 64, name: "momentId" });
     const emoji = String(body.emoji || "");
@@ -843,7 +874,7 @@ async function handleCrew(body, caller, res) {
     const moment = moments[0];
     if (!moment) throw httpErr(404, "Moment not found");
     if (String(moment.athlete_id) !== String(me.id)) {
-      const peers = await crewPeerIds(me);
+      const peers = await crewPeerIds(me, undefined, org);
       if (!peers.includes(String(moment.athlete_id))) throw httpErr(403, "Not in your crew");
     }
     const existing = await sbSelect("crew_reactions", `?moment_id=eq.${enc(momentId)}&athlete_id=eq.${enc(me.id)}&emoji=eq.${enc(emoji)}&select=id`);
@@ -857,6 +888,23 @@ async function handleCrew(body, caller, res) {
   }
 
   throw httpErr(400, "Unknown crew action");
+}
+
+// The caller's own latest goal, in the same display shape a peer's roster row
+// gets, plus the share flag they control. One place so the tab and the toggle
+// response can never disagree about what "my goal" is.
+async function loadOwnGoal(athleteId) {
+  const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=1&select=*`);
+  const g = rows[0];
+  if (!g) return null;
+  let cur = null;
+  if (g.parsed_lift && g.target_lbs) {
+    const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
+    cur = await bestE1rmLbsForLift(athleteId, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
+  }
+  const display = goalDisplayState(g, cur);
+  if (!display) return null;
+  return { ...display, shared: g.share_with_crew === true };
 }
 
 function mondayIso() {

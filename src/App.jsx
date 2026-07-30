@@ -10540,11 +10540,33 @@ function momentLine(m){
   return `${name} had a moment`;
 }
 
+// Goal-at-a-glance. The server already decided WHICH of the four states this is
+// (see goalDisplayState in api/_crew.js); this only draws it. The `quiet` state
+// is a dated goal whose date passed without being hit: it shows the number they
+// reached and nothing else, never a miss, never a red bar.
+function GoalGlance({goal, muted}){
+  if(!goal) return null;
+  const lift = goal.lift ? goal.lift.replace(/\b\w/g,c=>c.toUpperCase()) : "";
+  if(goal.state==="aspiration") return <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>Working toward · {goal.text}</div>;
+  if(goal.state==="quiet") return <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>{lift} at {Math.round(goal.currentLbs)}lbs</div>;
+  if(goal.state==="hit") return <div style={{color:CA.cyan,fontSize:11.5,lineHeight:1.5,fontWeight:600}}>Hit it · {Math.round(goal.targetLbs)}lbs on {lift}</div>;
+  return (
+    <div style={{color:muted?CA.muted:CA.muted2,fontSize:11.5,lineHeight:1.5}}>
+      Chasing {Math.round(goal.targetLbs)}lbs on {lift}{goal.currentLbs!=null?` · at ${Math.round(goal.currentLbs)}lbs`:""}
+      {goal.pct!=null&&(
+        <div style={{marginTop:5,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${Math.max(3,Math.min(100,goal.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CrewTab({athlete, demo=false}){
   const [sub,setSub] = useState("crew");
   const [loading,setLoading] = useState(true);
   const [err,setErr] = useState("");
-  const [data,setData] = useState(null); // {isOrg, code, pending, roster}
+  const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoal}
   const [codeInput,setCodeInput] = useState("");
   const [requesting,setRequesting] = useState(false);
   const [reqMsg,setReqMsg] = useState("");
@@ -10555,7 +10577,18 @@ function CrewTab({athlete, demo=false}){
 
   const loadRoster = ()=>{
     setLoading(true); setErr("");
-    crewApi("crew-list",{},{demo}).then(d=>setData(d)).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
+    crewApi("crew-list",{},{demo}).then(d=>{
+      setData(d);
+      // Generate the crew code lazily on first open for individual athletes, so
+      // it's simply THERE instead of behind a button (Will's review, finding #1:
+      // he could not find anywhere to see his code or add someone). Org athletes
+      // never get one and the server rejects the call for them, so don't make it.
+      if(d&&!d.isOrg&&!d.code){
+        crewApi("crew-code-ensure",{},{demo})
+          .then(r=>{ if(r&&r.code) setData(prev=>({...(prev||{}),code:r.code})); })
+          .catch(()=>{}); // silent — the manual button below is still there as a fallback
+      }
+    }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
   };
   useEffect(()=>{ loadRoster(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -10581,6 +10614,23 @@ function CrewTab({athlete, demo=false}){
   const accept = async (id)=>{ setBusyId(id); try{ await crewApi("crew-accept",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't accept."); } finally{ setBusyId(null); } };
   const decline = async (id)=>{ setBusyId(id); try{ await crewApi("crew-decline",{id},{demo}); loadRoster(); }catch(_){ } finally{ setBusyId(null); } };
   const removeMember = async (id)=>{ setBusyId(id); try{ await crewApi("crew-remove",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't remove."); } finally{ setBusyId(null); } };
+
+  const [copied,setCopied] = useState(false);
+  const copyCode = async ()=>{
+    const code = data?.code; if(!code) return;
+    try{ await navigator.clipboard.writeText(code); setCopied(true); haptic(15); setTimeout(()=>setCopied(false),1600); }catch(_){ }
+  };
+
+  const [goalBusy,setGoalBusy] = useState(false);
+  const toggleGoalShare = async ()=>{
+    if(!data?.myGoal||goalBusy) return;
+    setGoalBusy(true);
+    const next = !data.myGoal.shared;
+    setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:next}})); // optimistic
+    try{ const r = await crewApi("crew-goal-share",{share:next},{demo}); if(r&&r.myGoal) setData(prev=>({...prev,myGoal:r.myGoal})); }
+    catch(_){ setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:!next}})); }
+    finally{ setGoalBusy(false); }
+  };
 
   const react = async (momentId, emoji)=>{
     // Optimistic toggle so a tap feels instant; re-syncs from the server on failure.
@@ -10617,12 +10667,38 @@ function CrewTab({athlete, demo=false}){
 
       {sub==="crew"&&(
         <div>
+          {/* Org crews are TEAM-scoped, so say which team this is. An org athlete
+              sees their own squad, not the whole school. */}
+          {isOrg&&data?.team&&(
+            <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:12,textTransform:"uppercase"}}>{data.team} · {roster.length+1}</div>
+          )}
+
+          {/* Goal sharing is opt-in and off by default. This is the only place it
+              can be turned on, and it's why goals were missing from every crew
+              row before (nothing could ever set the flag). */}
+          {data?.myGoal&&(
+            <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:8}}>YOUR GOAL</div>
+              <GoalGlance goal={data.myGoal}/>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
+                <span style={{color:CA.muted,fontSize:11}}>{data.myGoal.shared?"Your crew can see this":"Only you can see this"}</span>
+                <button onClick={toggleGoalShare} disabled={goalBusy}
+                  style={{background:data.myGoal.shared?`${CA.accent}18`:"none",border:`1px solid ${data.myGoal.shared?CA.accent:CA.border}`,color:data.myGoal.shared?CA.accent:CA.muted,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                  {data.myGoal.shared?"Shared":"Share it"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Individual flow only — org athletes never see share/scan/code UI (they're already all in). */}
           {!isOrg&&(
             <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
               <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:6}}>YOUR CREW CODE</div>
               {data?.code?(
-                <div style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2,marginBottom:8}}>{data.code}</div>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2}}>{data.code}</span>
+                  <button onClick={copyCode} style={{background:"none",border:`1px solid ${CA.border}`,color:copied?CA.cyan:CA.muted,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5}}>{copied?"Copied":"Copy"}</button>
+                </div>
               ):(
                 <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
               )}
@@ -10675,20 +10751,7 @@ function CrewTab({athlete, demo=false}){
                   {chain.map((on,i)=><div key={i} className={`streaklnk${on?" on":""}`}/>)}
                   <span style={{fontFamily:"'Bebas Neue'",fontSize:12,color:CA.cyan,marginLeft:5}}>{r.trainedThisWeek}{r.trainingDaysPerWeek?`/${r.trainingDaysPerWeek}`:""}</span>
                 </div>
-                {r.goal&&(
-                  <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>
-                    {r.goal.targetLbs&&r.goal.currentLbs!=null ? (
-                      <>
-                        Chasing {Math.round(r.goal.targetLbs)}lbs on {r.goal.parsedLift} · at {Math.round(r.goal.currentLbs)}lbs
-                        <div style={{marginTop:5,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
-                          <div style={{height:"100%",width:`${Math.max(3,Math.min(100,(r.goal.currentLbs/r.goal.targetLbs)*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
-                        </div>
-                      </>
-                    ) : (
-                      <>Working toward · {r.goal.goalText}</>
-                    )}
-                  </div>
-                )}
+                <GoalGlance goal={r.goal}/>
                 {showNudge&&(
                   <div style={{marginTop:9,display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:`1px solid ${CA.border}`,paddingTop:9}}>
                     <span style={{color:CA.muted,fontSize:11}}>gone quiet · no workout in {r.quietDays==null?"a while":`${r.quietDays} days`}</span>

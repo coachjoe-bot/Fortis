@@ -5,15 +5,38 @@
 // so Vercel does not expose this as its own route.
 //
 // Two membership models, resolved by ONE function (crewPeerIds):
-//   - ORG crews: every athlete sharing a school (or, absent a school, a private
-//     coach) is automatically in each other's crew. Derived at read time off
-//     athletes.crew_org_key (a generated column = coalesce(school_id, coach_id)).
-//     Uncapped. No edges table involved.
+//   - ORG crews: automatic, team-scoped membership inside a genuine organization
+//     account. Uncapped. No edges table involved. See resolveCrewOrg for the two
+//     gates that make an athlete an org member at all.
 //   - INDIVIDUAL crews: code-based, mutual opt-in, capped at CREW_CAP accepted
-//     edges. Resolved from crew_edges.
+//     edges. Resolved from crew_edges. This is the DEFAULT and, until a real
+//     school signs, the only behavior on prod.
 // An athlete belongs to exactly ONE model — org athletes never get code-based
 // edges on top of their org crew (WILCO Crew build prompt §4's "one default
 // assumption" — flagged to Will in the build report, not re-litigated here).
+//
+// ─── 2026-07-30 REVIEW PASS (Will's findings #2 and #3) ──────────────────────
+// The first build derived org membership straight off athletes.crew_org_key
+// (a generated coalesce(school_id, coach_id)), which auto-crewed anyone with ANY
+// school or coach link. On prod that swept up test and informally-coach-linked
+// accounts and grouped real people who never asked for each other. Two fixes,
+// both enforced here so no caller can route around them:
+//
+//   #2  An org crew now requires schools.crew_enabled = true. That column
+//       defaults to false, and no prod school has it set, so auto-crew is OFF
+//       everywhere today. A coach link on its own NEVER makes an org crew (a
+//       private coach's roster is not an organization). Everyone who fails these
+//       gates falls through to the individual code-based flow, which means they
+//       get their crew code and the add-someone UI back.
+//   #3  An org crew is TEAM-scoped, not school-wide: basketball sees basketball.
+//       The team is athletes.crew_team when a school sets one, else the athlete's
+//       own sport (crew_team_key is the generated, lowercased resolution of
+//       exactly that rule).
+//
+// crew_org_key is deliberately left alone and still means "has any school/coach
+// link." It backs the DB-level org-comparison ban (crew_edges_org_compare_guard),
+// where being BROADER than org membership is the safe direction: a school-linked
+// athlete on the individual flow still can never enable V2 comparison.
 
 import { sbSelect as realSbSelect } from "./_supa.js";
 
@@ -57,13 +80,57 @@ export function orderedPair(idOne, idTwo) {
   return a < b ? [a, b] : [b, a];
 }
 
-// Resolve the peer athlete ids for `athlete` ({id, crew_org_key}) — NEVER the
-// caller's own id. Org grouping is uncapped and edge-free; individual grouping
-// reads accepted crew_edges only. The two never cross-contaminate: an org
-// athlete's crew_org_key is non-null so it always takes the org branch, and an
-// individual athlete (crew_org_key null) never has a crew_edges row where the
-// OTHER side is an org athlete (crew-request rejects that server-side, see
-// api/data.js's crew-request action).
+// The team an athlete's org crew is scoped to (finding #3). Mirrors the DB's
+// generated athletes.crew_team_key exactly — an explicit crew_team a school set,
+// else the athlete's own sport, lowercased and trimmed. Kept as a JS function
+// (not just a read of the generated column) so the same rule can be applied to
+// rows fetched without that column and so scripts/test-crew.mjs can exercise it
+// with no database. Returns null when the athlete has neither, which means they
+// are on no team and get no org peers.
+export function crewTeamKey(athlete) {
+  if (!athlete) return null;
+  const explicit = String(athlete.crew_team ?? "").trim();
+  if (explicit) return explicit.toLowerCase();
+  const sport = String(athlete.sport ?? "").trim();
+  return sport ? sport.toLowerCase() : null;
+}
+
+// Is this athlete in an ORG crew, and if so which team? Both gates from the
+// 2026-07-30 review pass live here and nowhere else, so every caller (peer
+// resolution, the crew op's per-action authz, the Proof blip) agrees:
+//   1. They must be on a school. A coach link alone is not an organization.
+//   2. That school must be explicitly flagged crew_enabled. Default false, and
+//      no prod school sets it, so auto-crew is off on prod today.
+//   3. They must have a resolvable team. No team, no org crew.
+// Anything short of all three means individual (code-based) crew, which is the
+// safe fallback: worst case someone sees their own crew code instead of being
+// silently grouped with people they never added.
+export async function resolveCrewOrg(athlete, sbSelect = realSbSelect) {
+  const none = { isOrg: false, schoolId: null, teamKey: null, teamName: null };
+  if (!athlete || !athlete.school_id) return none;
+  let school = null;
+  try {
+    const rows = await sbSelect("schools", `?id=eq.${enc(athlete.school_id)}&select=id,name,crew_enabled`);
+    school = rows[0] || null;
+  } catch { return none; } // a failed school read must fall back to the SAFE side, never to auto-crew
+  if (!school || school.crew_enabled !== true) return none;
+  const teamKey = crewTeamKey(athlete);
+  if (!teamKey) return none;
+  return { isOrg: true, schoolId: String(athlete.school_id), teamKey, teamName: String(athlete.crew_team ?? "").trim() || String(athlete.sport ?? "").trim() || null };
+}
+
+// Resolve the peer athlete ids for `athlete` — NEVER the caller's own id. Org
+// grouping is uncapped, edge-free and scoped to one team inside one org-enabled
+// school; individual grouping reads accepted crew_edges only. The two never
+// cross-contaminate: an org athlete always takes the org branch, and an
+// individual athlete never has a crew_edges row where the OTHER side is an org
+// athlete (crew-request rejects that server-side, see api/data.js).
+//
+// Peers are filtered in JS off crewTeamKey rather than querying crew_team_key
+// directly, so a roster row whose team was written with odd casing or padding
+// still lands in the right crew (same normalization on both sides, one rule).
+// A school roster is at most a few hundred rows, so the whole-school read this
+// costs is cheaper than getting the match subtly wrong.
 //
 // `sbSelect` is injectable (defaults to the real REST helper) so
 // scripts/test-crew.mjs can exercise the org-vs-individual branching and the
@@ -71,16 +138,67 @@ export function orderedPair(idOne, idTwo) {
 // injection pattern as pickImprovedPRs(existing, rows, resolveLift) in
 // api/data.js and the askClaudeServer/sbSelect `deps` threaded through the
 // Proof Feed engine.
-export async function crewPeerIds(athlete, sbSelect = realSbSelect) {
-  if (athlete && athlete.crew_org_key) {
-    const rows = await sbSelect("athletes", `?crew_org_key=eq.${enc(athlete.crew_org_key)}&select=id`);
-    return rows.map((r) => String(r.id)).filter((id) => id !== String(athlete.id));
+export async function crewPeerIds(athlete, sbSelect = realSbSelect, org = null) {
+  const resolved = org || await resolveCrewOrg(athlete, sbSelect);
+  if (resolved.isOrg) {
+    const rows = await sbSelect("athletes", `?school_id=eq.${enc(resolved.schoolId)}&select=id,sport,crew_team`);
+    return rows
+      .filter((r) => String(r.id) !== String(athlete.id) && crewTeamKey(r) === resolved.teamKey)
+      .map((r) => String(r.id));
   }
   const rows = await sbSelect(
     "crew_edges",
     `?status=eq.accepted&or=(athlete_a.eq.${enc(athlete.id)},athlete_b.eq.${enc(athlete.id)})&select=athlete_a,athlete_b`
   );
   return rows.map((r) => (String(r.athlete_a) === String(athlete.id) ? String(r.athlete_b) : String(r.athlete_a)));
+}
+
+// ─── GOAL-AT-A-GLANCE (finding #4) ───────────────────────────────────────────
+// Turn a raw athlete_goals row plus the athlete's current e1RM into the display
+// state a crew row renders. Computed here, server-side, so the client renders
+// one already-decided shape and the demo has exactly one rule to mirror.
+//
+// The load-bearing case is `quiet`. A dated goal whose date has passed without
+// being hit must NEVER surface as a miss (spec hard rule 5 — these are minors
+// and the whole feature exists to protect the kid at the bottom). It quietly
+// drops the target and the date and states only the progress that was actually
+// made, which is true and is never a failure.
+//
+// `now` is injectable so the boundary cases are testable without clock tricks.
+export function goalDisplayState(goal, currentLbs = null, now = Date.now()) {
+  if (!goal || !goal.goal_text) return null;
+  const text = String(goal.goal_text).trim();
+  if (!text) return null;
+  const target = Number(goal.target_lbs);
+  const lift = goal.parsed_lift ? String(goal.parsed_lift) : null;
+
+  // Not a numeric lift target ("make varsity"). Stated aspiration, no bar ever —
+  // a fake progress bar on an unmeasurable goal is worse than no bar.
+  if (!lift || !Number.isFinite(target) || target <= 0) return { state: "aspiration", text, lift: null };
+
+  // Deliberately not Number(currentLbs): Number(null) and Number("") are both 0,
+  // which would turn "we don't know this peer's e1RM yet" into a real 0lbs and
+  // draw an empty bar as if they had made no progress.
+  const cur = (currentLbs === null || currentLbs === undefined || currentLbs === "" || !Number.isFinite(Number(currentLbs)))
+    ? null : Number(currentLbs);
+  if (cur != null && cur >= target) return { state: "hit", text, lift, targetLbs: target, currentLbs: cur, pct: 1 };
+
+  // Dated goal, date gone by, not hit. Retire the target and the date; keep the
+  // number they reached.
+  if (goal.target_date) {
+    const due = Date.parse(`${goal.target_date}T23:59:59Z`);
+    if (Number.isFinite(due) && due < now) {
+      return cur != null && cur > 0
+        ? { state: "quiet", text, lift, currentLbs: cur }
+        : null; // nothing true left to say, so say nothing
+    }
+  }
+
+  return {
+    state: "chasing", text, lift, targetLbs: target, currentLbs: cur,
+    targetDate: goal.target_date || null,
+    pct: cur != null ? Math.max(0, Math.min(1, cur / target)) : null,
+  };
 }
 
 // One deterministic, no-AI line per moment for the Proof digest blip. Highlights
@@ -140,7 +258,11 @@ export async function bestE1rmLbsForLift(athleteId, liftId, { resolveLift, bestE
 
 // Build the weekly Proof digest's crew blip: { text } or null when there's
 // nothing to say (never "your crew was quiet" — omit the section entirely).
-// Deterministic — no AI call. `athlete` needs {id, crew_org_key, name}.
+// Deterministic — no AI call. `athlete` needs {id, name, school_id, sport,
+// crew_team} so crewPeerIds can resolve org membership + team the same way the
+// gateway does (the proof cron passes a full `select=*` athlete row, so it has
+// all of these). An athlete with no peers returns null and the digest simply
+// omits the section.
 export async function buildCrewBlip(athlete, sbSelect = realSbSelect) {
   const peers = await crewPeerIds(athlete, sbSelect);
   if (!peers.length) return null;

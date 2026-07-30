@@ -14,7 +14,8 @@
 
 import {
   CREW_CAP, REACTION_EMOJI, WINDOW_DAYS, orderedPair, momentPriorityScore,
-  withinWindow, templateMomentLine, crewPeerIds,
+  withinWindow, templateMomentLine, crewPeerIds, resolveCrewOrg, crewTeamKey,
+  goalDisplayState,
 } from "../api/_crew.js";
 
 let pass = 0, fail = 0;
@@ -92,58 +93,133 @@ ok(!/undefined/.test(templateMomentLine({ type: "pr", payload: {} }, null)), "mi
 ok(/5 for 5|for 5/.test(templateMomentLine({ type: "week", payload: { done: 5, target: 5, perfect: true } }, "Devin")), "perfect-week line states done/target");
 ok(/#50|50/.test(templateMomentLine({ type: "milestone", payload: { count: 50 } }, "Sam")), "milestone line states the count");
 
-// ── crewPeerIds: org vs individual resolution, no cross-contamination ───────
-console.log("crewPeerIds:");
+// ── resolveCrewOrg + crewPeerIds: who is actually in an org crew ──────────
+// The 2026-07-30 review pass (Will's findings #2 and #3) narrowed org membership
+// twice over. These are the checks that keep it narrow:
+//   #2  a school link alone is NOT an org crew; the school must be crew_enabled,
+//       and a coach link on its own never counts at all. Everyone else falls
+//       through to the individual code-based flow.
+//   #3  an org crew is one TEAM inside that school, not the whole roster.
+console.log("resolveCrewOrg + crewPeerIds:");
 {
-  // In-memory fake standing in for sbSelect — same shape/contract the real
-  // REST helper returns (an array of rows), keyed by (table, paramsString).
-  const ORG_KEY = "school-aaa";
-  const fakeAthletes = [
-    { id: "org-1", crew_org_key: ORG_KEY },
-    { id: "org-2", crew_org_key: ORG_KEY },
-    { id: "org-3", crew_org_key: ORG_KEY },
-    { id: "solo-1", crew_org_key: null },
-    { id: "solo-2", crew_org_key: null },
+  const ENABLED = "school-enabled", OFF = "school-not-enabled";
+  const fakeSchools = [
+    { id: ENABLED, name: "Eastridge Prep", crew_enabled: true },
+    { id: OFF, name: "Some Test School", crew_enabled: false },
   ];
+  // Two teams inside the crew-enabled school, plus a same-school athlete on a
+  // THIRD team, plus a not-enabled school, plus two pure individuals.
+  const fakeAthletes = [
+    { id: "bb-1", school_id: ENABLED, sport: "Basketball", crew_team: null },
+    { id: "bb-2", school_id: ENABLED, sport: "Basketball", crew_team: null },
+    { id: "bb-3", school_id: ENABLED, sport: "basketball ", crew_team: null }, // odd casing/padding, same team
+    { id: "vb-1", school_id: ENABLED, sport: "Volleyball", crew_team: null },
+    { id: "jv-1", school_id: ENABLED, sport: "Football", crew_team: "JV Football" },
+    { id: "v-1",  school_id: ENABLED, sport: "Football", crew_team: "Varsity Football" },
+    { id: "off-1", school_id: OFF, sport: "Basketball", crew_team: null },
+    { id: "off-2", school_id: OFF, sport: "Basketball", crew_team: null },
+    { id: "solo-1", school_id: null, sport: "Powerlifting", crew_team: null },
+    { id: "solo-2", school_id: null, sport: "Powerlifting", crew_team: null },
+    // Coach-linked but on no school: the exact shape that wrongly auto-crewed.
+    { id: "coached-1", school_id: null, coach_id: "coach-x", sport: "Olympic Weightlifting", crew_team: null },
+    { id: "coached-2", school_id: null, coach_id: "coach-x", sport: "Olympic Weightlifting", crew_team: null },
+  ];
+  const byId = (id) => fakeAthletes.find((a) => a.id === id);
   const fakeEdges = [
-    // solo-1 <-> solo-2, accepted (individual crew — no org athlete on either side)
     { athlete_a: "solo-1", athlete_b: "solo-2", status: "accepted" },
-    // a stray PENDING edge involving solo-1 must never count as a peer
     { athlete_a: "solo-1", athlete_b: "solo-3-pending", status: "pending" },
   ];
   const fakeSelect = async (table, params) => {
+    if (table === "schools") {
+      const m = /id=eq\.([^&]+)/.exec(params);
+      return m ? fakeSchools.filter((s) => s.id === decodeURIComponent(m[1])) : [];
+    }
     if (table === "athletes") {
-      // ?crew_org_key=eq.<key>&select=id
-      const m = /crew_org_key=eq\.([^&]+)/.exec(params);
+      const m = /school_id=eq\.([^&]+)/.exec(params);
       if (!m) return [];
-      const key = decodeURIComponent(m[1]);
-      return fakeAthletes.filter((a) => a.crew_org_key === key).map((a) => ({ id: a.id }));
+      const sid = decodeURIComponent(m[1]);
+      return fakeAthletes.filter((a) => a.school_id === sid).map((a) => ({ id: a.id, sport: a.sport, crew_team: a.crew_team }));
     }
     if (table === "crew_edges") {
       const m = /or=\(athlete_a\.eq\.([^,]+),athlete_b\.eq\.([^)]+)\)/.exec(params);
       if (!m) return [];
-      const [, idA, idB] = m; // both encode the SAME caller id
-      const id = decodeURIComponent(idA);
+      const id = decodeURIComponent(m[1]);
       return fakeEdges.filter((e) => e.status === "accepted" && (e.athlete_a === id || e.athlete_b === id));
     }
     return [];
   };
 
-  const orgPeers = await crewPeerIds({ id: "org-1", crew_org_key: ORG_KEY }, fakeSelect);
-  eq(orgPeers.sort(), ["org-2", "org-3"], "org athlete's peers = whole school roster minus self, UNCAPPED, no edges involved");
+  // crewTeamKey — the one normalization rule, applied identically on both sides.
+  eq(crewTeamKey({ sport: "Basketball" }), "basketball", "team key falls back to sport, lowercased");
+  eq(crewTeamKey({ sport: "Football", crew_team: "Varsity Football" }), "varsity football", "an explicit crew_team beats the sport");
+  eq(crewTeamKey({ sport: " Basketball " }), "basketball", "padding is trimmed so odd roster data still matches");
+  eq(crewTeamKey({ sport: "", crew_team: "  " }), null, "no team at all resolves to null, not an empty-string team");
 
-  const soloPeers = await crewPeerIds({ id: "solo-1", crew_org_key: null }, fakeSelect);
+  // #2 — the gates.
+  eq((await resolveCrewOrg(byId("bb-1"), fakeSelect)).isOrg, true, "school flagged crew_enabled: this IS an org crew");
+  eq((await resolveCrewOrg(byId("off-1"), fakeSelect)).isOrg, false, "school NOT flagged crew_enabled: no org crew (this is every prod school today)");
+  eq((await resolveCrewOrg(byId("coached-1"), fakeSelect)).isOrg, false, "a coach link with no school NEVER makes an org crew");
+  eq((await resolveCrewOrg(byId("solo-1"), fakeSelect)).isOrg, false, "an unaffiliated athlete is never an org crew");
+  eq((await resolveCrewOrg({ id: "x", school_id: ENABLED, sport: "" }, fakeSelect)).isOrg, false, "enabled school but no resolvable team: no org crew");
+  eq((await resolveCrewOrg(byId("bb-1"), fakeSelect)).teamName, "Basketball", "the team NAME comes back for display");
+
+  // #3 — team scoping.
+  eq((await crewPeerIds(byId("bb-1"), fakeSelect)).sort(), ["bb-2", "bb-3"], "org peers = same school AND same team, uncapped");
+  ok(!(await crewPeerIds(byId("bb-1"), fakeSelect)).includes("vb-1"), "basketball never sees volleyball inside the same school");
+  eq(await crewPeerIds(byId("jv-1"), fakeSelect), [], "JV Football and Varsity Football are separate crews even on the same sport");
+  eq(await crewPeerIds(byId("vb-1"), fakeSelect), [], "a one-person team resolves to zero peers, not an error");
+
+  // #2, at the peer layer: the not-enabled school's athletes get NO org peers,
+  // which is what hands them back the individual code flow instead.
+  eq(await crewPeerIds(byId("off-1"), fakeSelect), [], "same school, same sport, but the school isn't crew_enabled: zero auto-crew");
+  eq(await crewPeerIds(byId("coached-1"), fakeSelect), [], "two athletes sharing only a coach are NOT crewed together");
+
+  // Individual resolution is unchanged.
+  const soloPeers = await crewPeerIds(byId("solo-1"), fakeSelect);
   eq(soloPeers, ["solo-2"], "individual athlete's peers = accepted crew_edges only, other side");
   ok(!soloPeers.includes("solo-3-pending"), "a PENDING edge is never counted as a peer");
 
-  // No cross-contamination: an org athlete's peer set never pulls in an
-  // unrelated individual edge, and vice versa — because the two resolution
-  // paths are mutually exclusive on crew_org_key, never merged.
+  // No cross-contamination in either direction.
+  const orgPeers = await crewPeerIds(byId("bb-1"), fakeSelect);
   ok(!orgPeers.includes("solo-1") && !orgPeers.includes("solo-2"), "org athlete's peer set never includes an unrelated individual athlete");
-  ok(!soloPeers.some((id) => fakeAthletes.find((a) => a.id === id)?.crew_org_key), "individual athlete's peer set never includes an org athlete");
+  ok(!soloPeers.some((id) => byId(id)?.school_id), "individual athlete's peer set never includes a school athlete");
+}
 
-  const emptyOrgPeers = await crewPeerIds({ id: "org-nobody", crew_org_key: "lonely-school" }, fakeSelect);
-  eq(emptyOrgPeers, [], "an org key with only this athlete on it resolves to zero peers, not an error");
+// ── goalDisplayState — the four states, and the one that must never shame ──
+console.log("goalDisplayState:");
+{
+  const NOW = Date.parse("2026-07-30T12:00:00Z");
+  const past = "2026-06-01", future = "2026-12-01";
+
+  eq(goalDisplayState(null, 200, NOW), null, "no goal row renders nothing");
+  eq(goalDisplayState({ goal_text: "   " }, 200, NOW), null, "a blank goal renders nothing");
+
+  const asp = goalDisplayState({ goal_text: "make varsity" }, null, NOW);
+  eq(asp.state, "aspiration", "a non-numeric goal is a stated aspiration");
+  ok(asp.pct === undefined, "an aspiration NEVER gets a progress bar (a fake bar is worse than none)");
+
+  const chasing = goalDisplayState({ goal_text: "315 bench by December", parsed_lift: "bench press", target_lbs: 315, target_date: future }, 295, NOW);
+  eq(chasing.state, "chasing", "a live numeric goal is chasing");
+  ok(Math.abs(chasing.pct - 295 / 315) < 1e-9, "progress is deterministic current/target math");
+
+  eq(goalDisplayState({ goal_text: "315 bench", parsed_lift: "bench press", target_lbs: 315 }, 315, NOW).state, "hit", "reaching the target exactly counts as hit");
+  eq(goalDisplayState({ goal_text: "315 bench", parsed_lift: "bench press", target_lbs: 315 }, 330, NOW).state, "hit", "passing the target counts as hit");
+
+  // The load-bearing case: a dated goal that came and went unhit.
+  const missed = goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 295, NOW);
+  eq(missed.state, "quiet", "a dated goal whose date passed unhit retires to 'quiet', never a miss");
+  eq(missed.targetLbs, undefined, "the retired goal drops the target it fell short of");
+  eq(missed.targetDate, undefined, "the retired goal drops the date it missed");
+  eq(missed.currentLbs, 295, "what it keeps is the progress that was actually made, which is true");
+  eq(goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 0, NOW), null,
+     "a passed date with no progress to show says nothing at all rather than something sad");
+
+  // A dated goal that WAS hit stays 'hit' even after the date, never 'quiet'.
+  eq(goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 320, NOW).state, "hit",
+     "hitting it before the date survives the date passing");
+
+  // Progress is clamped, never over 100% or negative.
+  ok(goalDisplayState({ goal_text: "g", parsed_lift: "squat", target_lbs: 400 }, null, NOW).pct === null, "no current e1RM yet means no bar, not a zero bar");
 }
 
 // ── Cap-of-10 enforcement (the logic api/data.js's crew-request/crew-accept
