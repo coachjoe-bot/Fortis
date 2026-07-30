@@ -10838,7 +10838,7 @@ export const captureCrewInvite = () => {
     const url = new URL(window.location.href);
     url.searchParams.delete("crew");
     window.history.replaceState({}, "", url.toString());
-  }catch(_){ /* private mode, or no storage — the code just doesn't prefill */ }
+  }catch(_){ /* private mode, or no storage: the code just does not prefill */ }
 };
 export const takeCrewInvite = () => {
   try{
@@ -10857,14 +10857,15 @@ export const buildCrewInvite = (code, name) => {
   const first = String(name || "").trim().split(/\s+/)[0] || "";
   const url = `${APP_INSTALL_URL}/?crew=${encodeURIComponent(code)}`;
   const opener = `Join my crew on WILCO${first ? `, it's ${first}` : ""}.`;
-  return {
-    title: "Join my crew on WILCO",
-    text: `${opener}\n\nWILCO is the training app I log my lifts in. Get it here, then put in my crew code:\n\n${code}`,
-    url,
-    // Everything in one string, for the desktop clipboard fallback and for any
-    // share target that takes text only.
-    full: `${opener}\n\nWILCO is the training app I log my lifts in. Get it here:\n${url}\n\nThen put in my crew code:\n${code}`,
-  };
+  // ONE string, link inline, and deliberately NO separate `url` field.
+  //
+  // Passing both text and url to navigator.share looked right and shipped an
+  // empty invite: iOS Messages took the url, rendered its link card, and threw
+  // the entire message away. Verified by Will actually sending one. With text
+  // alone, Messages inserts it verbatim and still auto-links the URL, so the
+  // words survive and the tap target is intact.
+  const body = `${opener}\n\nWILCO is the training app I log my lifts in. Get it here:\n${url}\n\nThen put in my crew code:\n${code}`;
+  return { title: "Join my crew on WILCO", text: body, full: body };
 };
 
 function CrewTab({athlete, demo=false}){
@@ -10882,6 +10883,10 @@ function CrewTab({athlete, demo=false}){
   const [busyId,setBusyId] = useState(null);
   const [copied,setCopied] = useState(false);
   const [shareMsg,setShareMsg] = useState("");
+  // What the crew sees of your goals. Separate from your real goals on purpose.
+  const [editingCrewGoal,setEditingCrewGoal] = useState(false);
+  const [crewGoalText,setCrewGoalText] = useState("");
+  const [crewGoalBusy,setCrewGoalBusy] = useState(false);
   const [goalBusy,setGoalBusy] = useState(null);
   // V2 comparison. Mutual opt-in, individual crews only. Loaded lazily with the
   // roster; an org athlete never has an edge to opt in on, which IS the ban.
@@ -10957,8 +10962,10 @@ function CrewTab({athlete, demo=false}){
     haptic(15);
     try{
       if(navigator.share){
-        // Native sheet: Messages, WhatsApp, wherever they actually talk.
-        await navigator.share({title:invite.title, text:invite.text, url:invite.url});
+        // Native sheet: Messages, WhatsApp, wherever they actually talk. text
+        // ONLY: adding `url` makes iOS Messages drop the message and send a bare
+        // link card, which is exactly what shipped the first time.
+        await navigator.share({title:invite.title, text:invite.text});
         return;
       }
       // No share sheet (most desktop browsers): put the whole invite on the
@@ -10995,6 +11002,30 @@ function CrewTab({athlete, demo=false}){
     }catch(_){
       setData(prev=>({...prev,roster:(prev?.roster||[]).map(x=>x.id===peerId?{...x,compareMine:!on}:x)}));
     }finally{ setCmpBusy(null); }
+  };
+
+  // Save what the crew sees. The text is parsed the same way a real goal is, so
+  // "show my deadlift and that I'm chasing 400 on calf raises" comes out as
+  // targets with progress bars. Parsed on THIS device, then stored already
+  // parsed, so nothing has to run AI on a read.
+  const saveCrewGoal = async ()=>{
+    if(crewGoalBusy) return;
+    setCrewGoalBusy(true);
+    const text = crewGoalText.trim();
+    try{
+      const parsed = text ? await parseAthleteGoal(text) : null;
+      const r = await crewApi("crew-goal-display",{
+        text,
+        targets: parsed?.targets || [],
+        // With no AI available (preview has no key) the text still shows, just
+        // without bars: better than refusing to save what they typed.
+        label: parsed?.summary || (parsed && parsed.targets.length ? null : text.split(/\s+/).slice(0,5).join(" ")),
+      },{demo});
+      setData(prev=>({...prev,crewGoal:r?.crewGoal||null}));
+      setEditingCrewGoal(false);
+      loadRoster();
+    }catch(_){ }
+    finally{ setCrewGoalBusy(false); }
   };
 
   const react = async (momentId, emoji)=>{
@@ -11069,16 +11100,56 @@ function CrewTab({athlete, demo=false}){
           {/* Your goals. Several, each holding several targets, each shared or
               not on its own. Sharing is off by default and this is the only place
               it can be turned on. */}
+          {/* What the crew actually sees. Written for them, so it overrides the
+              per-goal sharing below. Nothing outside the crew surface reads it,
+              so editing this never changes what Coach Joe programs against. */}
+          {(data?.crewGoal||editingCrewGoal)&&(
+            <div style={{background:CA.navy2,border:`1px solid ${editingCrewGoal?CA.accent:CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:14}}>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>WHAT YOUR CREW SEES</div>
+              {editingCrewGoal?(
+                <>
+                  <textarea value={crewGoalText} onChange={e=>setCrewGoalText(e.target.value)} rows={3}
+                    placeholder="Show my deadlift and that I'm chasing 405, skip the bench"
+                    style={inpA({width:"100%",padding:"9px 11px",fontSize:13,lineHeight:1.5,resize:"vertical"})}/>
+                  <div style={{color:CA.muted,fontSize:11,lineHeight:1.5,margin:"9px 0 11px"}}>Write it however you want. This only changes what your crew sees, not the goals WILCO programs for you. Leave it empty to go back to showing the goals you shared below.</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={saveCrewGoal} disabled={crewGoalBusy}
+                      style={{background:CA_BTN,border:"none",color:"#fff",borderRadius:8,padding:"7px 15px",cursor:"pointer",fontSize:12,fontWeight:700,boxShadow:`0 2px 10px ${CA_GLOW}`}}>{crewGoalBusy?"Saving…":"Save"}</button>
+                    <button onClick={()=>{setEditingCrewGoal(false);setCrewGoalText(data?.crewGoal?.text||"");}}
+                      style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"7px 13px",cursor:"pointer",fontSize:12}}>Cancel</button>
+                  </div>
+                </>
+              ):(
+                <>
+                  {data.crewGoal.glance
+                    ? <GoalGlance goal={data.crewGoal.glance} compact/>
+                    : <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>{data.crewGoal.text}</div>}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
+                    <span style={{color:CA.muted,fontSize:11}}>This is what shows on your row</span>
+                    <button onClick={()=>{setCrewGoalText(data.crewGoal.text||"");setEditingCrewGoal(true);}}
+                      style={{background:"none",border:`1px solid ${CA.border}`,color:CA.accent,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>Edit</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {(data?.myGoals||[]).length>0&&(
             <div style={{marginBottom:14}}>
-              <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>YOUR GOALS</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{color:CA.muted,fontSize:10,letterSpacing:1.4,fontFamily:"ui-monospace,Menlo,monospace"}}>YOUR GOALS</span>
+                {!data?.crewGoal&&!editingCrewGoal&&(
+                  <button onClick={()=>{setCrewGoalText("");setEditingCrewGoal(true);}}
+                    style={{marginLeft:"auto",background:"none",border:`1px solid ${CA.border}`,color:CA.accent,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10,fontWeight:700,letterSpacing:0.4}}>Choose what your crew sees</button>
+                )}
+              </div>
               {(data.myGoals||[]).map(g=>(
                 <div key={g.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:9}}>
                   {g.glance
                     ? <GoalGlance goal={g.glance} compact/>
                     : <div style={{color:CA.muted,fontSize:11,lineHeight:1.5}}>{String(g.text||"").slice(0,90)}{String(g.text||"").length>90?"…":""}</div>}
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
-                    <span style={{color:CA.muted,fontSize:11}}>{g.shared?"Your crew can see this":"Only you can see this"}</span>
+                    <span style={{color:CA.muted,fontSize:11}}>{data?.crewGoal?"Overridden above":g.shared?"Your crew can see this":"Only you can see this"}</span>
                     <button onClick={()=>toggleGoalShare(g.id,!g.shared)} disabled={goalBusy===g.id}
                       style={{background:g.shared?`${CA.accent}18`:"none",border:`1px solid ${g.shared?CA.accent:CA.border}`,color:g.shared?CA.accent:CA.muted,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>
                       {g.shared?"Shared":"Share it"}
@@ -11139,10 +11210,8 @@ function CrewTab({athlete, demo=false}){
                     {infoFor===r.id&&(
                       <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px 12px",marginBottom:10,color:CA.muted2,fontSize:11.5,lineHeight:1.6}}>
                         <div style={{color:CA.accent,fontSize:9.5,letterSpacing:1.4,fontFamily:"ui-monospace,Menlo,monospace",marginBottom:7}}>WHAT COMPARING DOES</div>
-                        <div style={{marginBottom:6}}>You both have to turn it on. Nothing shows up until {r.name.split(" ")[0]} turns it on too, and they are not told that you did.</div>
-                        <div style={{marginBottom:6}}>Once you both have: your strength scores sit side by side down in Head to Head, and a small marker shows up on your benchmark bars for how far through their own rank they are.</div>
-                        <div style={{marginBottom:6}}>Ranks only. Your actual weights are never shared, in either direction.</div>
-                        <div>Turn it off whenever you want. They do not get told that either.</div>
+                        <div style={{marginBottom:6}}>Turns on full comparison between you two: benchmarks, strength score and ranks.</div>
+                        <div>You both have to turn it on, and either of you can turn it off whenever. Completely optional.</div>
                       </div>
                     )}
                     <div style={{display:"flex",alignItems:"center",gap:3}}>
