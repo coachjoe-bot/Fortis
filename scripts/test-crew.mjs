@@ -15,7 +15,7 @@
 import {
   CREW_CAP, REACTION_EMOJI, WINDOW_DAYS, orderedPair, momentPriorityScore,
   withinWindow, templateMomentLine, crewPeerIds, resolveCrewOrg, crewTeamKey,
-  goalDisplayState,
+  goalDisplayState, crewAllowedFor,
 } from "../api/_crew.js";
 
 let pass = 0, fail = 0;
@@ -183,6 +183,35 @@ console.log("resolveCrewOrg + crewPeerIds:");
   const orgPeers = await crewPeerIds(byId("bb-1"), fakeSelect);
   ok(!orgPeers.includes("solo-1") && !orgPeers.includes("solo-2"), "org athlete's peer set never includes an unrelated individual athlete");
   ok(!soloPeers.some((id) => byId(id)?.school_id), "individual athlete's peer set never includes a school athlete");
+}
+
+// ── crewAllowedFor: the coach's kill-switch for their whole roster ─────────
+// Only an explicit false turns Crew off. Every other case (no coach, missing
+// coach row, a read that blew up) leaves Crew ON, because that is its default
+// and failing closed here would silently strip the tab from athletes whose
+// coach never asked for that.
+console.log("crewAllowedFor (coach kill-switch):");
+{
+  const coaches = [
+    { id: "coach-on", crew_allowed: true },
+    { id: "coach-off", crew_allowed: false },
+    { id: "coach-null", crew_allowed: null },
+  ];
+  const sel = async (table, params) => {
+    if (table !== "coaches") return [];
+    const m = /id=eq\.([^&]+)/.exec(params);
+    return m ? coaches.filter((c) => c.id === decodeURIComponent(m[1])) : [];
+  };
+  const boom = async () => { throw new Error("supabase is down"); };
+
+  eq(await crewAllowedFor({ id: "a", coach_id: "coach-on" }, sel), true, "coach with the switch on: Crew allowed");
+  eq(await crewAllowedFor({ id: "a", coach_id: "coach-off" }, sel), false, "coach switched Crew OFF: not allowed, for every athlete of theirs");
+  eq(await crewAllowedFor({ id: "a", coach_id: null }, sel), true, "no coach at all: allowed (an unaffiliated athlete has nobody to switch it off)");
+  eq(await crewAllowedFor({ id: "a" }, sel), true, "athlete row with no coach_id field: allowed");
+  eq(await crewAllowedFor({ id: "a", coach_id: "coach-missing" }, sel), true, "coach row not found: allowed, never strip the tab on a lookup miss");
+  eq(await crewAllowedFor({ id: "a", coach_id: "coach-null" }, sel), true, "column NULL (pre-migration row): allowed, only an explicit false turns it off");
+  eq(await crewAllowedFor({ id: "a", coach_id: "coach-off" }, boom), true, "a failed read fails OPEN, so an outage never silently removes Crew");
+  eq(await crewAllowedFor(null, sel), true, "no athlete: allowed, never throws");
 }
 
 // ── goalDisplayState — the four states, and the one that must never shame ──

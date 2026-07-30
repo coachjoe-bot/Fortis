@@ -10265,7 +10265,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
 
       {/* Tabs */}
       <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0}}>
-        {["benchmarks","strength","running","pr","crew"].map(t=>(
+        {["benchmarks","strength","running","pr",...(athlete?.crew_allowed===false?[]:["crew"])].map(t=>(
           <button key={t} onClick={()=>setTab(t)}
             style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,transition:"color 0.15s"}}>
             {t==="pr"?"PRs":t}

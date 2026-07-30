@@ -119,6 +119,20 @@ export async function resolveCrewOrg(athlete, sbSelect = realSbSelect) {
   return { isOrg: true, schoolId: String(athlete.school_id), teamKey, teamName: String(athlete.crew_team ?? "").trim() || String(athlete.sport ?? "").trim() || null };
 }
 
+// Is Crew switched on at all for this athlete's team? A coach owns this call for
+// their whole roster via coaches.crew_allowed (Will, 07-30). Only an explicit
+// false turns Crew off: no coach, a missing coach row, or a failed read all mean
+// allowed, which is Crew's default state everywhere else. Enforced in the
+// gateway on EVERY crew action, so hiding the tab is a courtesy and this is the
+// actual control.
+export async function crewAllowedFor(athlete, sbSelect = realSbSelect) {
+  if (!athlete || !athlete.coach_id) return true;
+  try {
+    const rows = await sbSelect("coaches", `?id=eq.${enc(athlete.coach_id)}&select=crew_allowed`);
+    return rows[0] ? rows[0].crew_allowed !== false : true;
+  } catch { return true; }
+}
+
 // Resolve the peer athlete ids for `athlete` — NEVER the caller's own id. Org
 // grouping is uncapped, edge-free and scoped to one team inside one org-enabled
 // school; individual grouping reads accepted crew_edges only. The two never

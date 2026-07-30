@@ -21,7 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
-import { crewPeerIds, resolveCrewOrg, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
+import { crewPeerIds, resolveCrewOrg, crewAllowedFor, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
 
@@ -402,10 +402,13 @@ export default async function handler(req, res) {
         } else if (table === "coaches") {
           if (!isAdmin) {
             // Managing coaches is admin-only — EXCEPT a coach may update their OWN
-            // self-service columns (notification_prefs, tour_done_at). Only those,
-            // only their row.
+            // self-service columns (notification_prefs, tour_done_at, crew_allowed).
+            // Only those, only their row. crew_allowed is the coach's Crew
+            // kill-switch for their whole roster (Will, 07-30) — it belongs here
+            // rather than under admin because every coach owns the call for their
+            // own athletes, not just a school admin.
             const keys = Object.keys(body.data || {});
-            if (body.op === "update" && keys.length && keys.every((k) => k === "notification_prefs" || k === "tour_done_at")) {
+            if (body.op === "update" && keys.length && keys.every((k) => k === "notification_prefs" || k === "tour_done_at" || k === "crew_allowed")) {
               ownFilter = `&id=eq.${enc(caller.id)}`;
             } else {
               throw httpErr(403, "This account can't write that data");
@@ -692,6 +695,11 @@ async function handleCrew(body, caller, res) {
   // crew_org_key check would auto-crew informal coach links and test accounts
   // again (finding #2), which is the bug that shipped the first time.
   const org = await resolveCrewOrg(me);
+  // A coach can switch Crew off for their whole roster. Enforced HERE, on every
+  // action, not just by hiding the tab: a hidden tab is a suggestion, this is the
+  // control. Absence of a coach, or a coach row we can't read, both mean allowed
+  // (Crew's default state) — only an explicit false turns it off.
+  if (!(await crewAllowedFor(me))) throw httpErr(403, "Your coach has turned Crew off for this team");
 
   if (action === "crew-code-ensure") {
     if (org.isOrg) throw httpErr(403, "Org accounts don't need a crew code");
