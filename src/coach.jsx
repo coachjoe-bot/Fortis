@@ -741,6 +741,21 @@ function CoachDashboard({coach,onLogout}) {
   // the browser subscription — which could belong to an athlete on a shared device.
   useEffect(()=>{ (async()=>{ try{ setPushOn(await getPushStatusForCaller()); }catch{} })(); },[]);
   const savePref = async (key,val)=>{ const next={...notifPrefs,[key]:val}; setNotifPrefs(next); try{ await sbUpdate("coaches",coach.id,{notification_prefs:next}); }catch(e){ console.error("pref save",e); } };
+  // Crew kill-switch for this coach's whole roster (Will, 07-30). Starts on.
+  // Turning it off removes the Crew tab from every one of their athletes'
+  // accounts; the gateway refuses crew calls for them either way, so this is a
+  // real control and not just a hidden tab. Optimistic, and rolls back if the
+  // write fails so the switch can never lie about what the server thinks.
+  const [crewAllowed,setCrewAllowed] = useState(coach.crew_allowed!==false);
+  const [crewBusy,setCrewBusy] = useState(false);
+  const toggleCrewAllowed = async ()=>{
+    if(crewBusy) return;
+    const next = !crewAllowed;
+    setCrewAllowed(next); setCrewBusy(true);
+    try{ await sbUpdate("coaches",coach.id,{crew_allowed:next}); }
+    catch(e){ setCrewAllowed(!next); console.error("crew_allowed save",e); }
+    finally{ setCrewBusy(false); }
+  };
   const togglePush = async ()=>{ setPushBusy(true); try{ if(pushOn){ await disablePush(); setPushOn(false); } else { await enablePush(); setPushOn(true); } }catch(e){ console.error("push toggle",e); } setPushBusy(false); };
   const [reportFilter,setReportFilter] = useState("all"); // "all" | "weekly" | "monthly"
   const [reportSearch,setReportSearch] = useState("");
@@ -1481,6 +1496,25 @@ function CoachDashboard({coach,onLogout}) {
                     <Row title="Coach's Edition ready" desc="Your weekly + monthly team report, the moment it's generated." pkey="digest"/>
                   </div>
                   <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>WILCO never messages your athletes on your behalf, these alerts go only to you.</div>
+
+                  <div style={{display:"flex",alignItems:"center",gap:12,margin:"26px 2px 12px"}}>
+                    <span style={{fontSize:10.5,letterSpacing:1.4,textTransform:"uppercase",color:CA.accent,fontWeight:700}}>Your team</span>
+                    <span style={{height:1,background:CA.border,flex:1}}/>
+                  </div>
+                  <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:700,fontSize:13.5,color:CA.text}}>Crew</div>
+                        <div style={{color:CA.muted,fontSize:12,marginTop:2,lineHeight:1.5}}>
+                          {crewAllowed
+                            ? "Your athletes can see their crew: who trained this week, goals they chose to share, and PRs. No messaging, no leaderboards."
+                            : "Crew is off. Nobody on your roster has the tab."}
+                        </div>
+                      </div>
+                      <Toggle on={crewAllowed} onClick={toggleCrewAllowed}/>
+                    </div>
+                  </div>
+                  <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>Turn Crew off and it disappears from every athlete you coach. Turn it back on and it returns with everything still there.</div>
                 </div>
               );
             })()}

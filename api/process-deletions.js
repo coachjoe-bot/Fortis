@@ -89,6 +89,13 @@ const ATHLETE_TABLES = [
   "athlete_context",
   "push_subscriptions",
   "legal_acceptances",
+  // WILCO Crew V1. crew_moments/crew_reactions are athlete_id-keyed exactly like
+  // the tables above. crew_edges is DELIBERATELY NOT listed here — it has no
+  // athlete_id column (athlete_a/athlete_b instead), and adding it to this list
+  // would silently no-op (a `?athlete_id=eq.<id>` delete matches zero rows) and
+  // strand edges on account deletion. See deleteCrewEdges() below instead.
+  "crew_moments",
+  "crew_reactions",
 ];
 
 // Analytics ledgers carry athlete_id/actor_id but have NO foreign key to athletes,
@@ -156,6 +163,15 @@ async function runDeletions() {
       for (const tbl of ATHLETE_TABLES) {
         await sbDelete(tbl, `?athlete_id=eq.${enc(aid)}`);
       }
+      // 1a. crew_edges — NOT athlete_id-keyed (athlete_a/athlete_b instead), so it
+      // can't ride the loop above (see the ATHLETE_TABLES comment). Both columns
+      // carry an ON DELETE CASCADE FK to athletes(id), so the athletes delete in
+      // step 2 would clean these up on its own — but this explicit two-query
+      // delete runs first anyway rather than trusting that alone: it's the exact
+      // trap the crew build spec flagged as easy to miss because the table LOOKS
+      // athlete-scoped, so belt-and-braces here costs nothing.
+      await sbDelete("crew_edges", `?athlete_a=eq.${enc(aid)}`);
+      await sbDelete("crew_edges", `?athlete_b=eq.${enc(aid)}`);
       // 1b. Anonymize the FK-less analytics ledgers (keep the counts, drop the link).
       await anonymizeAnalytics(aid);
       // 2. Delete the athlete row itself (cascades any remaining FK children).

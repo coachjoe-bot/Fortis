@@ -95,6 +95,20 @@ async function authCoachThrottled(req, coachId, pin) {
   }
 }
 
+// A coach can switch Crew off for their whole roster (coaches.crew_allowed).
+// The athlete's client needs that answer at LOGIN, not after the Crew tab has
+// already painted, so it rides along on the athlete record both login paths
+// return. Absent coach, or an unreadable coach row, means allowed — Crew's
+// default. The gateway re-checks this on every crew action; this is only what
+// lets the tab be gone rather than appear and vanish.
+async function withCrewAllowed(a) {
+  if (!a || !a.coach_id) return { ...a, crew_allowed: true };
+  try {
+    const rows = await sbSelect("coaches", `?id=eq.${enc(a.coach_id)}&select=crew_allowed`);
+    return { ...a, crew_allowed: rows[0] ? rows[0].crew_allowed !== false : true };
+  } catch { return { ...a, crew_allowed: true }; }
+}
+
 // ── athlete-login ─────────────────────────────────────────────────────────────
 async function athleteLogin(req, res, body) {
   const name = str(body.name, { max: 100, name: "Name" });
@@ -130,7 +144,7 @@ async function athleteLogin(req, res, body) {
     const a = byName[hit];
     await rateLimitReset(key);
     // token: signed session credential so subsequent gateway calls skip bcrypt.
-    return res.status(200).json({ athlete: stripPin(a), token: mintSessionToken("athlete", a.id) }); // never send the hash to the browser
+    return res.status(200).json({ athlete: await withCrewAllowed(stripPin(a)), token: mintSessionToken("athlete", a.id) }); // never send the hash to the browser
   }
   return res.status(200).json({ athlete: null, reason: byName.length ? "wrong_pin" : "not_found" });
 }
@@ -198,7 +212,7 @@ async function getAthlete(req, res, body) {
   const found = await sbSelect("athletes", `?id=eq.${enc(id)}&select=*`);
   const a = found[0];
   if (a && (await verifyPin(pin, a.pin))) {
-    return res.status(200).json({ athlete: stripPin(a), token: mintSessionToken("athlete", a.id) });
+    return res.status(200).json({ athlete: await withCrewAllowed(stripPin(a)), token: mintSessionToken("athlete", a.id) });
   }
   await recordAuthFail();
   return res.status(200).json({ athlete: null });
