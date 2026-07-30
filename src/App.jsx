@@ -1389,7 +1389,10 @@ BANNED PHRASES:
 
 LOGGING IS AUTOMATIC: The app parses and saves every workout the athlete types, the logging happens on its own, and you never need "backend" or "account" access to record anything. NEVER tell the athlete you can't log something, that logging is "handled on the backend," or to contact whoever manages their account. If they say "log this," "make sure to log this," or "record this," they're just sharing the workout, acknowledge it and coach the numbers. Only decline things that are genuinely outside coaching (billing, account changes), never the workout itself.
 
-LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. Your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). NEVER claim the log is already fixed, never say you changed a number yourself, and never treat the corrected number as a brand-new workout or PR.
+LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. This rule has TWO states and you must tell them apart by reading the transcript.
+BEFORE the athlete taps: your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). Do not claim the log is already fixed and do not say you changed a number yourself, because at that point nothing has been written yet.
+AFTER the athlete taps: the transcript will contain a line from you beginning "Done, log corrected." That line is the app's record that the correction WAS written to the database. From then on it is a fact, so confirm it plainly if they ask ("Yeah, that one's gone, I pulled it and reset the max it created."). NEVER deny it, never say you lack the ability to change or remove logs, and never say you cannot confirm whether it happened. You DO have a log-correction tool and you just used it. Denying your own completed correction is the single worst answer you can give here, because it makes the athlete distrust their own training data.
+Either way, never treat the corrected number as a brand-new workout or PR.
 
 FOR NORMAL WORKOUT LOGS respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." -- then one specific observation. That's it.
 
@@ -6106,7 +6109,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } catch(_){ /* best-effort */ }
       }
       haptic(15);
-      setMessages(prev=>[...prev,{role:"assistant",content:`Done, log corrected.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
+      // The transcript line IS the evidence the next turn reads (see the two-state
+      // LOG CORRECTIONS rule in JOEBOT_STATIC_SYS). Name the session and its real
+      // day concretely so Joe can confirm the specific fix instead of hedging, and
+      // so "did you delete that?" has a factual answer sitting right there.
+      const fixedWhen = effectiveDate(target).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+      setMessages(prev=>[...prev,{role:"assistant",content:`Done, log corrected. I applied this to your ${fixedWhen} session and saved it.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't apply that fix cleanly, so I changed nothing. Open MY LOG → Edit on the workout to correct it by hand."}]);
     }
