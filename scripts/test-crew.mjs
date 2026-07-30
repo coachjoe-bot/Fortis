@@ -15,7 +15,8 @@
 import {
   CREW_CAP, REACTION_EMOJI, WINDOW_DAYS, orderedPair, momentPriorityScore,
   withinWindow, templateMomentLine, crewPeerIds, resolveCrewOrg, crewTeamKey,
-  goalDisplayState, crewAllowedFor, withinTierPct, compareStateFor,
+  crewAllowedFor, withinTierPct, compareStateFor,
+  goalTargets, goalTargetState, goalShortLabel, composeGoalGlance,
 } from "../api/_crew.js";
 
 let pass = 0, fail = 0;
@@ -214,41 +215,90 @@ console.log("crewAllowedFor (coach kill-switch):");
   eq(await crewAllowedFor(null, sel), true, "no athlete: allowed, never throws");
 }
 
-// ── goalDisplayState — the four states, and the one that must never shame ──
-console.log("goalDisplayState:");
+// ── Goal parsing: many targets per goal, many goals per athlete ───────────
+// A real goal is a paragraph naming three lifts, or a bodyweight wish, or (on
+// prod, genuinely) a pasted training program. The crew row shows the measurable
+// parts, short.
+console.log("goalTargets:");
+{
+  eq(goalTargets(null), [], "no goal yields no targets");
+  eq(goalTargets({ parsed_targets: [] }), [], "an explicitly empty parse yields no targets");
+  eq(goalTargets({ parsed_targets: [{ lift: "bench press", target_lbs: 315, target_date: "2026-08-31" }] }),
+     [{ lift: "bench press", targetLbs: 315, targetDate: "2026-08-31" }], "a single parsed target normalizes");
+  eq(goalTargets({ parsed_targets: [
+      { lift: "bench press", target_lbs: 315 },
+      { lift: "back squat", target_lbs: 405 },
+      { lift: "deadlift", target_lbs: 405 }] }).length, 3, "one goal can name several lifts, which is the whole point");
+  // Goals parsed before parsed_targets existed must still render.
+  eq(goalTargets({ parsed_lift: "bench press", target_lbs: 315, target_date: null }),
+     [{ lift: "bench press", targetLbs: 315, targetDate: null }], "legacy single-lift columns still resolve");
+  eq(goalTargets({ parsed_targets: [{ lift: "bench press", target_lbs: 0 }, { lift: null, target_lbs: 200 }, { lift: "squat", target_lbs: "x" }] }), [],
+     "junk targets (no weight, no lift, unparseable weight) are dropped rather than rendered");
+}
+
+console.log("goalTargetState:");
 {
   const NOW = Date.parse("2026-07-30T12:00:00Z");
   const past = "2026-06-01", future = "2026-12-01";
+  const T = (o) => ({ lift: "bench press", targetLbs: 315, targetDate: null, ...o });
 
-  eq(goalDisplayState(null, 200, NOW), null, "no goal row renders nothing");
-  eq(goalDisplayState({ goal_text: "   " }, 200, NOW), null, "a blank goal renders nothing");
+  eq(goalTargetState(null, 200, NOW), null, "no target renders nothing");
+  eq(goalTargetState(T({ targetLbs: 0 }), 200, NOW), null, "a zero target renders nothing");
 
-  const asp = goalDisplayState({ goal_text: "make varsity" }, null, NOW);
-  eq(asp.state, "aspiration", "a non-numeric goal is a stated aspiration");
-  ok(asp.pct === undefined, "an aspiration NEVER gets a progress bar (a fake bar is worse than none)");
-
-  const chasing = goalDisplayState({ goal_text: "315 bench by December", parsed_lift: "bench press", target_lbs: 315, target_date: future }, 295, NOW);
-  eq(chasing.state, "chasing", "a live numeric goal is chasing");
+  const chasing = goalTargetState(T({ targetDate: future }), 295, NOW);
+  eq(chasing.state, "chasing", "a live target is chasing");
   ok(Math.abs(chasing.pct - 295 / 315) < 1e-9, "progress is deterministic current/target math");
 
-  eq(goalDisplayState({ goal_text: "315 bench", parsed_lift: "bench press", target_lbs: 315 }, 315, NOW).state, "hit", "reaching the target exactly counts as hit");
-  eq(goalDisplayState({ goal_text: "315 bench", parsed_lift: "bench press", target_lbs: 315 }, 330, NOW).state, "hit", "passing the target counts as hit");
+  eq(goalTargetState(T(), 315, NOW).state, "hit", "reaching it exactly counts as hit");
+  eq(goalTargetState(T(), 330, NOW).state, "hit", "passing it counts as hit");
 
-  // The load-bearing case: a dated goal that came and went unhit.
-  const missed = goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 295, NOW);
-  eq(missed.state, "quiet", "a dated goal whose date passed unhit retires to 'quiet', never a miss");
-  eq(missed.targetLbs, undefined, "the retired goal drops the target it fell short of");
-  eq(missed.targetDate, undefined, "the retired goal drops the date it missed");
-  eq(missed.currentLbs, 295, "what it keeps is the progress that was actually made, which is true");
-  eq(goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 0, NOW), null,
-     "a passed date with no progress to show says nothing at all rather than something sad");
+  // The load-bearing case.
+  const missed = goalTargetState(T({ targetDate: past }), 295, NOW);
+  eq(missed.state, "quiet", "a dated target whose date passed unhit retires to 'quiet', never a miss");
+  eq(missed.targetLbs, undefined, "the retired target drops the number it fell short of");
+  eq(missed.targetDate, undefined, "and drops the date it missed");
+  eq(missed.currentLbs, 295, "what it keeps is the progress actually made, which is true");
+  eq(goalTargetState(T({ targetDate: past }), 0, NOW), null, "a passed date with nothing to show says nothing rather than something sad");
+  eq(goalTargetState(T({ targetDate: past }), 320, NOW).state, "hit", "hitting it before the date survives the date passing");
 
-  // A dated goal that WAS hit stays 'hit' even after the date, never 'quiet'.
-  eq(goalDisplayState({ goal_text: "315 bench by June", parsed_lift: "bench press", target_lbs: 315, target_date: past }, 320, NOW).state, "hit",
-     "hitting it before the date survives the date passing");
+  eq(goalTargetState(T(), null, NOW).pct, null, "no current e1RM yet means no bar, not a zero bar");
+  eq(goalTargetState(T(), "", NOW).pct, null, "an empty-string e1RM is not 0lbs either (Number('') === 0)");
+}
 
-  // Progress is clamped, never over 100% or negative.
-  ok(goalDisplayState({ goal_text: "g", parsed_lift: "squat", target_lbs: 400 }, null, NOW).pct === null, "no current e1RM yet means no bar, not a zero bar");
+console.log("goalShortLabel + composeGoalGlance:");
+{
+  const NOW = Date.parse("2026-07-30T12:00:00Z");
+  eq(goalShortLabel({ short_label: "Make varsity" }), "Make varsity", "a summary comes through");
+  eq(goalShortLabel({ short_label: "   " }), null, "a blank summary is nothing");
+  eq(goalShortLabel({}), null, "no summary is nothing");
+
+  const cur = { "bench press": 298, "back squat": 380, deadlift: 300, "front squat": 200 };
+  const goals = [
+    { parsed_targets: [{ lift: "bench press", target_lbs: 315 }, { lift: "back squat", target_lbs: 405 }] },
+    { parsed_targets: [{ lift: "deadlift", target_lbs: 405 }] },
+    { short_label: "Make varsity" },
+  ];
+  const g = composeGoalGlance(goals, cur, NOW);
+  eq(g.targets.length, 3, "targets are gathered across ALL of an athlete's shared goals, not just the newest");
+  eq(g.targets.map((t) => t.lift), ["bench press", "back squat", "deadlift"], "in the order the goals were given");
+  eq(g.labels, ["Make varsity"], "a goal with nothing measurable contributes its short label");
+
+  // The cap keeps a roster scannable; your own goals pass cap 0 and are uncapped.
+  const many = [{ parsed_targets: [
+    { lift: "bench press", target_lbs: 315 }, { lift: "back squat", target_lbs: 405 },
+    { lift: "deadlift", target_lbs: 405 }, { lift: "front squat", target_lbs: 315 }] }];
+  eq(composeGoalGlance(many, cur, NOW).targets.length, 3, "a crew ROW caps at 3 targets so one athlete can't push others off screen");
+  eq(composeGoalGlance(many, cur, NOW).more, 1, "and says how many it held back");
+  eq(composeGoalGlance(many, cur, NOW, 0).targets.length, 4, "cap 0 means uncapped, which is how your OWN goals render");
+
+  // Same lift named in two separate goals is one target, not two rows.
+  const dupe = [{ parsed_targets: [{ lift: "bench press", target_lbs: 315 }] },
+                { parsed_targets: [{ lift: "Bench Press", target_lbs: 325 }] }];
+  eq(composeGoalGlance(dupe, cur, NOW).targets.length, 1, "the same lift across two goals collapses to one row, case-insensitively");
+
+  eq(composeGoalGlance([], cur, NOW), null, "no goals renders nothing");
+  eq(composeGoalGlance([{ goal_text: "an unparsed essay" }], cur, NOW), null, "an unparsed goal renders nothing rather than the essay");
+  eq(composeGoalGlance(null, cur, NOW), null, "null input never throws");
 }
 
 // ── V2 comparison: mutual opt-in + where a strip sits on the tube ──────────
