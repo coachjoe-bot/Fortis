@@ -13,6 +13,7 @@
 // So the program-writing cases get the most coverage, and every ambiguous case is
 // asserted to resolve toward "don't touch it".
 
+import { readFileSync } from "node:fs";
 import {
   needsAdvancedParser, looksLikeLifting, parseGotNothing, asksToRemember,
   looksLikeWorkoutLog, hasExplicitWorkingBasis, propagate1RM, isFullProgramEcho,
@@ -192,6 +193,46 @@ console.log("isFullProgramEcho:");
   ok(!isFullProgramEcho("x".repeat(59), ""), "under 60 chars is rejected even with no original");
   ok(isFullProgramEcho("x".repeat(60), ""), "60+ chars is accepted when there's nothing to lose");
 }
+
+// ─── LOG-CORRECTION PROMPT CONTRACT (T19 #1) ─────────────────────────────────
+// Joe applied a correction, then flatly denied having done it on the next turn
+// ("I don't actually have the ability to remove or apply fixes to logs myself").
+// The cause was not missing evidence -- applyCorrection already writes "Done, log
+// corrected." into the transcript and history is sent as context. It was an
+// UNCONDITIONAL rule in JOEBOT_STATIC_SYS: "NEVER claim the log is already
+// fixed", which binds just as hard AFTER the athlete taps Apply fix as before.
+//
+// The real regression suite for corrections (scripts/test-log-correction.mjs)
+// needs a live athlete + PIN and bills real tokens, so it cannot run in npm test.
+// These assertions guard the same defect offline by pinning the prompt CONTRACT:
+// the rule must be two-state, and must never re-acquire a blanket denial. Read
+// from the live file so a prompt edit cannot quietly drop it.
+{
+  const src = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const i = src.indexOf("LOG CORRECTIONS:");
+  ok(i !== -1, "the LOG CORRECTIONS block still exists in JOEBOT_STATIC_SYS");
+  const block = src.slice(i, i + 2600);
+
+  ok(/BEFORE the athlete taps/i.test(block), "the rule distinguishes the BEFORE-tap state");
+  ok(/AFTER the athlete taps/i.test(block), "the rule distinguishes the AFTER-tap state");
+  ok(/Done, log corrected/.test(block), "the after-tap state names the exact transcript marker it keys off");
+  ok(/never say you lack the ability|NEVER deny it/i.test(block),
+     "the rule forbids denying a correction that was applied");
+
+  // The pre-tap caution must stay SCOPED. If an unconditional 'NEVER claim ...
+  // already fixed' ever comes back, the original bug is back with it.
+  const beforeIdx = block.indexOf("BEFORE the athlete taps");
+  const afterIdx = block.indexOf("AFTER the athlete taps");
+  ok(beforeIdx !== -1 && afterIdx !== -1 && beforeIdx < afterIdx,
+     "before-tap guidance precedes after-tap guidance");
+  ok(!/NEVER claim the log is already fixed/i.test(block),
+     "the old unconditional denial rule is gone");
+
+  // applyCorrection must keep writing the marker the prompt depends on.
+  ok(/content:`Done, log corrected\./.test(src),
+     "applyCorrection still writes the 'Done, log corrected.' transcript marker");
+}
+
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} chat-routing checks pass.`);
