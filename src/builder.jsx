@@ -21,7 +21,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { CA, CA_BTN, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs } from "./grit.js";
-import { lineDiff, mergeGuard } from "./programDiff.js";
+import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
 import {
   cellsFor, blueprintPct, filledCount, precharge, pickTopic,
@@ -706,3 +706,190 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
 // Glow color for the DRAFT IT button (CA_GLOW lives in App.jsx but isn't in the
 // import list above to keep the mirrored-file diff tight — same value).
 const CA_GLOW_SAFE = "rgba(58,123,255,.5)";
+
+// ─── EDIT A PROGRAM (Builder sub-mode, Will 07-30) ───────────────────────────
+// The other half of the Builder tab: you already HAVE a program, you just want
+// to change it. Deliberately NOT an interview — no training age, no equipment,
+// no competition dates, no goals. It parses nothing about you; it edits the text
+// you paste.
+//
+// Two ways to change it, same as Quick Log's contract (AI fills, you can always
+// take the pen yourself):
+//   • hand-edit    — the program box is a live textarea, type in it directly
+//   • ask Joe      — describe the change in plain language
+//
+// The hard rule Will set: Joe must say EXACTLY what it would change BEFORE
+// anything changes, then you apply or you don't. So an AI edit never mutates
+// the program. It produces a PROPOSAL, and the proposal's line-by-line diff is
+// COMPUTED here by lineDiff rather than described by the model, because a model
+// summarizing its own edit is exactly the thing that can drift from what it
+// actually did. Joe's sentence is flavor; the green/red lines are the truth.
+export function ProgramEditPane({ athlete, viewer = "athlete", onSaveToProgram }) {
+  const [phase, setPhase] = useState("paste");   // paste | editing
+  const [text, setText] = useState("");          // the live program (hand-editable)
+  const [paste, setPaste] = useState("");
+  const [ask, setAsk] = useState("");
+  const [proposal, setProposal] = useState(null); // {text, diff, summary} — never auto-applied
+  const [log, setLog] = useState([]);            // [{role:"you"|"joe", content}]
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const mono = { fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace" };
+  const subhead = { ...mono, fontSize: 9, letterSpacing: 2, color: CA.muted, textTransform: "uppercase" };
+  const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: active ? "pointer" : "not-allowed", fontSize: 11.5, fontWeight: 600, fontFamily: "'DM Sans'" });
+  const priBtn = { background: CA_BTN, color: "#02040c", border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "'Bebas Neue'", letterSpacing: 1 };
+
+  const start = () => {
+    const t = paste.trim();
+    if (t.length < 20) { setErr("Paste a bit more of the program so there's something to work with."); return; }
+    setText(t); setPhase("editing"); setErr("");
+    track("program_edit_start", "ai");
+  };
+
+  // Ask Joe for a change. Returns a PROPOSAL only. Nothing is written to `text`
+  // until the athlete taps Apply, which is the whole point of this mode.
+  const propose = async () => {
+    const req = ask.trim();
+    if (!req || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const sys = `You are editing a training program its owner pasted in. They are NOT being interviewed and you must not ask about goals, training age, equipment, or competition dates. Apply ONLY the change they request, preserve every other line character-for-character, and keep the existing format.
+
+Respond in EXACTLY this shape and nothing else:
+SUMMARY: <one plain sentence naming what you changed, specific about days/lifts/numbers>
+PROGRAM:
+<the complete updated program text>
+
+If the request is genuinely ambiguous about THIS program (for example they say "make day 2 harder" and there are two day 2s), do not guess. Instead respond with only:
+QUESTION: <one short question>`;
+      const raw = await askClaude(sys, `CURRENT PROGRAM:\n${text}\n\nREQUESTED CHANGE: ${req}`, 4000, [], "claude-sonnet-5", "program_apply_change");
+
+      const q = String(raw || "").match(/^\s*QUESTION:\s*([\s\S]+)$/);
+      if (q) {
+        setLog(l => [...l, { role: "you", content: req }, { role: "joe", content: q[1].trim() }]);
+        setAsk("");
+        setBusy(false);
+        return;
+      }
+      const parts = String(raw || "").split(/^PROGRAM:\s*$/m);
+      const summary = (parts[0] || "").replace(/^\s*SUMMARY:\s*/i, "").trim();
+      const body = parts.length > 1 ? parts.slice(1).join("PROGRAM:\n") : raw;
+      const guard = mergeGuard(text, body);
+      if (!guard.ok) { setErr(guard.reason || "Couldn't make that change cleanly. Say it more specifically."); setBusy(false); return; }
+
+      const diff = lineDiff(text, guard.text);
+      const stats = diffStats(diff);
+      if (!stats.added && !stats.removed) {
+        setLog(l => [...l, { role: "you", content: req }, { role: "joe", content: "That would not change anything in the program as written. Try naming the day or the lift." }]);
+        setAsk(""); setBusy(false); return;
+      }
+      setLog(l => [...l, { role: "you", content: req }, { role: "joe", content: summary || `Proposed ${stats.added} added and ${stats.removed} removed.` }]);
+      setProposal({ text: guard.text, diff, summary, stats });
+      setAsk("");
+      track("program_edit_proposed", "ai");
+    } catch (e) { setErr("Couldn't reach Joe just then. Try again."); }
+    setBusy(false);
+  };
+
+  const applyProposal = () => {
+    if (!proposal) return;
+    setText(proposal.text);
+    setProposal(null);
+    setLog(l => [...l, { role: "joe", content: "Applied. Program updated below." }]);
+    track("program_edit_applied", "ai");
+  };
+  const discardProposal = () => {
+    setProposal(null);
+    setLog(l => [...l, { role: "joe", content: "Left it alone, nothing changed." }]);
+    track("program_edit_discarded", "ai");
+  };
+
+  const save = async () => {
+    if (saving || !text.trim()) return;
+    setSaving(true); setErr("");
+    try {
+      await onSaveToProgram(text, null);
+      track("program_edit_saved", "ai");
+      setLog(l => [...l, { role: "joe", content: "Saved. That's your program now." }]);
+    } catch (e) { setErr("Couldn't save that. Try again in a sec."); }
+    setSaving(false);
+  };
+
+  if (phase === "paste") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={subhead}>Edit a program</div>
+        <div style={{ color: CA.muted2, fontSize: 12.5, lineHeight: 1.65 }}>
+          Already running something? Paste it in and change it here. No questions about your goals or your training history, this just edits what you give it.
+        </div>
+        <textarea value={paste} onChange={e => setPaste(e.target.value)} rows={12}
+          placeholder={"Paste your program here, any format.\n\nDay 1 - Upper\nBench 4x5 @ 185\n..."}
+          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono }} />
+        {err && <div style={{ color: CA.red, fontSize: 12 }}>{err}</div>}
+        <button onClick={start} style={{ ...priBtn, opacity: paste.trim().length >= 20 ? 1 : 0.5 }}>Start editing →</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-start" }}>
+      {/* YOUR PROGRAM — hand-editable at all times */}
+      <div style={{ flex: "1 1 320px", minWidth: 280, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={subhead}>Your program</div>
+          <span style={{ ...mono, fontSize: 9, color: CA.muted }}>type to edit directly</span>
+        </div>
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={18}
+          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono }} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={save} disabled={saving} style={{ ...priBtn, opacity: saving ? 0.7 : 1 }}>{saving ? "Saving…" : "Save to my program"}</button>
+          <button onClick={() => { setPhase("paste"); setText(""); setPaste(""); setLog([]); setProposal(null); setErr(""); }} style={miniBtn(true, CA.muted2)}>Start over</button>
+        </div>
+      </div>
+
+      {/* JOE — the conversation, and the proposal gate */}
+      <div style={{ flex: "1 1 320px", minWidth: 280, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={subhead}>Ask Joe to change it</div>
+        <div style={{ background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 10, padding: "10px 12px", maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+          {!log.length && <div style={{ color: CA.muted, fontSize: 12, lineHeight: 1.6 }}>Tell Joe what to change and it will show you exactly what it would do before anything moves.</div>}
+          {log.map((m, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: 1.6, color: m.role === "you" ? CA.text : CA.cyan }}>
+              <span style={{ ...mono, fontSize: 9, letterSpacing: 1, color: CA.muted, marginRight: 6 }}>{m.role === "you" ? "YOU" : "JOE"}</span>
+              {m.content}
+            </div>
+          ))}
+        </div>
+
+        {proposal && (
+          <div style={{ border: `1px solid ${CA.accent}66`, background: `${CA.accent}0d`, borderRadius: 10, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ ...mono, fontSize: 9, letterSpacing: 2, color: CA.accent, textTransform: "uppercase" }}>
+              Proposed change · {proposal.stats.added} added, {proposal.stats.removed} removed
+            </div>
+            <div style={{ maxHeight: 220, overflowY: "auto", background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "8px 10px" }}>
+              {proposal.diff.filter(d => d.type !== "same").length === 0
+                ? <div style={{ color: CA.muted, fontSize: 11 }}>No line-level differences.</div>
+                : proposal.diff.map((d, i) => d.type === "same" ? null : (
+                  <div key={i} style={{ ...mono, fontSize: 11, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", color: d.type === "add" ? CA.green : CA.red }}>
+                    {d.type === "add" ? "+ " : "- "}{d.text || " "}
+                  </div>
+                ))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={applyProposal} style={miniBtn(true, CA.green)}>Apply this change</button>
+              <button onClick={discardProposal} style={miniBtn(true, CA.muted2)}>Don't apply</button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === "Enter") propose(); }}
+            placeholder={'e.g. "swap day 2 to dumbbells"'}
+            style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily: "'DM Sans'" }} />
+          <button onClick={propose} disabled={busy || !ask.trim()} style={miniBtn(!busy && !!ask.trim())}>{busy ? "…" : "Ask"}</button>
+        </div>
+        {err && <div style={{ color: CA.red, fontSize: 12 }}>{err}</div>}
+      </div>
+    </div>
+  );
+}

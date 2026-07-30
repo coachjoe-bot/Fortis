@@ -50,6 +50,7 @@ import { nativeBiometricAvailable, nativeBiometricVerify } from "./nativeBiometr
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
+const ProgramEditPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramEditPane })));
 // Chat-routing decisions (model escalation, "remember this", is-this-a-log, PR
 // propagation guards). Pure regexes/logic pulled out of send() so they have a
 // suite — see src/chatRouting.js and scripts/test-chat-routing.mjs.
@@ -4967,6 +4968,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Program Builder Phase A: the Program view is three subtabs (My Program /
   // Builder / Drafts). Always reopens on My Program.
   const [programTab,setProgramTab] = useState("program");
+  // Builder sub-mode (Will, 07-30): "build" is the existing goal interview,
+  // "edit" is bring-your-own-program. A sub-mode rather than a 5th subtab, since
+  // the whole point of this pass was making that section lighter, not heavier.
+  const [builderMode,setBuilderMode] = useState("build"); // build | edit
   // Once the Builder subtab has been visited it stays MOUNTED (display:none)
   // for the life of the modal, so subtab hops never reset the interview.
   const [builderMounted,setBuilderMounted] = useState(false);
@@ -5487,7 +5492,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       await sbUpdate("athletes",athlete.id,{program_text:null});
       setAthlete(prev=>({...prev,program_text:null}));
       setAthleteProgramText("");
-      setProgramTab("blocks");
+      setProgramTab("drafts");   // retired phases now live under DRAFTS, not their own tab
     } catch(e){ setAthleteProgramMsg("Couldn't retire that, try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
     setRetiring(false);
   };
@@ -7843,7 +7848,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </div>
             {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
             <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0,overflowX:"auto"}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
+              {/* PHASES folded into DRAFTS (Will, 07-30): four subtabs made this
+                  section heavy, and past phases are read-only history that belongs
+                  under the drafts they came from, not beside them as a peer. */}
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"]].map(([k,label])=>(
                 <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
@@ -7858,27 +7866,44 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 keeps writing while the athlete browses Drafts/Past Blocks. */}
             {(builderMounted||programTab==="builder")&&(
               <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:programTab==="builder"?"flex":"none",flexDirection:"column"}}>
-                <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
-                  <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
-                    locked={!!athlete.program_locked}
-                    workoutHistory={workoutHistory}
-                    initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
-                    rebuildFrom={builderDraft?.__rebuildFrom||null}
-                    onParked={()=>setProgramTab("drafts")}
-                    onSaveToProgram={applyBuilderText}/>
-                </Suspense>
+                {/* Sub-mode picker. The interview pane below stays mounted even in
+                    edit mode, for the same reason it survives subtab switches: an
+                    in-flight draft must keep writing. */}
+                <div style={{display:"flex",gap:6,marginBottom:12,flexShrink:0}}>
+                  {[["build","Build me a program"],["edit","Edit a program"]].map(([k,label])=>(
+                    <button key={k} onClick={()=>setBuilderMode(k)}
+                      style={{flex:1,background:builderMode===k?`${CA.accent}20`:"transparent",border:`1px solid ${builderMode===k?CA.accent:CA.border}`,color:builderMode===k?CA.accent:CA.muted,borderRadius:9,padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"'DM Sans'",whiteSpace:"nowrap"}}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{display:builderMode==="build"?"flex":"none",flexDirection:"column",flex:1,minHeight:0}}>
+                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+                    <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
+                      locked={!!athlete.program_locked}
+                      workoutHistory={workoutHistory}
+                      initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
+                      rebuildFrom={builderDraft?.__rebuildFrom||null}
+                      onParked={()=>setProgramTab("drafts")}
+                      onSaveToProgram={applyBuilderText}/>
+                  </Suspense>
+                </div>
+                {builderMode==="edit"&&(
+                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading…</div>}>
+                    <ProgramEditPane athlete={athlete} viewer="athlete" onSaveToProgram={applyBuilderText}/>
+                  </Suspense>
+                )}
               </div>
             )}
+            {/* One scroll: unfinished drafts on top, finished phases beneath the
+                rule. Both panes are unchanged, they just share a tab now. */}
             {programTab==="drafts"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
-              </div>
-            )}
-            {programTab==="blocks"&&(
-              <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <div style={{margin:"22px 0 16px",borderTop:`1px solid ${CA.border}`}}/>
                 <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
               </div>
             )}
