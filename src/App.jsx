@@ -38,7 +38,7 @@ import {
   qlLoad, qlSave, qlClear, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
   findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
-  markSupersededPrograms,
+  markSupersededPrograms, parseRequestedDate,
 } from "./quicklog.js";
 // Where the athlete is in their program — week turns Sunday, day advances per logged
 // session, athlete's word wins. Replaces the calendar heuristic that kept drifting.
@@ -5132,6 +5132,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // the exact draft text, same as quickLogPending, so a later message can't inherit
   // someone else's note. Stamped onto the workout row as parsed_data.focus_note.
   const quickLogNote = useRef(null);
+  // The day a Quick Log draft is FOR (T19 #4). Keyed on the exact draft text like
+  // quickLogPending, so a later message can't inherit it. Stamped onto the parse
+  // DIRECTLY rather than hoping the model re-derives the date from the log text:
+  // the athlete already told the sheet which day this was, so re-inferring it is a
+  // chance to get it wrong for no benefit.
+  const quickLogDate = useRef(null);
   // Quick Log warm-up/cool-down booleans, keyed on the draft text exactly like
   // the focus note so they can only ever stamp their own workout row.
   const quickLogPrep = useRef(null); // {text, warmup, cooldown} | null
@@ -6579,6 +6585,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // draft can NEVER be classified as a program and overwrite program_text.
     const fromQuickLog = quickLogPending.current === msg;
     quickLogPending.current = null;
+    const quickLogFor = quickLogDate.current && quickLogDate.current.text === msg ? quickLogDate.current.date : null;
+    quickLogDate.current = null;
     track("chat_message_sent","ai");
     // A typed message while a program-replace confirmation is pending = the athlete
     // chose NOT to use the chips. Drop the proposal (never switch without an explicit
@@ -6734,6 +6742,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       }
       setLoading(false);
       const parsed = await parsedP;
+      // The Quick Log sheet already resolved (and SHOWED) the day this session was
+      // trained, and the athlete could edit it. That is a stated fact, so it wins
+      // over whatever the parser re-inferred from the log text — which usually
+      // states no date at all, since the sheet's draft is just exercises and loads.
+      if (quickLogFor) parsed.log_date = quickLogFor;
 
       // Notes that used to be appended to the reply text before showing it now post
       // as their own follow-up bubbles (the reply is already on screen). finalReply
@@ -8090,13 +8103,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           demo={tour?TOUR_QL_FIXTURE:null}
           onClose={()=>setShowQuickLog(false)}
           onAddProgram={()=>{setShowQuickLog(false);setShowProgram(true);}}
-          onSend={tour?tourQuickLogSend:(text,focusNote,qlPrep)=>{
+          onSend={tour?tourQuickLogSend:(text,focusNote,qlPrep,logDate)=>{
             setShowQuickLog(false);
             quickLogPrep.current = qlPrep ? {text, warmup:!!qlPrep.warmup, cooldown:!!qlPrep.cooldown} : null;
             // Mark THIS draft text as a Quick Log log so send() can never route it
             // into a program overwrite (survives the queued path below too). Keyed
             // on the text, so a different message typed later can't inherit it.
             quickLogPending.current = text;
+            quickLogDate.current = logDate ? {text, date:logDate} : null;
             quickLogNote.current = focusNote ? {text, note:focusNote} : null;
             qlMarkUsed(athlete.id); // this is what makes them eligible for tomorrow's pre-build
             // A12: if a send is in flight, QUEUE the draft and auto-fire it the
@@ -8489,7 +8503,7 @@ async function generateFullProgram({athlete, workoutHistory, messages, goals, co
   return t;
 }
 
-async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, contextNotes, onProgress}) {
+async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, contextNotes, onProgress, targetDate}) {
   // program_history.applied_at is the authoritative "this program became active on"
   // — the week number counts Sunday turnovers from it. The athletes column is the
   // fallback for anyone whose history predates that table being written reliably;
@@ -8500,7 +8514,13 @@ async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, 
   ]);
   const programStartedOn = (Array.isArray(histRows)&&histRows[0]?.applied_at) || null;
   const ctx = buildQuickLogContext(athlete, workoutHistory, manualRMs||[], messages, goals, contextNotes, programStartedOn);
-  const user = `Today is ${qlTodayStr()}.\n\n${qlCtxBlock(ctx)}`;
+  // targetDate (T19 #4): the athlete asked to log a PAST day ("log yesterday's
+  // workout"). Draft the session that belongs to THAT day instead of today's, or
+  // the prefill is simply the wrong workout and they retype the whole thing.
+  const dayLine = targetDate
+    ? `Today is ${qlTodayStr()}, but the athlete is logging the session they trained on ${targetDate}. Prefill THAT day's session, not today's. Use their program's schedule and recent history to work out which day of the program ${targetDate} was.`
+    : `Today is ${qlTodayStr()}.`;
+  const user = `${dayLine}\n\n${qlCtxBlock(ctx)}`;
   let text = "";
   try{
     let acc = "";
@@ -8540,6 +8560,10 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   const [showEditHelp,setShowEditHelp] = useState(false);
   const [phase,setPhase] = useState(demo?"ready":(hasProgram?"loading":"noprogram")); // loading|ready|rest|error|noprogram
   const [instruction,setInstruction] = useState("");
+  // The day this log is FOR (T19 #4). null = today. Shown and editable in the
+  // sheet, because a silently-wrong day is exactly how Will ended up retyping a
+  // whole workout by hand.
+  const [logDate,setLogDate] = useState(null);
   const [editBusy,setEditBusy] = useState(false);
   const [editErr,setEditErr] = useState("");
   const [undoStack,setUndoStack] = useState([]);
@@ -8560,7 +8584,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
     setPhase("loading"); setNotes(""); setDraft("");
     try{
       const res = await generateQuickLogDraft({
-        athlete, workoutHistory, messages, goals, contextNotes,
+        athlete, workoutHistory, messages, goals, contextNotes, targetDate: logDate,
         onProgress: ({notes:n, log})=>{
           setPhase("streaming");
           setNotes(n);
@@ -8583,6 +8607,11 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
     booted.current = true;
     const parked = qlLoad(athlete.id, workoutHistory);
     if(parked){
+      // A draft built for a PAST day is not today's log and must never be resumed
+      // as one (nor the reverse). The sheet always opens on today, so anything
+      // carrying a targetDate is for a different day: adopt that day rather than
+      // silently prefilling today with the wrong session.
+      if(parked.targetDate) setLogDate(parked.targetDate);
       setDraft(parked.draft); setNotes(parked.notes); setUndoStack(parked.undoStack);
       if(parked.prep) setPrep(parked.prep);
       // Only the athlete's OWN parked work gets the "picked up where you left off"
@@ -8605,7 +8634,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Never in demo mode: parking the tour's sample would overwrite real parked work.
   useEffect(()=>{
     if(demo||phase!=="ready") return;
-    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
+    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate});
     const t = setTimeout(flush, 400); // debounced: this runs per keystroke in the textarea
     // Backgrounding the PWA (music, camera, screen lock between sets) can kill it outright,
     // and iOS won't run the pending timer first — flush on the way out.
@@ -8617,7 +8646,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Closing is a save point, so flush synchronously — the debounce above may not have
   // fired yet and unmounting kills its timer.
   const closeSheet = () => {
-    if(!demo && phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep});
+    if(!demo && phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate});
     onClose();
   };
 
@@ -8638,6 +8667,17 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         try{ manualRMs = await sbRead("manual_one_rms",`?athlete_id=eq.${athlete.id}`)||[]; }catch(_){}
         ctx = buildQuickLogContext(athlete, workoutHistory, manualRMs, messages, goals, contextNotes);
         ctxRef.current = ctx;
+      }
+      // "actually this was yesterday's" is a DAY change, not a content edit: the
+      // whole prefill is the wrong session, so re-draft for that day rather than
+      // asking the editor to reshape today's into it.
+      const askedFor = parseRequestedDate(ins);
+      if(askedFor && askedFor !== logDate){
+        setLogDate(askedFor);
+        setInstruction("");
+        setEditBusy(false);
+        setTimeout(()=>generate(), 0);
+        return;
       }
       const revised = await askClaude(QL_EDIT_SYS,
         `Today is ${todayStr()}.\n\n${ctxBlock(ctx)}\n\nCURRENT FOCUS NOTE:\n${notes||"(none)"}\n\nCURRENT DRAFT:\n${draft.trim()||"(empty)"}\n\nATHLETE'S INSTRUCTION:\n${ins}`,
@@ -8791,6 +8831,25 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           {/* Warm-up / cool-down: tap-to-log booleans only (Program Builder). Every
               Builder day card is written WITH a prep block — the log just records
               whether it happened, at zero typing cost. */}
+          {/* Which day this log lands on. Always visible so a wrong parse is
+              caught before sending, and editable so it never has to be argued
+              with in words. Blank = today. */}
+          {!demo&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <span style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",flexShrink:0}}>Logging for</span>
+              <input type="date" value={logDate||localISODate()} max={localISODate()}
+                onChange={e=>{
+                  const v = e.target.value;
+                  const next = (!v || v===localISODate()) ? null : v;
+                  if(next!==logDate){ setLogDate(next); setTimeout(()=>generate(), 0); }
+                }}
+                style={{flex:1,background:CA.navy3,border:`1px solid ${logDate?CA.accent:CA.border}`,color:logDate?CA.accent:CA.muted2,borderRadius:9,padding:"7px 10px",fontSize:12,outline:"none",colorScheme:"dark",fontFamily:"'DM Sans'"}}/>
+              {logDate&&(
+                <button onClick={()=>{setLogDate(null); setTimeout(()=>generate(), 0);}}
+                  style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,fontFamily:"'DM Sans'",flexShrink:0}}>Today</button>
+              )}
+            </div>
+          )}
           <div style={{display:"flex",gap:8}}>
             {[["warmup","🔥 Warmed up"],["cooldown","🧊 Cooled down"]].map(([k,label])=>(
               <button key={k} onClick={()=>setPrep(p=>({...p,[k]:!p[k]}))}
@@ -8801,7 +8860,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           </div>
           {/* The focus note goes WITH the log — it's the record of why this session
               mattered, and it's already paid for. See parsed_data.focus_note. */}
-          <button data-tour="ql-send" onClick={()=>{if(!demo) qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep);}} disabled={!canSend}
+          <button data-tour="ql-send" onClick={()=>{if(!demo) qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep, logDate);}} disabled={!canSend}
             style={{background:canSend?CA.accent:CA.navy3,color:canSend?"#000":CA.muted,border:`1px solid ${canSend?CA.accent:CA.border}`,borderRadius:12,padding:"14px",fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2,fontSize:16,cursor:canSend?"pointer":"not-allowed"}}>
             SEND TO CHAT →
           </button>

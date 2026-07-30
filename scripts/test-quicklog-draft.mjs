@@ -17,7 +17,8 @@ globalThis.localStorage = {
 
 const { qlKey, qlStamp, qlLoad, qlSave, qlClear, QL_RESUME_MS, openerLoad, openerSave,
         looksLikeProgramText, findChatProgram, programSaveOfferAllowed, markProgramSaveOffered,
-        QL_PROGRAM_OFFER_MAX, markSupersededPrograms, QL_SUPERSEDED } = await import("../src/quicklog.js");
+        QL_PROGRAM_OFFER_MAX, markSupersededPrograms, QL_SUPERSEDED,
+        parseRequestedDate, QL_MAX_BACKDATE_DAYS } = await import("../src/quicklog.js");
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { if(cond){ pass++; } else { fail++; console.log(`  ✗ ${name}`); } };
@@ -284,6 +285,48 @@ markProgramSaveOffered(ATH, D3);
 check(`spent after ${QL_PROGRAM_OFFER_MAX} lifetime offers`, !programSaveOfferAllowed(ATH, D4));
 check("offers are scoped per athlete", programSaveOfferAllowed("ath-other", D4));
 check("missing athlete id is never offered", !programSaveOfferAllowed("", D1));
+
+// ─── REQUESTED DAY (T19 #4) ──────────────────────────────────────────────────
+// Quick Log drafted TODAY no matter what the athlete said, so "log yesterday's
+// workout" prefilled the wrong session and the whole feature got typed by hand.
+// NOW is a Thursday (2026-07-30) so weekday math has a fixed reference.
+{
+  const NOW = new Date(2026, 6, 30, 9, 0, 0);   // Thu Jul 30 2026, local
+  const p = (t) => parseRequestedDate(t, NOW);
+
+  // No date stated = today = no backdating (null, so the caller keeps today's path)
+  check("plain log has no requested date", p("bench 3x5 at 225") === null);
+  check("empty text has no requested date", p("") === null);
+  check("'today' is explicitly not a backdate", p("log today's workout") === null);
+  check("'just finished' is not a backdate", p("just finished squats") === null);
+
+  // Relative
+  check("yesterday resolves", p("log yesterday's workout") === "2026-07-29");
+  check("last night resolves to yesterday", p("logging last night's lift") === "2026-07-29");
+  check("2 days ago resolves", p("did this 2 days ago") === "2026-07-28");
+  check("day before yesterday resolves", p("day before yesterday I squatted") === "2026-07-28");
+  check("14 days ago is the edge and allowed", p("14 days ago") === "2026-07-16");
+  check("15 days ago is out of range", p("15 days ago") === null);
+
+  // Weekday names — most recent ALREADY-PASSED occurrence
+  check("Tuesday resolves back", p("log Tuesday's session") === "2026-07-28");
+  check("Monday resolves back", p("Monday's workout") === "2026-07-27");
+  check("'last Friday' resolves back", p("last Friday I benched") === "2026-07-24");
+  check("same weekday as today means LAST week", p("log Thursday's workout") === "2026-07-23");
+
+  // Explicit dates
+  check("ISO date resolves", p("logging 2026-07-24") === "2026-07-24");
+  check("M/D resolves", p("did this 7/24") === "2026-07-24");
+  check("'on the 24th' resolves", p("on the 24th I squatted") === "2026-07-24");
+  check("a FUTURE iso date is refused", p("2026-08-05") === null);
+  check("a FUTURE m/d is refused", p("8/5") === null);
+  check("an impossible date is refused", p("2/30") === null);
+
+  // A backdated draft must never be confused with today's
+  check("yesterday and today differ", p("yesterday") !== null && p("today") === null);
+  check("backdate window constant is exported", QL_MAX_BACKDATE_DAYS === 14);
+}
+
 
 console.log(`\n${fail===0?"✓":"✗"} quick log draft: ${pass} passed, ${fail} failed`);
 process.exit(fail===0?0:1);
