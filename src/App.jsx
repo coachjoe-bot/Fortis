@@ -23,6 +23,15 @@ import { ConsentFlow, TERMS_VERSION, PRIVACY_VERSION } from "./legal.jsx";
 // used below to gate the native OTA bootstrap and Face ID unlock — same
 // platform.js helper, shared by both the payments and App Store shell work.
 import { isNativeIOS } from "./platform.js";
+// Background art imported THROUGH the bundler rather than referenced as
+// "/login-bg.jpg" out of public/. Absolute public paths are origin-dependent,
+// and the native OTA channel swaps the WKWebView's server base path to a
+// snapshot directory that contains only index.html, so every absolute asset URL
+// 404s there and the art silently renders black. Importing lets the OTA build
+// inline these as data URIs (assetsInlineLimit in vite.config.ota.mjs) and the
+// web build emit content-hashed files, so neither depends on an origin.
+import LOGIN_BG from "./assets/login-bg.jpg";
+import CHAT_BG from "./assets/chat-bg.jpg";
 // Quick Log draft persistence — the rules that let an athlete close the sheet mid-workout
 // and pick it back up (expiry window, staleness check, clear-on-send).
 import {
@@ -3283,7 +3292,7 @@ function WilcoRoot() {
   return (
     <div style={{minHeight:"100vh",position:"relative",background:PW.navy,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:coachEntry?"center":"flex-end",paddingTop:"calc(24px + env(safe-area-inset-top, 0px))",paddingBottom:40,paddingLeft:24,paddingRight:24}}>
       <style>{GS}{GSA}</style>
-      {!coachEntry && <div aria-hidden style={{position:"absolute",inset:0,zIndex:0,backgroundImage:"linear-gradient(180deg, rgba(4,7,15,0.42) 0%, rgba(4,7,15,0.28) 38%, rgba(4,7,15,0.86) 78%, rgba(4,7,15,0.96) 100%), url(/login-bg.jpg)",backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat"}}/>}
+      {!coachEntry && <div aria-hidden style={{position:"absolute",inset:0,zIndex:0,backgroundImage:`linear-gradient(180deg, rgba(4,7,15,0.42) 0%, rgba(4,7,15,0.28) 38%, rgba(4,7,15,0.86) 78%, rgba(4,7,15,0.96) 100%), url(${LOGIN_BG})`,backgroundSize:"cover",backgroundPosition:"center",backgroundRepeat:"no-repeat"}}/>}
       <div style={{width:"100%",maxWidth:420,position:"relative",zIndex:1}}>
         <div style={{textAlign:"center",marginBottom:coachEntry?40:22}}>
           {/* Athlete entry: the storefront's own neon WILCO is the masthead, so skip the
@@ -7342,7 +7351,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
   const quick = ["What's my programmed workout for today?","Review my program and tell me what you think.","No squat rack today","My knee is sore","I'm at the hotel gym","I can't do pull-ups","Bench alternative?"];
 
   return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,backgroundImage:"linear-gradient(rgba(4,7,15,0.60), rgba(4,7,15,0.72)), url(/chat-bg.jpg)",backgroundSize:"cover",backgroundPosition:"center",maxWidth:600,margin:"0 auto"}}>
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,backgroundImage:`linear-gradient(rgba(4,7,15,0.60), rgba(4,7,15,0.72)), url(${CHAT_BG})`,backgroundSize:"cover",backgroundPosition:"center",maxWidth:600,margin:"0 auto"}}>
       <style>{GS}{GSA}</style>
       {/* PR "NEW MAX" stamp — pressed straight on (cyan) when a logged lift beats the old best */}
       {prStamp&&(
