@@ -5492,7 +5492,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       await sbUpdate("athletes",athlete.id,{program_text:null});
       setAthlete(prev=>({...prev,program_text:null}));
       setAthleteProgramText("");
-      setProgramTab("drafts");   // retired phases now live under DRAFTS, not their own tab
+      setProgramTab("phases");   // retired phases live in the PHASES tab, under the in-progress ones
     } catch(e){ setAthleteProgramMsg("Couldn't retire that, try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
     setRetiring(false);
   };
@@ -7595,7 +7595,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </div>
           ):blockPrompt.kind==="scheduled"?(
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+              <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("phases");}}
                 style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap it in</button>
               <button onClick={()=>setBlockPrompt(null)} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Later</button>
             </div>
@@ -7611,7 +7611,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           ):(
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {blockPrompt.draft&&(
-                <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+                <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("phases");}}
                   style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap in the one I drafted</button>
               )}
               <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
@@ -7851,7 +7851,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               {/* PHASES folded into DRAFTS (Will, 07-30): four subtabs made this
                   section heavy, and past phases are read-only history that belongs
                   under the drafts they came from, not beside them as a peer. */}
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"]].map(([k,label])=>(
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["phases","PHASES"]].map(([k,label])=>(
                 <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
@@ -7884,7 +7884,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                       workoutHistory={workoutHistory}
                       initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
                       rebuildFrom={builderDraft?.__rebuildFrom||null}
-                      onParked={()=>setProgramTab("drafts")}
+                      onParked={()=>setProgramTab("phases")}
                       onSaveToProgram={applyBuilderText}/>
                   </Suspense>
                 </div>
@@ -7895,15 +7895,19 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 )}
               </div>
             )}
-            {/* One scroll: unfinished drafts on top, finished phases beneath the
-                rule. Both panes are unchanged, they just share a tab now. */}
-            {programTab==="drafts"&&(
+            {/* PHASES = one scroll covering a phase's whole life. A draft IS a
+                phase still being built, so it sits under IN PROGRESS on top; the
+                blocks you've already run sit under FINISHED beneath the rule.
+                Both panes are unchanged, they just share a tab and get headers. */}
+            {programTab==="phases"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>In progress</div>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
                 <div style={{margin:"22px 0 16px",borderTop:`1px solid ${CA.border}`}}/>
+                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>Finished</div>
                 <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
               </div>
             )}
