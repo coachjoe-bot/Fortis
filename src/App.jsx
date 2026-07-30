@@ -88,7 +88,7 @@ import {
   resolveLift, displayForLift, bwLoadLabel, BW_LOADED_IDS,
   TIER_NAMES, TIER_COLORS, TIER_POINTS, TIER_DESC,
   BENCH_THRESHOLDS, tierForRatio, bwTierFactor, ageTierFactor, scaledThresholds, getBenchKey,
-  sessionTonnage, sessionTopSet,
+  sessionTonnage, sessionTopSet, goalTargets,
 } from "./grit.js";
 export {
   epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
@@ -412,24 +412,47 @@ export const crewApi = async (action, params = {}, { demo = false } = {}) => {
   return d;
 };
 
-// One AI call per goal text, on insert/edit only — never on render (Crew build
-// spec, "Goal parsing"). Haiku, mechanical extraction only: the AI NEVER computes
-// progress, only structure. Returns {lift,target_lbs,target_date} or {lift:null}
-// when the goal isn't numeric ("make varsity" etc.). Best-effort: a parse failure
-// leaves the goal as plain text (still shown, just without a progress bar) —
-// never blocks the goal from saving.
+// One AI call per goal text, on insert/edit only, never on render (Crew spec).
+// Haiku, mechanical extraction only: the AI NEVER computes progress, only
+// structure. Progress is deterministic math off e1RM history.
+//
+// A real goal is rarely one number. Will's own names three lifts inside a
+// paragraph, and prod goals run from "bench 325 raw in 8 weeks" to somebody
+// pasting their whole training program into the box. So this pulls out EVERY
+// measurable lift target it can find, and for anything with no number in it
+// returns a summary of five words or less. When the text is not a goal at all it
+// returns nothing, and the crew row shows nothing rather than five words of
+// someone's warm-up.
+//
+// Best-effort throughout: a parse failure leaves the goal as plain text and
+// never blocks it from saving. max_tokens is set generously because this schema
+// is verbose and three separate data-loss bugs in this codebase came from a
+// structured-extraction call truncating mid-object.
 export const parseAthleteGoal = async (goalText) => {
   try {
     const raw = await askClaude(
-      `Extract structure from an athlete's stated training goal. Return ONLY JSON, no markdown: {"lift":string|null,"target_lbs":number|null,"target_date":string|null}. "lift" is the plain lift name ("bench press", "back squat", "deadlift") ONLY if the goal names a specific numeric lift target — else null. "target_lbs" is the numeric weight goal in POUNDS (convert kg to lbs: 1kg=2.205lbs) — else null. "target_date" is an ISO date (YYYY-MM-DD) ONLY if a date/timeframe is explicitly stated — else null. A non-numeric goal ("make varsity", "get stronger") returns lift:null and both other fields null.`,
-      `Goal: "${goalText}"`, 300, [], "claude-haiku-4-5", "goal_parse"
+      `Pull the measurable parts out of an athlete's stated training goal. Return ONLY JSON, no markdown:
+{"targets":[{"lift":string,"target_lbs":number,"target_date":string|null}],"summary":string|null}
+
+"targets": one entry for EVERY specific barbell/dumbbell lift the athlete names a target WEIGHT for. Use plain lift names ("bench press", "back squat", "deadlift", "front squat", "overhead press", "clean", "snatch"). Convert kg to lbs (1kg = 2.205lbs) and round to the nearest 5. "target_date" is an ISO date (YYYY-MM-DD) only when a date or timeframe is actually stated, else null. Empty array when the goal names no lift-and-weight target.
+"summary": at most FIVE WORDS describing what they are working toward, for goals with nothing measurable in them ("Leaner with a stronger core", "Make varsity"). Null when the targets array already covers the whole goal. Null when the text is not a goal at all (someone pasted a workout log or a training program).
+
+Never invent a number the athlete did not state. Bodyweight targets ("get to 245lbs") are NOT lift targets: leave them out of targets and reflect them in summary.`,
+      `Goal: "${goalText}"`, 700, [], "claude-haiku-4-5", "goal_parse"
     );
     const parsed = JSON.parse(String(raw).replace(/```json|```/g, "").trim());
-    return {
-      lift: parsed.lift ? String(parsed.lift).slice(0, 60) : null,
-      target_lbs: Number.isFinite(+parsed.target_lbs) && +parsed.target_lbs > 0 ? +parsed.target_lbs : null,
-      target_date: typeof parsed.target_date === "string" && !Number.isNaN(Date.parse(parsed.target_date)) ? parsed.target_date : null,
-    };
+    const targets = (Array.isArray(parsed.targets) ? parsed.targets : [])
+      .map((t) => ({
+        lift: t && t.lift ? String(t.lift).slice(0, 60) : null,
+        target_lbs: Number.isFinite(+(t && t.target_lbs)) && +t.target_lbs > 0 ? +t.target_lbs : null,
+        target_date: typeof (t && t.target_date) === "string" && !Number.isNaN(Date.parse(t.target_date)) ? t.target_date : null,
+      }))
+      .filter((t) => t.lift && t.target_lbs)
+      .slice(0, 8); // a goal naming more than eight lifts is a program, not a goal
+    const summary = typeof parsed.summary === "string" && parsed.summary.trim()
+      ? parsed.summary.trim().split(/\s+/).slice(0, 5).join(" ").slice(0, 60)
+      : null;
+    return { targets, summary };
   } catch (_) {
     return null; // parse unavailable (e.g. ANTHROPIC_KEY missing on preview) — goal still saves as plain text
   }
@@ -437,12 +460,21 @@ export const parseAthleteGoal = async (goalText) => {
 // Parse a just-inserted athlete_goals row fire-and-forget and patch the parsed
 // fields on — called right after every athlete_goals insert (flush rule: every
 // sibling call site gets this, not just one). Never awaited on the save path.
+// parsed_lift/target_lbs keep mirroring the FIRST target so the existing
+// goal-hit moment detection keeps working untouched.
 export const parseAndStampGoal = (row) => {
   if (!row || !row.id || !row.goal_text) return;
   parseAthleteGoal(row.goal_text).then((p) => {
     if (!p) return;
-    const patch = { parsed_lift: p.lift, target_lbs: p.target_lbs, parsed_at: new Date().toISOString() };
-    if (p.target_date) patch.target_date = p.target_date;
+    const first = p.targets[0] || null;
+    const patch = {
+      parsed_targets: p.targets,
+      short_label: p.summary,
+      parsed_lift: first ? first.lift : null,
+      target_lbs: first ? first.target_lbs : null,
+      parsed_at: new Date().toISOString(),
+    };
+    if (first && first.target_date) patch.target_date = first.target_date;
     sbUpdate("athlete_goals", row.id, patch).catch(() => {});
   }).catch(() => {});
 };
@@ -6209,16 +6241,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // math (bestE1RMForExercise) — the AI only ever parsed the goal, it never
         // computes progress (build spec, "Goal parsing").
         try {
-          const numericGoals = (athleteGoals||[]).filter(g=>g.parsed_lift && g.target_lbs>0);
-          for(const g of numericGoals){
-            const matchEx = (parsed.exercises||[]).find(ex=>ex.name && resolveLift(ex.name).id===g.parsed_lift);
+          // EVERY target in every goal, not just the first: a goal naming three
+          // lifts has to be able to fire on the one that actually got hit. The
+          // legacy parsed_lift/target_lbs pair is still mirrored from target one,
+          // so goals parsed before this still resolve through goalTargets.
+          const firedLifts = new Set();
+          const allTargets = (athleteGoals||[]).flatMap(g=>goalTargets(g).map(t=>({...t, goal_text:g.goal_text})));
+          for(const g of allTargets){
+            if(firedLifts.has(g.lift)) continue; // one moment per lift per log, not one per goal naming it
+            const matchEx = (parsed.exercises||[]).find(ex=>ex.name && resolveLift(ex.name).id===resolveLift(g.lift).id);
             if(!matchEx) continue;
             const newE1 = bestE1RMForExercise(matchEx);
-            if(!newE1 || newE1 < g.target_lbs) continue;
-            const priorBestRow = prMap[g.parsed_lift];
+            if(!newE1 || newE1 < g.targetLbs) continue;
+            const priorBestRow = prMap[resolveLift(g.lift).id];
             const priorBest = priorBestRow ? epley1RM(toLbs(priorBestRow.weight,priorBestRow.unit), priorBestRow.reps||1) : 0;
-            if(priorBest >= g.target_lbs) continue; // already hit before this log — don't re-fire
-            crewMoments.push({type:"goal", payload:{goalText:g.goal_text, lift:g.parsed_lift, target:g.target_lbs}});
+            if(priorBest >= g.targetLbs) continue; // already hit before this log — don't re-fire
+            firedLifts.add(g.lift);
+            crewMoments.push({type:"goal", payload:{goalText:g.goal_text, lift:g.lift, target:g.targetLbs}});
           }
         } catch(_){}
 
@@ -10738,24 +10777,40 @@ function momentBody(m){
 
 const initialsOf = (name)=>String(name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase()||"?";
 
-// Goal-at-a-glance. The server already decided WHICH of the four states this is
-// (see goalDisplayState in api/_crew.js); this only draws it. The `quiet` state
-// is a dated goal whose date passed without being hit: it shows the number they
-// reached and nothing else, never a miss, never a red bar.
-function GoalGlance({goal}){
+// Goal-at-a-glance. The server already decided what each target's state is (see
+// goalTargetState / composeGoalGlance in api/_crew.js); this only draws it.
+// A long goal shows up here as the measurable parts, short: "315 BENCH · at 298".
+// The `quiet` state is a dated target whose date passed without being hit, and it
+// shows only the number they reached. Never a miss, never a red bar.
+const prettyLift = (l)=>String(l||"").replace(/\b\w/g,c=>c.toUpperCase());
+function GoalGlance({goal, compact=false}){
   if(!goal) return null;
-  const lift = goal.lift ? goal.lift.replace(/\b\w/g,c=>c.toUpperCase()) : "";
-  if(goal.state==="aspiration") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>Working toward · {goal.text}</div>;
-  if(goal.state==="quiet") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>{lift} at {Math.round(goal.currentLbs)}lbs</div>;
-  if(goal.state==="hit") return <div style={{marginTop:9,color:CA.cyan,fontSize:11,lineHeight:1.5,fontWeight:600}}>Hit it · {Math.round(goal.targetLbs)}lbs on {lift}</div>;
+  const {targets=[], labels=[], more=0} = goal;
+  if(!targets.length&&!labels.length) return null;
   return (
-    <div style={{marginTop:9,color:CA.muted2,fontSize:11,lineHeight:1.5}}>
-      Chasing {Math.round(goal.targetLbs)}lbs on {lift}{goal.currentLbs!=null?` · at ${Math.round(goal.currentLbs)}lbs`:""}
-      {goal.pct!=null&&(
-        <div style={{marginTop:6,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
-          <div style={{height:"100%",borderRadius:3,width:`${Math.max(3,Math.min(100,goal.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+    <div style={{marginTop:compact?8:9}}>
+      {targets.map((t,i)=>(
+        <div key={`${t.lift}-${i}`} style={{marginTop:i?7:0}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:6,fontSize:11,lineHeight:1.4,
+            color:t.state==="hit"?CA.cyan:t.state==="quiet"?CA.muted:CA.muted2}}>
+            <span style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:0.6,color:t.state==="hit"?CA.cyan:CA.text}}>
+              {t.state==="quiet"?`${Math.round(t.currentLbs)} ${prettyLift(t.lift).toUpperCase()}`:`${Math.round(t.targetLbs)} ${prettyLift(t.lift).toUpperCase()}`}
+            </span>
+            <span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.3}}>
+              {t.state==="hit"?"HIT IT":t.state==="quiet"?"":t.currentLbs!=null?`AT ${Math.round(t.currentLbs)}`:""}
+            </span>
+          </div>
+          {t.state==="chasing"&&t.pct!=null&&(
+            <div style={{marginTop:4,height:4,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
+              <div style={{height:"100%",borderRadius:3,width:`${Math.max(3,Math.min(100,t.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+            </div>
+          )}
         </div>
-      )}
+      ))}
+      {labels.map(l=>(
+        <div key={l} style={{marginTop:targets.length?7:0,color:CA.muted,fontSize:11,lineHeight:1.4}}>{l}</div>
+      ))}
+      {more>0&&<div style={{marginTop:6,color:CA.faint,fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,letterSpacing:0.6}}>+{more} MORE</div>}
     </div>
   );
 }
@@ -10764,7 +10819,7 @@ function CrewTab({athlete, demo=false}){
   const [sub,setSub] = useState("crew");
   const [loading,setLoading] = useState(true);
   const [err,setErr] = useState("");
-  const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoal}
+  const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoals, myWeek}
   const [query,setQuery] = useState("");
   const [codeInput,setCodeInput] = useState("");
   const [requesting,setRequesting] = useState(false);
@@ -10774,7 +10829,7 @@ function CrewTab({athlete, demo=false}){
   const [feedLoading,setFeedLoading] = useState(false);
   const [busyId,setBusyId] = useState(null);
   const [copied,setCopied] = useState(false);
-  const [goalBusy,setGoalBusy] = useState(false);
+  const [goalBusy,setGoalBusy] = useState(null);
   // V2 comparison. Mutual opt-in, individual crews only. Loaded lazily with the
   // roster; an org athlete never has an edge to opt in on, which IS the ban.
   const [compare,setCompare] = useState({me:null,peers:[]});
@@ -10789,6 +10844,21 @@ function CrewTab({athlete, demo=false}){
       // it's simply THERE instead of behind a button (Will's review, finding #1:
       // he could not find anywhere to see his code or add someone). Org athletes
       // never get one and the server rejects the call for them, so don't make it.
+      // Goals written before multi-target parsing existed have no parsed_at, so
+      // nothing would ever pull the numbers out of them. Re-parse YOUR OWN, once,
+      // on open, then persist. Never on render of anyone else's row and never
+      // twice for the same goal, so the AI cost stays bounded and nobody's goal
+      // is parsed by a stranger's device. Silent if it fails: the goal still
+      // shows as its own text.
+      const stale = (d?.myGoals||[]).filter(g=>g.needsParse);
+      if(stale.length&&!demo){
+        Promise.all(stale.slice(0,5).map(g=>{
+          parseAndStampGoal({id:g.id, goal_text:g.text});
+          return null;
+        }));
+        // Give the fire-and-forget writes a moment, then pick up the parsed rows.
+        setTimeout(()=>{ crewApi("crew-list",{},{demo}).then(fresh=>{ if(fresh) setData(fresh); }).catch(()=>{}); }, 4000);
+      }
       if(d&&!d.isOrg&&!d.code){
         crewApi("crew-code-ensure",{},{demo})
           .then(r=>{ if(r&&r.code) setData(prev=>({...(prev||{}),code:r.code})); })
@@ -10826,14 +10896,13 @@ function CrewTab({athlete, demo=false}){
     try{ await navigator.clipboard.writeText(code); setCopied(true); haptic(15); setTimeout(()=>setCopied(false),1600); }catch(_){ }
   };
 
-  const toggleGoalShare = async ()=>{
-    if(!data?.myGoal||goalBusy) return;
-    setGoalBusy(true);
-    const next = !data.myGoal.shared;
-    setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:next}})); // optimistic
-    try{ const r = await crewApi("crew-goal-share",{share:next},{demo}); if(r&&r.myGoal) setData(prev=>({...prev,myGoal:r.myGoal})); }
-    catch(_){ setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:!next}})); }
-    finally{ setGoalBusy(false); }
+  const toggleGoalShare = async (goalId, next)=>{
+    if(goalBusy) return;
+    setGoalBusy(goalId);
+    setData(prev=>({...prev,myGoals:(prev?.myGoals||[]).map(g=>g.id===goalId?{...g,shared:next}:g)})); // optimistic
+    try{ const r = await crewApi("crew-goal-share",{goalId,share:next},{demo}); if(r&&Array.isArray(r.myGoals)) setData(prev=>({...prev,myGoals:r.myGoals})); }
+    catch(_){ setData(prev=>({...prev,myGoals:(prev?.myGoals||[]).map(g=>g.id===goalId?{...g,shared:!next}:g)})); }
+    finally{ setGoalBusy(null); }
   };
 
   const loadCompare = ()=>{ crewApi("crew-compare",{},{demo}).then(r=>setCompare(r&&Array.isArray(r.peers)?r:{me:null,peers:[]})).catch(()=>setCompare({me:null,peers:[]})); };
@@ -10920,20 +10989,26 @@ function CrewTab({athlete, demo=false}){
             {isOrg&&data?.team ? data.team : "Your crew"}{roster.length>0&&weekTarget>0?` · ${weekDone} of ${weekTarget} sessions logged`:""}
           </div>
 
-          {/* Your own goal + the share opt-in. Off by default; this is the only
-              place it can be turned on, and it's why goals were missing from
-              every crew row before (nothing could ever set the flag). */}
-          {data?.myGoal&&(
-            <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
-              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:2}}>YOUR GOAL</div>
-              <GoalGlance goal={data.myGoal}/>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
-                <span style={{color:CA.muted,fontSize:11}}>{data.myGoal.shared?"Your crew can see this":"Only you can see this"}</span>
-                <button onClick={toggleGoalShare} disabled={goalBusy}
-                  style={{background:data.myGoal.shared?`${CA.accent}18`:"none",border:`1px solid ${data.myGoal.shared?CA.accent:CA.border}`,color:data.myGoal.shared?CA.accent:CA.muted,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>
-                  {data.myGoal.shared?"Shared":"Share it"}
-                </button>
-              </div>
+          {/* Your goals. Several, each holding several targets, each shared or
+              not on its own. Sharing is off by default and this is the only place
+              it can be turned on. */}
+          {(data?.myGoals||[]).length>0&&(
+            <div style={{marginBottom:14}}>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>YOUR GOALS</div>
+              {(data.myGoals||[]).map(g=>(
+                <div key={g.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:9}}>
+                  {g.glance
+                    ? <GoalGlance goal={g.glance} compact/>
+                    : <div style={{color:CA.muted,fontSize:11,lineHeight:1.5}}>{String(g.text||"").slice(0,90)}{String(g.text||"").length>90?"…":""}</div>}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
+                    <span style={{color:CA.muted,fontSize:11}}>{g.shared?"Your crew can see this":"Only you can see this"}</span>
+                    <button onClick={()=>toggleGoalShare(g.id,!g.shared)} disabled={goalBusy===g.id}
+                      style={{background:g.shared?`${CA.accent}18`:"none",border:`1px solid ${g.shared?CA.accent:CA.border}`,color:g.shared?CA.accent:CA.muted,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                      {g.shared?"Shared":"Share it"}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

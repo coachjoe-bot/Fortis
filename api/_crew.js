@@ -39,6 +39,11 @@
 // athlete on the individual flow still can never enable V2 comparison.
 
 import { sbSelect as realSbSelect } from "./_supa.js";
+// goalTargets lives in src/grit.js because the CLIENT needs it too (the goal-hit
+// moment fires off it), and that module is the established client/server single
+// source rather than a hand-copy that can drift.
+import { goalTargets } from "./_grit.js";
+export { goalTargets };
 
 const enc = encodeURIComponent;
 
@@ -210,52 +215,83 @@ export function compareStateFor(edge, myId) {
   return { mine, theirs, mutual: mine && theirs };
 }
 
-// ─── GOAL-AT-A-GLANCE (finding #4) ───────────────────────────────────────────
-// Turn a raw athlete_goals row plus the athlete's current e1RM into the display
-// state a crew row renders. Computed here, server-side, so the client renders
-// one already-decided shape and the demo has exactly one rule to mirror.
+// ─── GOAL-AT-A-GLANCE ────────────────────────────────────────────────────────
+// A real goal is rarely one number. Will's own reads like a paragraph and holds
+// three separate lifts, and prod goals range from "I want to bench 325 raw in 8
+// weeks" to a pasted training program someone dropped in the box. The crew row
+// shows the measurable parts, short, and nothing else.
 //
-// The load-bearing case is `quiet`. A dated goal whose date has passed without
-// being hit must NEVER surface as a miss (spec hard rule 5 — these are minors
-// and the whole feature exists to protect the kid at the bottom). It quietly
-// drops the target and the date and states only the progress that was actually
-// made, which is true and is never a failure.
+// Every measurable target found in one goal_text lives in parsed_targets. The
+// legacy parsed_lift/target_lbs columns still mirror the FIRST target so the
+// goal-hit moment detection keeps working unchanged.
+
+// The short human line for a goal with nothing measurable in it. Null when the
+// text is not a goal at all (the pasted-program case), so the row shows nothing
+// rather than five words of somebody's warm-up.
+export function goalShortLabel(goal) {
+  if (!goal) return null;
+  const label = String(goal.short_label ?? "").trim();
+  return label ? label : null;
+}
+
+// State of ONE target against the athlete's current e1RM for that lift.
 //
-// `now` is injectable so the boundary cases are testable without clock tricks.
-export function goalDisplayState(goal, currentLbs = null, now = Date.now()) {
-  if (!goal || !goal.goal_text) return null;
-  const text = String(goal.goal_text).trim();
-  if (!text) return null;
-  const target = Number(goal.target_lbs);
-  const lift = goal.parsed_lift ? String(goal.parsed_lift) : null;
-
-  // Not a numeric lift target ("make varsity"). Stated aspiration, no bar ever —
-  // a fake progress bar on an unmeasurable goal is worse than no bar.
-  if (!lift || !Number.isFinite(target) || target <= 0) return { state: "aspiration", text, lift: null };
-
+// `quiet` is the load-bearing case and the reason this function exists: a dated
+// target whose date passed without being hit must NEVER surface as a miss (spec
+// hard rule 5 — these are minors, and the kid who falls short is exactly who the
+// whole feature was shaped to protect). It drops the target and the date and
+// keeps only the number they actually reached, which is true and is never a
+// failure. `now` is injectable so the boundary is testable without clock tricks.
+export function goalTargetState(target, currentLbs = null, now = Date.now()) {
+  if (!target || !target.lift || !Number.isFinite(target.targetLbs) || target.targetLbs <= 0) return null;
   // Deliberately not Number(currentLbs): Number(null) and Number("") are both 0,
-  // which would turn "we don't know this peer's e1RM yet" into a real 0lbs and
-  // draw an empty bar as if they had made no progress.
+  // which would turn "we don't know this yet" into a real 0lbs and draw an empty
+  // bar as if no progress had been made.
   const cur = (currentLbs === null || currentLbs === undefined || currentLbs === "" || !Number.isFinite(Number(currentLbs)))
     ? null : Number(currentLbs);
-  if (cur != null && cur >= target) return { state: "hit", text, lift, targetLbs: target, currentLbs: cur, pct: 1 };
-
-  // Dated goal, date gone by, not hit. Retire the target and the date; keep the
-  // number they reached.
-  if (goal.target_date) {
-    const due = Date.parse(`${goal.target_date}T23:59:59Z`);
+  const base = { lift: target.lift, targetLbs: target.targetLbs, currentLbs: cur };
+  if (cur != null && cur >= target.targetLbs) return { ...base, state: "hit", pct: 1 };
+  if (target.targetDate) {
+    const due = Date.parse(`${target.targetDate}T23:59:59Z`);
     if (Number.isFinite(due) && due < now) {
-      return cur != null && cur > 0
-        ? { state: "quiet", text, lift, currentLbs: cur }
-        : null; // nothing true left to say, so say nothing
+      return cur != null && cur > 0 ? { lift: target.lift, currentLbs: cur, state: "quiet" } : null;
     }
   }
-
   return {
-    state: "chasing", text, lift, targetLbs: target, currentLbs: cur,
-    targetDate: goal.target_date || null,
-    pct: cur != null ? Math.max(0, Math.min(1, cur / target)) : null,
+    ...base, state: "chasing", targetDate: target.targetDate || null,
+    pct: cur != null ? Math.max(0, Math.min(1, cur / target.targetLbs)) : null,
   };
+}
+
+// How many measurable targets a crew ROW shows before it stops. A roster has to
+// stay scannable; someone tracking eight lifts should not push their crewmates
+// off the screen. Your own goals are never capped.
+export const CREW_ROW_TARGET_CAP = 3;
+
+// Compose what one athlete's crew row shows, across ALL of the goals they chose
+// to share. Targets first (they carry a number), then short labels for the goals
+// that had nothing measurable in them. Returns null when there is nothing true
+// to say, so the row simply has no goal line.
+export function composeGoalGlance(goalRows, currentByLift = {}, now = Date.now(), cap = CREW_ROW_TARGET_CAP) {
+  const rows = Array.isArray(goalRows) ? goalRows : [];
+  const targets = [];
+  const seen = new Set();
+  const labels = [];
+  for (const g of rows) {
+    for (const t of goalTargets(g)) {
+      const key = t.lift.toLowerCase();
+      if (seen.has(key)) continue; // the same lift named in two goals is one target
+      const st = goalTargetState(t, currentByLift[key], now);
+      if (!st) continue;
+      seen.add(key);
+      targets.push(st);
+    }
+    const label = goalShortLabel(g);
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  if (!targets.length && !labels.length) return null;
+  const shown = cap > 0 ? targets.slice(0, cap) : targets;
+  return { targets: shown, more: Math.max(0, targets.length - shown.length), labels: labels.slice(0, 2) };
 }
 
 // One deterministic, no-AI line per moment for the Proof digest blip. Highlights

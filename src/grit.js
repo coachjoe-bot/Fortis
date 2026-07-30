@@ -515,6 +515,33 @@ export const bwLoadLabel = (e1rm, bodyweightLbs) => {
 // `workouts` — array of { created_at, parsed_data: {exercises:[...]} | JSON string }
 // `manualRMs` — array of { normalized_exercise|exercise, weight, unit }
 // `opts` — { bodyweightLbs, gender: "Female"|other, age }
+// ─── GOAL TARGETS ────────────────────────────────────────────────────────────
+// Normalize one athlete_goals row into its measurable targets. Lives here rather
+// than in api/_crew.js because BOTH sides need it: the server composes crew rows
+// from it, and the client fires a goal-hit moment off it. This module is the
+// established client/server single source (api/_grit.js re-exports it), so there
+// is no hand-copy to drift.
+//
+// parsed_targets holds every lift-and-weight target found in one goal_text. The
+// legacy parsed_lift/target_lbs pair is the fallback for goals parsed before
+// multi-target parsing existed.
+export function goalTargets(goal) {
+  if (!goal) return [];
+  const raw = Array.isArray(goal.parsed_targets) ? goal.parsed_targets : null;
+  const list = raw && raw.length
+    ? raw
+    : (goal.parsed_lift && goal.target_lbs
+        ? [{ lift: goal.parsed_lift, target_lbs: goal.target_lbs, target_date: goal.target_date }]
+        : []);
+  return list
+    .map((t) => ({
+      lift: t && t.lift ? String(t.lift).trim() : null,
+      targetLbs: Number(t && t.target_lbs),
+      targetDate: t && t.target_date ? String(t.target_date) : null,
+    }))
+    .filter((t) => t.lift && Number.isFinite(t.targetLbs) && t.targetLbs > 0);
+}
+
 export function computeGritSnapshot(workouts, manualRMs, opts = {}) {
   const bodyweight = opts.bodyweightLbs || 0;
   const genderKey = opts.gender === "Female" ? "female" : "male";

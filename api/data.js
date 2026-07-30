@@ -21,7 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
-import { crewPeerIds, resolveCrewOrg, crewAllowedFor, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, withinTierPct, compareStateFor, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
+import { crewPeerIds, resolveCrewOrg, crewAllowedFor, composeGoalGlance, goalTargets, bestE1rmLbsForLift, orderedPair, withinWindow, withinTierPct, compareStateFor, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
 
@@ -785,9 +785,9 @@ async function handleCrew(body, caller, res) {
     // it was false for everyone and no goal ever reached a crew row). Returned
     // whether or not they have peers — an athlete with an empty crew should
     // still be able to see and set this.
-    const myGoal = await loadOwnGoal(me.id);
+    const myGoals = await loadOwnGoals(me.id);
     if (!peers.length) {
-      return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoal });
+      return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoals });
     }
     const idList = peers.map((id) => `"${id}"`).join(",");
     // The caller's OWN week rides along in the same this-week query, because the
@@ -796,7 +796,9 @@ async function handleCrew(body, caller, res) {
     const weekIdList = [...peers, me.id].map((id) => `"${id}"`).join(",");
     const [athletesRows, goalsRows, workoutRows, recentWorkoutRows] = await Promise.all([
       sbSelect("athletes", `?id=in.(${idList})&select=id,name,training_days_per_week`),
-      // Goal-at-a-glance ONLY for peers who opted in (share_with_crew=true) — default off.
+      // Goal-at-a-glance ONLY for peers who opted in (share_with_crew=true) — default
+      // off. ALL of their shared goals, not just the latest: an athlete can be
+      // chasing three lifts across three separate goals and the row shows them all.
       sbSelect("athlete_goals", `?athlete_id=in.(${idList})&share_with_crew=eq.true&order=created_at.desc&select=*`),
       sbSelect("workouts", `?athlete_id=in.(${weekIdList})&created_at=gte.${enc(mondayIso())}&select=athlete_id,parsed_data,created_at`),
       // Quiet-crewmate nudge (8-day rule): bounded to a generous window so "quiet"
@@ -811,8 +813,8 @@ async function handleCrew(body, caller, res) {
       for (const e of accepted) acceptedEdgeByPeer[String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a] = e;
     }
     const trainedByAthlete = trainedDaysThisWeekByAthlete(workoutRows);
-    const latestGoalByAthlete = {};
-    for (const g of goalsRows) if (!latestGoalByAthlete[g.athlete_id]) latestGoalByAthlete[g.athlete_id] = g;
+    const goalsByAthlete = {};
+    for (const g of goalsRows) (goalsByAthlete[g.athlete_id] = goalsByAthlete[g.athlete_id] || []).push(g);
     const lastWorkoutAt = {};
     for (const w of recentWorkoutRows) if (!lastWorkoutAt[w.athlete_id]) lastWorkoutAt[w.athlete_id] = w.created_at; // query is DESC — first hit per id is the latest
 
@@ -824,17 +826,20 @@ async function handleCrew(body, caller, res) {
     const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
     const roster = [];
     for (const a of athletesRows) {
-      const g = latestGoalByAthlete[a.id] || null;
-      let goal = null;
-      if (g) {
-        const cur = (g.parsed_lift && g.target_lbs)
-          ? await bestE1rmLbsForLift(a.id, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM })
-          : null;
-        // Display state decided server-side (aspiration / chasing / hit / quiet).
-        // `quiet` is the missed-dated-goal case and is deliberately NOT a miss —
-        // see goalDisplayState in api/_crew.js.
-        goal = goalDisplayState(g, cur);
+      // One current-e1RM lookup per DISTINCT lift this athlete is chasing, shared
+      // across however many goals name it, rather than one per goal.
+      const myGoals = goalsByAthlete[a.id] || [];
+      const currentByLift = {};
+      for (const t of myGoals.flatMap(goalTargets)) {
+        const key = t.lift.toLowerCase();
+        if (key in currentByLift) continue;
+        currentByLift[key] = await bestE1rmLbsForLift(a.id, t.lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
       }
+      // Display decided server-side, per target (chasing / hit / quiet), plus the
+      // short labels for goals with nothing measurable in them. `quiet` is the
+      // missed-dated-goal case and is deliberately NOT a miss — see
+      // goalTargetState in api/_crew.js.
+      const goal = composeGoalGlance(myGoals, currentByLift);
       // NOTE: compare_a/compare_b (V2 opt-in) are never selected/returned here at
       // all — there is no comparison surface in V1, org or individual. When V2
       // lands, this is the spot that must keep stripping those fields for org
@@ -861,7 +866,7 @@ async function handleCrew(body, caller, res) {
       trainedThisWeek: (trainedByAthlete[me.id] || new Set()).size,
       trainingDaysPerWeek: (meRows[0] && meRows[0].training_days_per_week) || null,
     };
-    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoal, myWeek });
+    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoals, myWeek });
   }
 
   if (action === "crew-feed") {
@@ -888,10 +893,17 @@ async function handleCrew(body, caller, res) {
   // it can only ever touch the CALLER's own most recent goal.
   if (action === "crew-goal-share") {
     const share = body.share === true;
-    const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(me.id)}&order=created_at.desc&limit=1&select=id`);
-    if (!rows[0]) throw httpErr(404, "No goal to share yet");
-    await sbWrite({ method: "PATCH", table: "athlete_goals", query: `?id=eq.${enc(rows[0].id)}&athlete_id=eq.${enc(me.id)}`, body: { share_with_crew: share }, prefer: "return=minimal" });
-    return res.status(200).json({ ok: true, share, myGoal: await loadOwnGoal(me.id) });
+    // Per GOAL now, not per athlete: someone can share the bench number and keep
+    // the rest to themselves. The athlete_id filter is what stops a client
+    // flipping sharing on somebody else's goal.
+    let goalId = body.goalId ? str(body.goalId, { max: 64, name: "goalId" }) : null;
+    if (!goalId) {
+      const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(me.id)}&order=created_at.desc&limit=1&select=id`);
+      if (!rows[0]) throw httpErr(404, "No goal to share yet");
+      goalId = rows[0].id;
+    }
+    await sbWrite({ method: "PATCH", table: "athlete_goals", query: `?id=eq.${enc(goalId)}&athlete_id=eq.${enc(me.id)}`, body: { share_with_crew: share }, prefer: "return=minimal" });
+    return res.status(200).json({ ok: true, share, myGoals: await loadOwnGoals(me.id) });
   }
 
   // ── V2 comparison ────────────────────────────────────────────────────────
@@ -1000,21 +1012,34 @@ async function comparePeers(peerIds) {
   return out;
 }
 
-// The caller's own latest goal, in the same display shape a peer's roster row
-// gets, plus the share flag they control. One place so the tab and the toggle
-// response can never disagree about what "my goal" is.
-async function loadOwnGoal(athleteId) {
-  const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=1&select=*`);
-  const g = rows[0];
-  if (!g) return null;
-  let cur = null;
-  if (g.parsed_lift && g.target_lbs) {
-    const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
-    cur = await bestE1rmLbsForLift(athleteId, g.parsed_lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
+// The caller's OWN goals. An athlete can have several, each holding several
+// targets, and they control sharing per goal. Returns one entry per goal row so
+// the tab can list them with their own toggles, plus a combined glance rendered
+// with the exact same component a peer's row uses.
+//
+// `needsParse` is how a goal written before multi-target parsing existed gets
+// picked up: the client re-parses ITS OWN goals once, on open, and persists the
+// result. Never on render of anyone else's row, and never more than once per
+// goal, so the AI cost stays bounded and nobody's goal is parsed by a stranger's
+// device.
+async function loadOwnGoals(athleteId) {
+  const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=12&select=*`);
+  if (!rows.length) return [];
+  const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
+  const currentByLift = {};
+  for (const t of rows.flatMap(goalTargets)) {
+    const key = t.lift.toLowerCase();
+    if (key in currentByLift) continue;
+    currentByLift[key] = await bestE1rmLbsForLift(athleteId, t.lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
   }
-  const display = goalDisplayState(g, cur);
-  if (!display) return null;
-  return { ...display, shared: g.share_with_crew === true };
+  return rows.map((g) => ({
+    id: g.id,
+    text: g.goal_text,
+    shared: g.share_with_crew === true,
+    // Uncapped for your own goals: the cap exists to keep a ROSTER scannable.
+    glance: composeGoalGlance([g], currentByLift, Date.now(), 0),
+    needsParse: !g.parsed_at,
+  }));
 }
 
 function mondayIso() {
