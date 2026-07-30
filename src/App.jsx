@@ -1918,11 +1918,36 @@ export const GSA = `
 /* streak charge-chain — thin bars, trained days fill blue→cyan */
 .streaklnk{flex:1;height:6px;border-radius:2px;background:#0c1526;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
 .streaklnk.on::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,${CA.accent},${CA.cyan});box-shadow:0 0 6px ${CA.cyan};}
+/* ── CREW: the "charge line" skin (Will's pick, 07-30) ──────────────────────
+   The roster hangs off ONE spine that lights from the top down in proportion to
+   how much of the crew's week is actually logged, so the team reads as a single
+   charging object. --lit is that fraction. Rows carry a tier-coloured puck; the
+   whole language is borrowed from the Benchmarks power cell and the rank-up
+   stamp rather than inventing anything new. */
+.crewline{position:relative;padding-left:30px;}
+.crewspine{position:absolute;left:9px;top:4px;bottom:4px;width:3px;border-radius:2px;background:#132449;overflow:hidden;}
+.crewspine::after{content:"";position:absolute;left:0;right:0;top:0;height:calc(var(--lit,0)*100%);
+  background:linear-gradient(180deg,${CA.cyan},${CA.accent});box-shadow:0 0 12px ${CA.accent}73;
+  transition:height 1.05s cubic-bezier(.3,.8,.3,1);}
+.crewpuck{position:absolute;left:-30px;top:14px;width:23px;height:23px;border-radius:50%;display:grid;place-items:center;
+  font-family:'Bebas Neue';font-size:11px;letter-spacing:.5px;color:${CA.navy};background:var(--pc,${CA.accent});
+  box-shadow:0 0 11px var(--pc,${CA.accent});}
+/* Moment card: the rank-up colour washes in from the left edge. This is the one
+   place Crew is allowed to look alive, because it's the one place where
+   something actually just happened. */
+.mcard{position:relative;background:${CA.navy2};border:1px solid ${CA.border};border-radius:12px;padding:13px 14px;margin-bottom:10px;overflow:hidden;}
+.mcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mc,${CA.accent});box-shadow:0 0 16px var(--mc,${CA.accent});}
+.mcard::after{content:"";position:absolute;left:0;top:0;bottom:0;width:64px;pointer-events:none;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--mc,${CA.accent}) 17%,transparent),transparent);}
+.mstamp{font-family:ui-monospace,Menlo,monospace;font-size:8px;font-weight:700;letter-spacing:.9px;padding:2px 7px;border-radius:5px;
+  color:var(--mc,${CA.accent});border:1px solid var(--mc,${CA.accent});background:color-mix(in srgb,var(--mc,${CA.accent}) 9%,transparent);
+  box-shadow:0 0 12px color-mix(in srgb,var(--mc,${CA.accent}) 40%,transparent);}
 /* mono HUD-kicker register (matches Field Mode kickers / loader captions) — used
    for Settings group labels ("PROOF FEED", "WEIGHT UNIT", etc.) */
 .setgrp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${CA.faint};}
 @media (prefers-reduced-motion: reduce){
   .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
+  .crewspine::after{transition:none!important;}
   .hcell.go .hfill{transform:scaleX(var(--pct,0))!important;}
   .hcell.revealup .hfill{animation:none!important;transform:scaleX(var(--pct,0))!important;}
   .a-draw{stroke-dasharray:none!important;}
@@ -10525,37 +10550,64 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
 }
 
 // ─── CREW (WILCO Crew V1) ─────────────────────────────────────────────────────
-// The 5th Progress-modal tab. Two sub-tabs: Crew (roster glance — code/share for
-// individual, no share UI at all for org) and Moments (the feed). UX doctrine:
-// relatively invisible, passive, discoverable when wanted — no unread dot, no
-// louder-than-Benchmarks visual weight. `demo` is threaded to every crewApi call
-// for the replay-safety seam (see crewApi in this file); nothing sets it true yet.
-function momentLine(m){
+// The 5th Progress-modal tab. Two sub-tabs, and the split between them is strict
+// (Will, 07-30): the Crew tab is the roster and everything to do with WHO is in
+// your crew, the Moments tab is the feed and nothing else. No moments leak onto
+// the roster; no code, search or requests leak into the feed.
+//
+// Visual language = "charge line" (Will's pick from the 07-30 aesthetic pitch,
+// direction C). The roster hangs off one spine that lights in proportion to how
+// much of the crew's week is logged, so the team reads as a single charging
+// object; moment cards get a tier-coloured edge wash and a rank-up stamp. Both
+// are borrowed from the app's own best surfaces (the Benchmarks power cell and
+// the RANK UP claim) rather than a new language. Doctrine is unchanged: passive,
+// no unread dots, no badges, never louder than Benchmarks.
+//
+// `demo` is threaded to every crewApi call for the replay-safety seam (see
+// crewApi in this file); nothing sets it true yet.
+
+// A moment's colour + stamp. The rank-up case uses the athlete's REAL new tier
+// colour, so a moment card and the power cell that produced it agree.
+function momentSkin(m){
   const p = m.payload||{};
-  const name = (m.athleteName||"Someone").split(" ")[0];
-  if(m.type==="pr") return `${name} ranked up to ${p.tier||"a new tier"} on ${p.lift||"a lift"}${p.weight?` · ${p.weight}${p.unit||"lbs"}`:""}`;
-  if(m.type==="week") return `${name} went ${p.done ?? "?"} for ${p.target ?? "?"} this week${p.perfect?" · perfect week":""}`;
-  if(m.type==="milestone") return `${name} logged workout #${p.count ?? "?"}`;
-  if(m.type==="goal") return `${name} hit their goal · ${p.goalText||p.lift||""}`;
-  return `${name} had a moment`;
+  if(m.type==="pr"){
+    const idx = TIER_NAMES.indexOf(String(p.tier||"").toUpperCase());
+    return {color: idx>=0?TIER_COLORS[idx]:CA.accent, stamp:"⬆ RANK UP"};
+  }
+  if(m.type==="goal") return {color:CA.cyan, stamp:"GOAL HIT"};
+  if(m.type==="milestone") return {color:CA.blue, stamp:"MILESTONE"};
+  return {color:p.perfect?CA.cyan:CA.accent, stamp:p.perfect?"WEEK CLOSED":"WEEK DONE"};
 }
+
+// The line under the name on a moment card. The name itself is rendered
+// separately (in Bebas, on the card head), so these never repeat it.
+function momentBody(m){
+  const p = m.payload||{};
+  if(m.type==="pr") return `${p.lift||"A lift"} is ${p.tier||"a new tier"} now${p.weight?` · ${p.weight}${p.unit||"lbs"}`:""}`;
+  if(m.type==="week") return `Went ${p.done ?? "?"} for ${p.target ?? "?"} this week`;
+  if(m.type==="milestone") return `Logged workout #${p.count ?? "?"}`;
+  if(m.type==="goal") return `Hit their goal · ${p.goalText||p.lift||""}`;
+  return "Had a moment";
+}
+
+const initialsOf = (name)=>String(name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase()||"?";
 
 // Goal-at-a-glance. The server already decided WHICH of the four states this is
 // (see goalDisplayState in api/_crew.js); this only draws it. The `quiet` state
 // is a dated goal whose date passed without being hit: it shows the number they
 // reached and nothing else, never a miss, never a red bar.
-function GoalGlance({goal, muted}){
+function GoalGlance({goal}){
   if(!goal) return null;
   const lift = goal.lift ? goal.lift.replace(/\b\w/g,c=>c.toUpperCase()) : "";
-  if(goal.state==="aspiration") return <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>Working toward · {goal.text}</div>;
-  if(goal.state==="quiet") return <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5}}>{lift} at {Math.round(goal.currentLbs)}lbs</div>;
-  if(goal.state==="hit") return <div style={{color:CA.cyan,fontSize:11.5,lineHeight:1.5,fontWeight:600}}>Hit it · {Math.round(goal.targetLbs)}lbs on {lift}</div>;
+  if(goal.state==="aspiration") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>Working toward · {goal.text}</div>;
+  if(goal.state==="quiet") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>{lift} at {Math.round(goal.currentLbs)}lbs</div>;
+  if(goal.state==="hit") return <div style={{marginTop:9,color:CA.cyan,fontSize:11,lineHeight:1.5,fontWeight:600}}>Hit it · {Math.round(goal.targetLbs)}lbs on {lift}</div>;
   return (
-    <div style={{color:muted?CA.muted:CA.muted2,fontSize:11.5,lineHeight:1.5}}>
+    <div style={{marginTop:9,color:CA.muted2,fontSize:11,lineHeight:1.5}}>
       Chasing {Math.round(goal.targetLbs)}lbs on {lift}{goal.currentLbs!=null?` · at ${Math.round(goal.currentLbs)}lbs`:""}
       {goal.pct!=null&&(
-        <div style={{marginTop:5,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
-          <div style={{height:"100%",width:`${Math.max(3,Math.min(100,goal.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+        <div style={{marginTop:6,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
+          <div style={{height:"100%",borderRadius:3,width:`${Math.max(3,Math.min(100,goal.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
         </div>
       )}
     </div>
@@ -10567,6 +10619,7 @@ function CrewTab({athlete, demo=false}){
   const [loading,setLoading] = useState(true);
   const [err,setErr] = useState("");
   const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoal}
+  const [query,setQuery] = useState("");
   const [codeInput,setCodeInput] = useState("");
   const [requesting,setRequesting] = useState(false);
   const [reqMsg,setReqMsg] = useState("");
@@ -10574,6 +10627,8 @@ function CrewTab({athlete, demo=false}){
   const [feed,setFeed] = useState(null);
   const [feedLoading,setFeedLoading] = useState(false);
   const [busyId,setBusyId] = useState(null);
+  const [copied,setCopied] = useState(false);
+  const [goalBusy,setGoalBusy] = useState(false);
 
   const loadRoster = ()=>{
     setLoading(true); setErr("");
@@ -10586,7 +10641,7 @@ function CrewTab({athlete, demo=false}){
       if(d&&!d.isOrg&&!d.code){
         crewApi("crew-code-ensure",{},{demo})
           .then(r=>{ if(r&&r.code) setData(prev=>({...(prev||{}),code:r.code})); })
-          .catch(()=>{}); // silent — the manual button below is still there as a fallback
+          .catch(()=>{}); // silent: the manual button below is still there as a fallback
       }
     }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
   };
@@ -10603,11 +10658,11 @@ function CrewTab({athlete, demo=false}){
     catch(e){ setReqMsg(e.message||"Couldn't generate a code."); }
   };
 
-  const sendRequest = async ()=>{
-    const code = codeInput.trim().toUpperCase();
+  const sendRequest = async (raw)=>{
+    const code = String(raw||"").trim().toUpperCase();
     if(!code) return;
     setRequesting(true); setReqMsg("");
-    try{ await crewApi("crew-request",{code},{demo}); setCodeInput(""); setReqMsg("Request sent."); loadRoster(); }
+    try{ await crewApi("crew-request",{code},{demo}); setCodeInput(""); setQuery(""); setReqMsg("Request sent."); loadRoster(); }
     catch(e){ setReqMsg(e.message||"Couldn't send that request."); }
     finally{ setRequesting(false); }
   };
@@ -10615,13 +10670,11 @@ function CrewTab({athlete, demo=false}){
   const decline = async (id)=>{ setBusyId(id); try{ await crewApi("crew-decline",{id},{demo}); loadRoster(); }catch(_){ } finally{ setBusyId(null); } };
   const removeMember = async (id)=>{ setBusyId(id); try{ await crewApi("crew-remove",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't remove."); } finally{ setBusyId(null); } };
 
-  const [copied,setCopied] = useState(false);
   const copyCode = async ()=>{
     const code = data?.code; if(!code) return;
     try{ await navigator.clipboard.writeText(code); setCopied(true); haptic(15); setTimeout(()=>setCopied(false),1600); }catch(_){ }
   };
 
-  const [goalBusy,setGoalBusy] = useState(false);
   const toggleGoalShare = async ()=>{
     if(!data?.myGoal||goalBusy) return;
     setGoalBusy(true);
@@ -10655,6 +10708,19 @@ function CrewTab({athlete, demo=false}){
   const incoming = pending.filter(p=>String(p.requested_by)!==String(athlete.id));
   const outgoing = pending.filter(p=>String(p.requested_by)===String(athlete.id));
 
+  // The search box does double duty (Will, 07-30): it filters the crew you
+  // already have, and when what you typed looks like a crew code it offers to
+  // add that person. It never searches anyone outside your own crew: no name
+  // directory, no stranger discovery, ever (hard non-goal).
+  const q = query.trim().toLowerCase();
+  const looksLikeCode = /^[A-Za-z]{2,8}-[A-Za-z0-9]{3,6}$/.test(query.trim());
+  const shown = q&&!looksLikeCode ? roster.filter(r=>String(r.name||"").toLowerCase().includes(q)) : roster;
+
+  // How charged the crew's week is, as one number. Drives the spine.
+  const weekDone = roster.reduce((n,r)=>n+(r.trainedThisWeek||0),0);
+  const weekTarget = roster.reduce((n,r)=>n+(r.trainingDaysPerWeek||4),0);
+  const lit = weekTarget>0 ? Math.max(0,Math.min(1,weekDone/weekTarget)) : 0;
+
   return (
     <div>
       <div style={{display:"flex",gap:6,marginBottom:16}}>
@@ -10667,18 +10733,29 @@ function CrewTab({athlete, demo=false}){
 
       {sub==="crew"&&(
         <div>
-          {/* Org crews are TEAM-scoped, so say which team this is. An org athlete
-              sees their own squad, not the whole school. */}
-          {isOrg&&data?.team&&(
-            <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:12,textTransform:"uppercase"}}>{data.team} · {roster.length+1}</div>
-          )}
+          {/* Search your crew, or paste a code to add someone. */}
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <input value={query} onChange={e=>setQuery(e.target.value)}
+              placeholder={isOrg?"Search your team":"Search your crew, or paste a code"}
+              style={inpA({padding:"9px 11px",fontSize:13,flex:1})}/>
+            {!isOrg&&looksLikeCode&&(
+              <button onClick={()=>sendRequest(query)} disabled={requesting}
+                style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"9px 15px",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
+                {requesting?"…":"Add"}
+              </button>
+            )}
+          </div>
 
-          {/* Goal sharing is opt-in and off by default. This is the only place it
-              can be turned on, and it's why goals were missing from every crew
-              row before (nothing could ever set the flag). */}
+          <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:11,textTransform:"uppercase",fontFamily:"ui-monospace,Menlo,monospace"}}>
+            {isOrg&&data?.team ? data.team : "Your crew"} · {weekTarget>0?`${weekDone} of ${weekTarget} sessions logged`:`${roster.length} ${roster.length===1?"person":"people"}`}
+          </div>
+
+          {/* Your own goal + the share opt-in. Off by default; this is the only
+              place it can be turned on, and it's why goals were missing from
+              every crew row before (nothing could ever set the flag). */}
           {data?.myGoal&&(
             <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
-              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:8}}>YOUR GOAL</div>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:2}}>YOUR GOAL</div>
               <GoalGlance goal={data.myGoal}/>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
                 <span style={{color:CA.muted,fontSize:11}}>{data.myGoal.shared?"Your crew can see this":"Only you can see this"}</span>
@@ -10690,98 +10767,145 @@ function CrewTab({athlete, demo=false}){
             </div>
           )}
 
-          {/* Individual flow only — org athletes never see share/scan/code UI (they're already all in). */}
-          {!isOrg&&(
-            <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
-              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:6}}>YOUR CREW CODE</div>
-              {data?.code?(
-                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                  <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2}}>{data.code}</span>
-                  <button onClick={copyCode} style={{background:"none",border:`1px solid ${CA.border}`,color:copied?CA.cyan:CA.muted,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5}}>{copied?"Copied":"Copy"}</button>
-                </div>
-              ):(
-                <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
-              )}
-              <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Share it with someone you train with, or add theirs below.</div>
-              <div style={{display:"flex",gap:8}}>
-                <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} placeholder="Add a crew code" style={inpA({padding:"8px 10px",fontSize:13,flex:1,textTransform:"uppercase"})}/>
-                <button onClick={sendRequest} disabled={requesting||!codeInput.trim()} style={{background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>{requesting?"…":"Add"}</button>
-              </div>
-              {reqMsg&&<div style={{color:CA.muted2,fontSize:11.5,marginTop:8}}>{reqMsg}</div>}
-            </div>
-          )}
-
-          {incoming.length>0&&(
-            <div style={{marginBottom:14}}>
-              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:8}}>REQUESTS</div>
-              {incoming.map(p=>(
-                <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
-                  <span style={{color:CA.text,fontSize:13}}>Crew request</span>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
-                    <button onClick={()=>decline(p.id)} disabled={busyId===p.id} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11}}>Decline</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {outgoing.length>0&&(
-            <div style={{color:CA.muted,fontSize:11.5,marginBottom:14}}>{outgoing.length} request{outgoing.length===1?"":"s"} waiting on the other side.</div>
-          )}
-
-          {/* Empty state (individual only) — an org roster is never "empty" unless
-              the team genuinely has one member, which is just a normal small roster. */}
-          {roster.length===0&&incoming.length===0?(
+          {/* ── the charge line ── */}
+          {roster.length===0?(
             isOrg
-              ? <AwaitingSignal hint="Nobody else on your roster yet."/>
-              : <AwaitingSignal hint="Add someone you train with — share your code or add theirs above."/>
-          ):roster.map(r=>{
-            const chain = Array.from({length:7},(_,i)=>i<r.trainedThisWeek);
-            const showNudge = r.quietDays==null || r.quietDays>=8;
-            const nudgeSent = sentNudge.has(r.id);
-            return (
-              <div key={r.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <div style={{color:CA.text,fontWeight:700,fontSize:14}}>{r.name}</div>
-                  {!isOrg&&(
-                    <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew" style={{background:"none",border:"none",color:CA.muted,cursor:"pointer",fontSize:11}}>Remove</button>
-                  )}
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:3,marginBottom:r.goal?8:0}}>
-                  {chain.map((on,i)=><div key={i} className={`streaklnk${on?" on":""}`}/>)}
-                  <span style={{fontFamily:"'Bebas Neue'",fontSize:12,color:CA.cyan,marginLeft:5}}>{r.trainedThisWeek}{r.trainingDaysPerWeek?`/${r.trainingDaysPerWeek}`:""}</span>
-                </div>
-                <GoalGlance goal={r.goal}/>
-                {showNudge&&(
-                  <div style={{marginTop:9,display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:`1px solid ${CA.border}`,paddingTop:9}}>
-                    <span style={{color:CA.muted,fontSize:11}}>gone quiet · no workout in {r.quietDays==null?"a while":`${r.quietDays} days`}</span>
-                    <button onClick={()=>{ setSentNudge(prev=>new Set(prev).add(r.id)); haptic(20); }} disabled={nudgeSent}
-                      style={{background:"none",border:`1px solid ${CA.border}`,color:nudgeSent?CA.muted:CA.accent,borderRadius:6,padding:"4px 10px",cursor:nudgeSent?"default":"pointer",fontSize:11,fontWeight:700}}>
-                      {nudgeSent?"Sent 💪":"Send 💪"}
-                    </button>
+              ? <AwaitingSignal hint="Nobody else on your team yet."/>
+              : <AwaitingSignal hint="Add someone you train with. Paste their code above, or share yours from the bottom of this tab."/>
+          ):shown.length===0?(
+            <div style={{color:CA.muted,fontSize:12,padding:"18px 2px"}}>Nobody in your crew matches that.</div>
+          ):(
+            <div className="crewline">
+              <div className="crewspine" style={{"--lit":lit}}/>
+              {shown.map((r,i)=>{
+                const chain = Array.from({length:7},(_,k)=>k<r.trainedThisWeek);
+                const showNudge = r.quietDays==null || r.quietDays>=8;
+                const nudgeSent = sentNudge.has(r.id);
+                const target = r.trainingDaysPerWeek||null;
+                // Puck colour tracks how far into their own week they are, so a
+                // glance down the pucks reads the crew's week without any ranking.
+                const pc = target&&r.trainedThisWeek>=target ? CA.cyan : r.trainedThisWeek>0 ? CA.accent : CA.steel;
+                return (
+                  <div key={r.id} style={{position:"relative",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:11}}>
+                    <div className="crewpuck" style={{"--pc":pc}}>{initialsOf(r.name)}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+                      <span style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{r.name}</span>
+                      <span style={{marginLeft:"auto",fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:1,color:r.trainedThisWeek>0?CA.cyan:CA.muted}}>
+                        {r.trainedThisWeek}{target?` OF ${target}`:""}
+                      </span>
+                      {!isOrg&&(
+                        <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
+                          style={{background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
+                      )}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                      {chain.map((on,k)=><div key={k} className={`streaklnk${on?" on":""}`}/>)}
+                    </div>
+                    <GoalGlance goal={r.goal}/>
+                    {showNudge&&(
+                      <div style={{marginTop:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,borderTop:`1px solid ${CA.border}`,paddingTop:10}}>
+                        <span style={{color:CA.muted,fontSize:10.5}}>gone quiet · no workout in {r.quietDays==null?"a while":`${r.quietDays} days`}</span>
+                        <button onClick={()=>{ setSentNudge(prev=>new Set(prev).add(r.id)); haptic(20); }} disabled={nudgeSent}
+                          style={{background:"none",border:`1px solid ${CA.border}`,color:nudgeSent?CA.muted:CA.accent,borderRadius:6,padding:"4px 10px",cursor:nudgeSent?"default":"pointer",fontSize:10.5,fontWeight:700}}>
+                          {nudgeSent?"Sent 💪":"Send 💪"}
+                        </button>
+                      </div>
+                    )}
                   </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── bottom: your code, adding people, and pending requests ──
+              Individual flow only. An org athlete is already on their team, so
+              there is nothing here for them to do. Kept at the BOTTOM (Will,
+              07-30) so the roster is what you land on, not the plumbing. */}
+          {!isOrg&&(
+            <div style={{marginTop:26,paddingTop:18,borderTop:`1px solid ${CA.border}`}}>
+              {incoming.length>0&&(
+                <div style={{marginBottom:16}}>
+                  <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>REQUESTS</div>
+                  {incoming.map(p=>(
+                    <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                      <span style={{color:CA.text,fontSize:13}}>Someone wants to train with you</span>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
+                        <button onClick={()=>decline(p.id)} disabled={busyId===p.id} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11}}>Decline</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14}}>
+                <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:7,fontFamily:"ui-monospace,Menlo,monospace"}}>YOUR CREW CODE</div>
+                {data?.code?(
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                    <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2}}>{data.code}</span>
+                    <button onClick={copyCode} style={{background:"none",border:`1px solid ${CA.border}`,color:copied?CA.cyan:CA.muted,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5}}>{copied?"Copied":"Copy"}</button>
+                  </div>
+                ):(
+                  <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
+                )}
+                <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Give it to someone you train with, or put theirs in below.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} placeholder="Their crew code" style={inpA({padding:"8px 10px",fontSize:13,flex:1,textTransform:"uppercase"})}/>
+                  <button onClick={()=>sendRequest(codeInput)} disabled={requesting||!codeInput.trim()} style={{background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>{requesting?"…":"Add"}</button>
+                </div>
+                {reqMsg&&<div style={{color:CA.muted2,fontSize:11.5,marginTop:8}}>{reqMsg}</div>}
+                {outgoing.length>0&&(
+                  <div style={{color:CA.muted,fontSize:11.5,marginTop:8}}>{outgoing.length} request{outgoing.length===1?"":"s"} waiting on the other side.</div>
                 )}
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
       )}
 
       {sub==="moments"&&(
         <div>
           {feedLoading&&<div style={{color:CA.muted,fontSize:12}}>Loading…</div>}
-          {!feedLoading&&feed&&feed.length===0&&<AwaitingSignal hint="Nothing yet — moments show up here as your crew hits PRs, weeks, and goals."/>}
+          {!feedLoading&&feed&&(()=>{
+            // Last-7-days readout across the whole crew, at the top of the feed.
+            // Counts only, no names and no order: a summary of what the crew did,
+            // never a standings board.
+            const cut = Date.now()-7*864e5;
+            const recent = feed.filter(m=>new Date(m.created_at).getTime()>=cut);
+            const stats = [
+              ["RANK-UPS", recent.filter(m=>m.type==="pr").length],
+              ["WEEKS CLOSED", recent.filter(m=>m.type==="week"&&m.payload&&m.payload.perfect).length],
+              ["GOALS HIT", recent.filter(m=>m.type==="goal").length],
+              ["MILESTONES", recent.filter(m=>m.type==="milestone").length],
+            ].filter(([,n])=>n>0);
+            if(!stats.length) return null;
+            return (
+              <div style={{border:`1px solid ${CA.border}`,borderRadius:8,background:CA.navy2,padding:"9px 11px",marginBottom:16,
+                fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.9,color:CA.muted,overflowX:"auto",whiteSpace:"nowrap"}}>
+                LAST 7D{stats.map(([label,n])=>(
+                  <span key={label}> · <span style={{color:CA.cyan}}>{n} {label}</span></span>
+                ))}
+              </div>
+            );
+          })()}
+          {!feedLoading&&feed&&feed.length===0&&<AwaitingSignal hint="Nothing yet. Moments show up here as your crew hits PRs, weeks, and goals."/>}
           {!feedLoading&&feed&&feed.map(m=>{
             const emojis = ["🤝","💪","🔥"];
             const counts = {}; (m.reactions||[]).forEach(r=>{counts[r.emoji]=(counts[r.emoji]||0)+1;});
             const mine = new Set((m.reactions||[]).filter(r=>String(r.athlete_id)===String(athlete.id)).map(r=>r.emoji));
+            const skin = momentSkin(m);
+            const who = String(m.athleteName||"Someone").split(" ")[0];
             return (
-              <div key={m.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:10}}>
-                <div style={{color:CA.text,fontSize:13,lineHeight:1.5,marginBottom:8}}>{momentLine(m)}</div>
-                <div style={{display:"flex",gap:8}}>
+              <div key={m.id} className="mcard" style={{"--mc":skin.color}}>
+                <div style={{position:"relative",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{who}</span>
+                  <span className="mstamp">{skin.stamp}</span>
+                </div>
+                <div style={{position:"relative",color:CA.muted2,fontSize:12.5,lineHeight:1.5}}>{momentBody(m)}</div>
+                <div style={{position:"relative",display:"flex",gap:7,marginTop:11}}>
                   {emojis.map(e=>(
-                    <button key={e} onClick={()=>react(m.id,e)} style={{background:mine.has(e)?`${CA.accent}22`:"none",border:`1px solid ${mine.has(e)?CA.accent:CA.border}`,borderRadius:20,padding:"4px 10px",cursor:"pointer",fontSize:13,color:CA.text}}>
-                      {e}{counts[e]?` ${counts[e]}`:""}
+                    <button key={e} onClick={()=>react(m.id,e)} style={{background:mine.has(e)?`${CA.accent}22`:"none",border:`1px solid ${mine.has(e)?CA.accent:CA.border}`,borderRadius:20,padding:"3px 10px",cursor:"pointer",fontSize:12,color:CA.text}}>
+                      {e}{counts[e]?<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:9.5,marginLeft:4,color:CA.muted}}>{counts[e]}</span>:null}
                     </button>
                   ))}
                 </div>
