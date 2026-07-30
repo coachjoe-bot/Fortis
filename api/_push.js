@@ -6,7 +6,11 @@
 // this as its own function.
 //
 // Env: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT.
+// APNs (native iOS, App Store build plan §3/§6 step 5): APNS_KEY_ID, APNS_TEAM_ID,
+// APNS_PRIVATE_KEY (the .p8 contents, PEM), APNS_BUNDLE_ID.
 
+import http2 from "node:http2";
+import crypto from "node:crypto";
 import webpush from "web-push";
 import { httpErr, sbDelete, sbSelect } from "./_supa.js";
 
@@ -25,6 +29,102 @@ export function ensureVapid() {
 
 export function vapidPublicKey() {
   return VAPID_PUBLIC_KEY;
+}
+
+// ── APNs (native iOS) — token-based provider API over HTTP/2 ─────────────────
+// No new npm dependency: Node's built-in http2 module talks to Apple directly,
+// and the ES256 "provider authentication token" JWT is signed with the built-in
+// crypto module (ECDSA P-256, IEEE-P1363/JWS signature encoding) — a hand-rolled
+// three-field JWT is a much smaller, more auditable surface than pulling in a
+// whole APNs client library for one POST-per-send. Apple allows one token to be
+// reused for up to an hour; we cache it and re-sign only when it's stale.
+const APNS_KEY_ID = process.env.APNS_KEY_ID || "";
+const APNS_TEAM_ID = process.env.APNS_TEAM_ID || "";
+const APNS_PRIVATE_KEY = process.env.APNS_PRIVATE_KEY || "";
+const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID || "com.trainwilco.wilco";
+const APNS_HOST = "https://api.push.apple.com"; // production APNs gateway
+
+const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+let apnsJwtCache = null; // { token, mintedAt }
+const APNS_JWT_MAX_AGE_MS = 45 * 60 * 1000; // Apple allows up to 60m; refresh a bit early
+
+function apnsAuthToken() {
+  if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_PRIVATE_KEY) throw httpErr(500, "APNs not configured");
+  const now = Date.now();
+  if (apnsJwtCache && now - apnsJwtCache.mintedAt < APNS_JWT_MAX_AGE_MS) return apnsJwtCache.token;
+
+  const header = { alg: "ES256", kid: APNS_KEY_ID };
+  const payload = { iss: APNS_TEAM_ID, iat: Math.floor(now / 1000) };
+  const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+  // dsaEncoding "ieee-p1363" gives the raw r||s bytes JWS/ES256 requires (vs.
+  // Node's default DER encoding, which JWT verifiers reject).
+  const signature = crypto.sign("sha256", Buffer.from(signingInput), {
+    key: APNS_PRIVATE_KEY.replace(/\\n/g, "\n"), // Vercel env values often carry literal "\n"
+    dsaEncoding: "ieee-p1363",
+  });
+  const token = `${signingInput}.${b64url(signature)}`;
+  apnsJwtCache = { token, mintedAt: now };
+  return token;
+}
+
+// One HTTP/2 request to APNs for one device token. Resolves to the same
+// "sent" | "pruned" | "failed" vocabulary sendTo() already uses, so callers
+// never need to know which transport a subscription row uses.
+function sendApns(deviceToken, payload) {
+  return new Promise((resolve) => {
+    // Check config (throws if unconfigured) BEFORE opening any socket — keeps an
+    // unconfigured/misconfigured APNs setup a fast, network-free failure (this is
+    // also what makes scripts/test-push-platform.mjs safe to run with no APNs
+    // secrets present and no real network call).
+    let jwt;
+    try { jwt = apnsAuthToken(); } catch (e) { return resolve("failed"); }
+
+    let client;
+    try {
+      client = http2.connect(APNS_HOST);
+    } catch (e) {
+      console.error("[push] apns connect failed:", e?.message);
+      return resolve("failed");
+    }
+    client.on("error", (e) => { console.error("[push] apns session error:", e?.message); resolve("failed"); });
+
+    const apnsBody = JSON.stringify({
+      aps: {
+        alert: { title: payload.title, body: payload.body },
+        sound: "default",
+        ...(payload.badge != null && typeof payload.badge === "number" ? { badge: payload.badge } : {}),
+      },
+      url: payload.url,
+      tag: payload.tag,
+    });
+
+    const req = client.request({
+      ":method": "POST",
+      ":path": `/3/device/${encodeURIComponent(deviceToken)}`,
+      "authorization": `bearer ${jwt}`,
+      "apns-topic": APNS_BUNDLE_ID,
+      "apns-push-type": "alert",
+      "apns-priority": "10",
+      "content-type": "application/json",
+    });
+
+    let status = null;
+    req.on("response", (headers) => { status = headers[":status"]; });
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      client.close();
+      if (status === 200) return resolve("sent");
+      // 410 Unregistered / 400 BadDeviceToken: the device token is dead — prune it,
+      // same semantics as a 404/410 from a web-push endpoint.
+      if (status === 410 || status === 400) return resolve("pruned");
+      console.error(`[push] apns send failed (${status || "network"}):`, body.slice(0, 300));
+      resolve("failed");
+    });
+    req.on("error", (e) => { console.error("[push] apns request error:", e?.message); client.close(); resolve("failed"); });
+    req.end(apnsBody);
+  });
 }
 
 // Every push payload gets the same WILCO icon/badge so notifications look
@@ -69,7 +169,26 @@ export function pushPayload({ title, body, url = "/", type }) {
 // (the default), coach devices in coach_push_subscriptions — the prune must
 // target the row's OWN table (it used to hard-code the athlete table, so dead
 // coach endpoints were never actually deleted and got retried forever).
+//
+// Platform branch (App Store build plan §3/§6 step 5): `sub.platform` is NULL
+// for every row written before the native iOS migration — those are all web
+// rows (the only platform that has ever subscribed until now), so `platform ===
+// "ios"` is the ONLY thing that routes to APNs; everything else (undefined,
+// null, "web") keeps the exact web-push call that shipped in v1/v2, unchanged.
+// Extracted to its own pure function so the routing decision itself — the exact
+// thing a platform-branch bug would get wrong — has a direct, network-free
+// regression test (scripts/test-push-platform.mjs) independent of whether
+// VAPID/APNs secrets are present in the test environment.
+export const resolveTransport = (sub) => (sub && sub.platform === "ios" ? "apns" : "webpush");
+
 export async function sendTo(sub, payload, table = "push_subscriptions") {
+  if (resolveTransport(sub) === "apns") {
+    const outcome = await sendApns(sub.endpoint, payload);
+    if (outcome === "pruned") {
+      try { await sbDelete(table, `?id=eq.${encodeURIComponent(sub.id)}`); } catch { /* prune is best-effort */ }
+    }
+    return outcome;
+  }
   try {
     await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

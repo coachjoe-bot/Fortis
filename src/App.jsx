@@ -19,7 +19,9 @@ const StripePayBlock = lazy(()=>import("./payform.jsx"));
 import { ConsentFlow, TERMS_VERSION, PRIVACY_VERSION } from "./legal.jsx";
 // iOS can't ship the embedded Stripe Elements payment step (App Review 3.1.1) —
 // isNativeIOS() gates the two PaymentStep call sites below to an external
-// handoff instead. Always false on web/PWA, so that path is untouched.
+// handoff instead. Always false on web/PWA, so that path is untouched. Also
+// used below to gate the native OTA bootstrap and Face ID unlock — same
+// platform.js helper, shared by both the payments and App Store shell work.
 import { isNativeIOS } from "./platform.js";
 // Quick Log draft persistence — the rules that let an athlete close the sheet mid-workout
 // and pick it back up (expiry window, staleness check, clear-on-send).
@@ -40,6 +42,11 @@ import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd,
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
 // display: fixtures never touch real data — see tour.jsx header.
 import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, tourInteractiveAt, TOUR_QL_FIXTURE, TOUR_SCRIPT } from "./tour.jsx";
+// Self-hosted OTA bootstrap (App Store build, build plan §1/§3/§6). No-op on
+// web/PWA — isNativeIOS() (imported above) is false there, so this is dormant
+// outside the Capacitor iOS wrapper.
+import { checkForOtaUpdate } from "./nativeOta.js";
+import { nativeBiometricAvailable, nativeBiometricVerify } from "./nativeBiometric.js";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -407,6 +414,33 @@ export const idApi = async (action,payload={}) => {
 // you wake the phone, with no extra button. Enrollments are namespaced by role so the
 // athlete tap only triggers an athlete credential and the coach tap only a coach one.
 //
+// ROOT CAUSE of the "I have to re-click my Face ID thing" flakiness Will reported
+// (investigated for the App Store build, 2026-07-29): this is 100% WebAuthn, which
+// on iOS Safari/WKWebView has two compounding characteristics that read as one bug:
+//   1. WebKit's platform-authenticator WebAuthn implementation returns the SAME
+//      NotAllowedError for "user cancelled," "Face ID didn't recognize the face in
+//      time," AND "the call happened just outside the page's sticky user-activation
+//      window" — the spec hides which, on purpose (see the comment on noteBioFailure
+//      below), so WILCO's client code cannot tell a genuine cancel from a transient
+//      timing/recognition hiccup.
+//   2. Because of (1), a single hiccup is indistinguishable from "no credential
+//      exists," so noteBioFailure's 2-strikes rule and the calling screens (Login/
+//      CoachLogin) fall straight through to the manual PIN form rather than
+//      auto-retrying — the user has to notice Face ID didn't fire and manually tap
+//      "Use Face ID instead" (or just type the PIN) to get a second attempt. THAT
+//      manual retry is almost certainly what "re-click my Face ID thing" describes.
+// This is a WebKit/WebAuthn-in-a-webview characteristic, not something fixable by
+// tuning WILCO's own retry logic — and it carries over VERBATIM into the Capacitor
+// wrap (same WKWebView engine under the hood) unless the assertion step is swapped
+// for a true native call. Fix shipped for the native iOS build: src/nativeBiometric.js
+// calls LocalAuthentication (LAContext.evaluatePolicy) directly via
+// @aparajita/capacitor-biometric-auth — no WebAuthn/WebKit layer, no sticky-
+// activation timing dependency, and iOS's own "Try Again" sheet handles a failed
+// scan natively instead of WILCO silently falling back to a form. See
+// biometricSupported/biometricEnroll/biometricAssert below for the isNativeIOS()
+// branch; web/PWA is UNCHANGED (still WebAuthn, still has this characteristic —
+// fixing that would need a web-only mitigation, which is out of scope here).
+//
 // Security note: the enrollment (login secret) lives in localStorage, gated by the
 // biometric assertion. This matches the app's existing model (the client already holds
 // the plaintext PIN, and the PIN space is only 4 digits). It blocks the realistic
@@ -424,7 +458,10 @@ const b64u = {
 const randBytes = (n=32) => { const a=new Uint8Array(n); crypto.getRandomValues(a); return a; };
 
 // Is a platform (built-in) biometric authenticator usable on this device/browser?
+// Native iOS: real LocalAuthentication check (see src/nativeBiometric.js) — no
+// WebAuthn/WebKit involved at all. Web/PWA: unchanged WebAuthn platform check.
 async function biometricSupported(){
+  if(isNativeIOS()) return nativeBiometricAvailable();
   try{
     if(typeof window==="undefined" || !window.PublicKeyCredential || !window.isSecureContext) return false;
     return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
@@ -455,7 +492,22 @@ const clearBioFailures = (role) => { try{ localStorage.removeItem(bioFailKey(rol
 // Register a platform credential and remember this user's login on this device.
 // Throws if the user cancels or the platform refuses (caller surfaces a message).
 // `name` is the athlete's login name; coaches sign in with PIN only so it's omitted.
+//
+// Native iOS: there is no WebAuthn "credential" to create — LocalAuthentication
+// has no registration step, it just asks Face ID a question each time (see
+// nativeBiometricVerify). "Enrolling" on native is therefore: confirm Face ID
+// actually works on this device RIGHT NOW (one real prompt, so a broken/disabled
+// Face ID fails at setup time, not on the athlete's next sign-in), then store the
+// SAME enrollment record shape App.jsx already uses everywhere else (role/userId/
+// name/pin), just without a credentialId/transports — biometricAssert's native
+// branch doesn't need them.
 async function biometricEnroll({role, userId, name, pin}){
+  if(isNativeIOS()){
+    await nativeBiometricVerify(role==="coach" ? "Set up Face ID for WILCO Coach" : "Set up Face ID for WILCO");
+    setBioEnrollment(role, { native:true, role, userId, name: name||null, pin, enabledAt: Date.now() });
+    clearBioFailures(role);
+    return true;
+  }
   const label = name || (role==="coach" ? "WILCO Coach" : "WILCO Athlete");
   const cred = await navigator.credentials.create({
     publicKey: {
@@ -488,6 +540,17 @@ async function biometricEnroll({role, userId, name, pin}){
 async function biometricAssert(role){
   const e = getBioEnrollment(role);
   if(!e) throw new Error("Face ID isn't set up on this device.");
+  // Native iOS: one direct LocalAuthentication prompt, no WebAuthn/WebKit layer —
+  // this is the fix for the flakiness documented in the big comment above
+  // BIO_PREFIX. iOS handles a failed-scan retry with its own native "Try Again"
+  // sheet before ever rejecting, so noteBioFailure's 2-strikes rule below only
+  // ever sees a REAL cancel/lockout here, not a WebKit timing artifact.
+  if(isNativeIOS()){
+    try{ await nativeBiometricVerify(role==="coach" ? "Sign in to WILCO Coach" : "Sign in to WILCO"); }
+    catch(err){ noteBioFailure(role); throw err; }
+    clearBioFailures(role);
+    return e;
+  }
   // Pin the request to the built-in authenticator (transports:["internal"]). Without
   // this hint iOS Safari can't tell the passkey is local and falls back to the hybrid
   // "scan QR / use a security key" flow instead of showing Face ID / Touch ID.
@@ -940,7 +1003,24 @@ export const fmtDateRelative = (d) => {
   return fmtDate(d);
 };
 // Light haptic tick on supported devices (phones); silent no-op on desktop/unsupported.
-export const haptic = (pattern=10) => { try { navigator.vibrate && navigator.vibrate(pattern); } catch(_){} };
+// Native iOS (App Store build plan §5 #2): navigator.vibrate doesn't exist in a
+// Capacitor WKWebView, so every one of this function's EXISTING call sites —
+// QuickLogSheet's set-log save confirm, the PR "NEW MAX" stamp, the RANK UP
+// claim, the gift-code copy tick — gets real Taptic Engine feedback for free
+// from this one change, no call site touched. Same numeric-ms `pattern` API on
+// both platforms; on native it's just mapped to the nearest impact strength
+// instead of a vibration duration (@capacitor/haptics has no raw-duration
+// vibrate equivalent worth using here — impact styles read as more "native").
+export const haptic = (pattern=10) => {
+  if(isNativeIOS()){
+    import("@capacitor/haptics").then(({ Haptics, ImpactStyle }) => {
+      const style = pattern>=50 ? ImpactStyle.Heavy : pattern>=25 ? ImpactStyle.Medium : ImpactStyle.Light;
+      Haptics.impact({ style }).catch(()=>{});
+    }).catch(()=>{});
+    return;
+  }
+  try { navigator.vibrate && navigator.vibrate(pattern); } catch(_){}
+};
 
 // epley1RM, getExerciseSets, bestE1RMForExercise now live in ./grit.js (imported
 // above) — the single shared definition the server Proof Feed also uses.
@@ -2023,7 +2103,8 @@ export function RunCard({runData, feel, palette=CA}) {
 // false and every push surface simply hides itself.
 const PUSH_PROMPT_KEY = "wilco_push_prompt_answered";
 export const pushSupported = () =>
-  typeof window!=="undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  isNativeIOS() || // APNs via @capacitor/push-notifications — always available in the native shell
+  (typeof window!=="undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 
 const pushApi = async (payload) => {
   const r = await fetch("/api/push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth:CURRENT_AUTH,...payload})});
@@ -2035,6 +2116,7 @@ const pushApi = async (payload) => {
 const urlB64ToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
 
 export const getPushSubscription = async () => {
+  if(isNativeIOS()) return null; // native has no browser subscription object — see getPushStatusForCaller's native branch
   if(!pushSupported()) return null;
   try{ const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); }catch{ return null; }
 };
@@ -2044,6 +2126,11 @@ export const getPushSubscription = async () => {
 // athlete and coach rows live in separate tables, so a shared device can show a
 // coach "On" while their table has no row and pushes never arrive.
 export const getPushStatusForCaller = async () => {
+  if(isNativeIOS()){
+    if(!_nativePushToken) return false; // never registered this session — Settings shows "off" until the toggle is used
+    try{ const d = await pushApi({action:"status", endpoint:_nativePushToken}); return !!d.registered; }
+    catch{ return true; }
+  }
   const sub = await getPushSubscription();
   if(!sub) return false;
   try{ const d = await pushApi({action:"status", endpoint: sub.endpoint}); return !!d.registered; }
@@ -2053,6 +2140,7 @@ export const getPushStatusForCaller = async () => {
 // Subscribe this browser (asks for permission if needed — call from a user
 // gesture) and register it server-side under the logged-in athlete.
 export async function enablePush(){
+  if(isNativeIOS()) return enableNativePush();
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
   if(!sub){
@@ -2069,6 +2157,7 @@ export async function enablePush(){
 }
 
 export async function disablePush(){
+  if(isNativeIOS()) return disableNativePush();
   const sub = await getPushSubscription();
   if(sub){
     const endpoint = sub.endpoint;
@@ -2083,12 +2172,71 @@ export async function disablePush(){
 // anew and never prompts.
 const syncPushSubscription = async () => {
   try{
+    if(isNativeIOS()) return; // native devices re-register explicitly (see enableNativePush) — token doesn't live in a browser subscription object
     const sub = await getPushSubscription();
     if(!sub) return;
     const j = sub.toJSON();
     await pushApi({action:"subscribe", subscription:{ endpoint:j.endpoint, keys:j.keys }});
   }catch{}
 };
+
+// ─── NATIVE PUSH (APNs, iOS shell only) — build plan §3/§6 step 5 ────────────
+// Same enable/disable/status SURFACE as web push (same Settings toggle, same
+// pushApi endpoint, same 4-type policy) — only the registration mechanics differ:
+// no service worker/PushManager exists in a Capacitor WebView, so this asks the
+// OS directly via @capacitor/push-notifications and hands the resulting APNs
+// device token to the SAME /api/push `subscribe` action, tagged platform:"ios".
+let _nativePushToken = null; // last token this session registered, for disable/status
+async function enableNativePush(){
+  const { PushNotifications } = await import("@capacitor/push-notifications");
+  const perm = await PushNotifications.checkPermissions();
+  if(perm.receive !== "granted"){
+    const req = await PushNotifications.requestPermissions();
+    if(req.receive !== "granted") throw new Error("Notifications permission was denied.");
+  }
+  const token = await new Promise((resolve, reject) => {
+    let settled = false;
+    PushNotifications.addListener("registration", (t) => { settled = true; resolve(t.value); });
+    PushNotifications.addListener("registrationError", (e) => { settled = true; reject(new Error(e?.error || "Push registration failed.")); });
+    PushNotifications.register().catch(reject);
+    setTimeout(() => { if(!settled) reject(new Error("Push registration timed out.")); }, 15000);
+  });
+  _nativePushToken = token;
+  await pushApi({ action:"subscribe", platform:"ios", deviceToken: token });
+  track("push_enabled","nav",{platform:"ios"});
+  try{ await pushApi({action:"welcome"}); }catch(_){}
+  installNativeBadgeListener(PushNotifications);
+}
+async function disableNativePush(){
+  try{
+    if(_nativePushToken) await pushApi({action:"unsubscribe", endpoint:_nativePushToken});
+  }catch{}
+  try{ const { PushNotifications } = await import("@capacitor/push-notifications"); await PushNotifications.unregister(); }catch{}
+  _nativePushToken = null;
+  track("push_disabled","nav",{platform:"ios"});
+}
+
+// ── App icon badge (App Store build plan §5 #4) ───────────────────────────────
+// WILCO has no per-notification "read" state anywhere (each of the four push
+// types is a single fire-and-forget alert, not an inbox) — so the honest,
+// scoped version of "unread count" is simply: bump the badge every time a push
+// LANDS while the athlete isn't actively looking, and clear it the moment they
+// open the app back up. That's the same mental model as every OS-level
+// notification badge (Mail, Messages) — a "there's something new" flag, not a
+// precise unread ledger.
+let _badgeListenerInstalled = false;
+function installNativeBadgeListener(PushNotifications){
+  if(_badgeListenerInstalled || !isNativeIOS()) return;
+  _badgeListenerInstalled = true;
+  PushNotifications.addListener("pushNotificationReceived", () => {
+    import("@capawesome/capacitor-badge").then(({ Badge }) => Badge.increase().catch(()=>{})).catch(()=>{});
+  });
+}
+// Clears the icon badge on foreground. Installed once from WilcoRoot's boot
+// effect (native-only; see the App.addListener("appStateChange") call below).
+async function clearNativeBadge(){
+  try{ const { Badge } = await import("@capawesome/capacitor-badge"); await Badge.clear(); } catch {}
+}
 
 // ─── PROOF FEED — newspaper front page ───────────────────────────────────────
 // The Proof tab renders each weekly/monthly digest as a front page ("The Proof",
@@ -3028,6 +3176,37 @@ function WilcoRoot() {
   const [athlete,setAthlete] = useState(()=> restored?.role==="athlete" ? {...restored.record, pin:restored.pin} : null);
   const [coach,setCoach] = useState(()=> restored?.role==="coach" ? {...restored.record, pin:restored.pin} : null);
   const [err,setErr] = useState("");
+  // Native Face ID gate on the persisted session (build plan: "gate the stored
+  // session token"). The web/PWA persistent-sign-in trade-off (memory line 230)
+  // is deliberate: within the 3h trust window a reopen skips Face ID entirely —
+  // accepted there because WebAuthn's flakiness (see the ROOT CAUSE comment near
+  // BIO_PREFIX) made re-asking unreliable anyway. Native has no such excuse:
+  // LocalAuthentication is instant and reliable, so the native build closes that
+  // trade-off — EVERY restored session on iOS is confirmed with one real Face ID
+  // check before any account data renders, not just on a fresh/expired login.
+  // "checking" renders a lock screen (not the account) until it resolves.
+  const [nativeGate,setNativeGate] = useState(()=> (isNativeIOS() && restored) ? "checking" : "clear");
+  useEffect(()=>{
+    if(nativeGate!=="checking") return;
+    let cancelled = false;
+    (async()=>{
+      try{
+        await nativeBiometricVerify(restored.role==="coach" ? "Unlock WILCO Coach" : "Unlock WILCO");
+        if(!cancelled) setNativeGate("clear");
+      }catch{
+        // Face ID failed/was cancelled/isn't available on this device: don't trust
+        // the silent restore. Drop back to the normal sign-in screen — the athlete
+        // can retry Face ID (HomeScreen's tap-to-login) or use their PIN, same as
+        // any fresh sign-in. The session token itself is cleared, not just hidden.
+        if(cancelled) return;
+        clearAuthSession();
+        setAthlete(null); setCoach(null); setView("home");
+        setNativeGate("clear");
+      }
+    })();
+    return ()=>{ cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   // Continued use extends the rolling trust window (so an active day never logs out).
   useEffect(()=>{
@@ -3039,14 +3218,54 @@ function WilcoRoot() {
   // Install global error reporting once, on mount (before any early return so the
   // hook order stays stable). Captures uncaught errors + unhandled rejections.
   useEffect(()=>{ captureFirstTouch(); installErrorReporting(); installEngagementTracking(); },[]);
+  // Native-only, fire-and-forget: check /app-version.json and stage a newer
+  // single-file bundle for the NEXT launch if one exists. Never awaited, never
+  // blocks first paint — see src/nativeOta.js for the full fallback guarantee.
+  useEffect(()=>{ if(isNativeIOS()) checkForOtaUpdate().catch(()=>{}); },[]);
+  // Native-only (App Store build plan §5 #4): re-arm the badge-increment
+  // listener on every launch (not just right after the athlete flips the push
+  // toggle — a returning session with push already enabled needs it too), and
+  // clear the icon badge whenever the app comes to the foreground.
+  useEffect(()=>{
+    if(!isNativeIOS()) return;
+    let offAppState = null;
+    (async () => {
+      try{
+        const { PushNotifications } = await import("@capacitor/push-notifications");
+        installNativeBadgeListener(PushNotifications);
+      }catch{}
+      try{
+        const { App: CapApp } = await import("@capacitor/app");
+        clearNativeBadge();
+        const h = await CapApp.addListener("appStateChange", ({isActive}) => { if(isActive) clearNativeBadge(); });
+        offAppState = () => h.remove();
+      }catch{}
+    })();
+    return () => { if(offAppState) offAppState(); };
+  },[]);
   useEffect(()=>{
     if(!eventCtx) return;
     if(eventCtx.active) track("event_landing_view","billing",{source:eventCtx.source});
     else { try { window.history.replaceState({}, "", "/"); } catch {} }
   },[]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // External checkout handoff (/upgrade) wins over everything else, INCLUDING the
+  // native Face ID gate below: per its definition above it's independent of any
+  // restored session and must always show the standalone checkout page, never
+  // gated behind biometric unlock (it never touches account data at all).
   // Zero app chrome — no wordmark shell, no nav, not gated on login state.
   if(checkoutCtx) return <CheckoutHandoff token={checkoutCtx.token} tier={checkoutCtx.tier} billing={checkoutCtx.billing}/>;
+
+  // Native Face ID gate: hold the lock screen until nativeBiometricVerify clears —
+  // account data (AthleteView/CoachDashboard) never mounts before that resolves.
+  if(nativeGate==="checking"){
+    return (
+      <div style={{minHeight:"100vh",background:CA.navy,color:CA.text,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center",fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{fontFamily:"'Bebas Neue'",fontSize:44,color:CA.accent,letterSpacing:5,lineHeight:1}}>WILCO</div>
+        <div style={{marginTop:14,fontSize:15,color:CA.muted2}}>Unlocking with Face ID…</div>
+      </div>
+    );
+  }
 
   if(view==="athlete"&&athlete) return <AthleteView athlete={athlete} onLogout={()=>{clearAuthSession();setAthlete(null);setView("home");}}/>;
   if(view==="coach"&&coach) return <Suspense fallback={<div style={{minHeight:"100vh",background:CA.navy}}/>}><CoachDashboard coach={coach} onLogout={()=>{clearAuthSession();setCoach(null);setView("home");}}/></Suspense>;
@@ -10746,6 +10965,19 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
           const hasFounder = codes.some(g=>g.unlimited);
           const copyCode = (code)=>{
             if(copiedCode===code) return;              // already showing "Copied!" — ignore until it resets
+            // Native iOS (App Store build plan §5 #3): a gift/tester code is exactly
+            // the kind of thing the OS share sheet exists for — hand it to Messages,
+            // Mail, AirDrop, whatever the athlete picks — instead of only ever
+            // copying to the clipboard. Falls straight through to the existing
+            // clipboard-copy behavior on web/PWA (unchanged) and if the athlete
+            // dismisses the native sheet without picking anything.
+            if(isNativeIOS()){
+              import("@capacitor/share").then(({ Share }) =>
+                Share.share({ title:"WILCO", text:`Use my code ${code} at trainwilco.com — your first month free.` }).catch(()=>{})
+              ).catch(()=>{});
+              haptic(10);
+              return;
+            }
             try{ navigator.clipboard.writeText(code); }catch(_){}
             haptic(10);
             setCopiedCode(code);
@@ -10753,7 +10985,8 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
           };
           const copyBtn = (code)=>{
             const done = copiedCode===code;
-            return <button onClick={()=>copyCode(code)} style={{background:done?CA.accent:"none",border:`1px solid ${done?CA.accent:CA.border}`,color:done?"#000":CA.text,borderRadius:8,padding:"4px 10px",cursor:done?"default":"pointer",fontSize:11,fontWeight:700,transition:"all 0.15s",minWidth:64}}>{done?"Copied!":"Copy"}</button>;
+            const label = isNativeIOS() ? "Share" : (done?"Copied!":"Copy");
+            return <button onClick={()=>copyCode(code)} style={{background:done?CA.accent:"none",border:`1px solid ${done?CA.accent:CA.border}`,color:done?"#000":CA.text,borderRadius:8,padding:"4px 10px",cursor:done?"default":"pointer",fontSize:11,fontWeight:700,transition:"all 0.15s",minWidth:64}}>{label}</button>;
           };
           return (
           <>
