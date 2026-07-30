@@ -10779,6 +10779,7 @@ function CrewTab({athlete, demo=false}){
   // roster; an org athlete never has an edge to opt in on, which IS the ban.
   const [compare,setCompare] = useState({me:null,peers:[]});
   const [cmpBusy,setCmpBusy] = useState(null);
+  const [infoFor,setInfoFor] = useState(null); // which row's "what is this" panel is open
 
   const loadRoster = ()=>{
     setLoading(true); setErr("");
@@ -10957,25 +10958,41 @@ function CrewTab({athlete, demo=false}){
                 return (
                   <div key={r.id} style={{position:"relative",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:11}}>
                     <div className="crewpuck" style={{"--pc":pc}}>{initialsOf(r.name)}</div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:isOrg?9:7}}>
                       <span style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{r.name}</span>
                       <span style={{marginLeft:"auto",fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:1,color:r.trainedThisWeek>0?CA.cyan:CA.muted}}>
                         {r.trainedThisWeek}{target?` OF ${target}`:""}
                       </span>
-                      {!isOrg&&(
-                        <>
-                          {/* Comparison opt-in. Yours only: it takes both of you to
-                              turn it on, and switching it off never tells them. */}
-                          <button onClick={()=>toggleCompare(r.id,!r.compareMine)} disabled={cmpBusy===r.id}
-                            title={r.compareMutual?"Comparing with each other":r.compareMine?"Waiting on them to compare back":"Compare lifts with each other"}
-                            style={{background:r.compareMine?`${CA.accent}18`:"none",border:`1px solid ${r.compareMine?CA.accent:CA.border}`,color:r.compareMutual?CA.cyan:r.compareMine?CA.accent:CA.faint,borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.6,fontFamily:"ui-monospace,Menlo,monospace"}}>
-                            {r.compareMutual?"COMPARING":r.compareMine?"WAITING":"COMPARE"}
-                          </button>
-                          <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
-                            style={{background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
-                        </>
-                      )}
                     </div>
+                    {/* Controls sit on their own line so the name never has to fight
+                        three chips for room on a phone. Org rows have no controls at
+                        all, so their height is unchanged. */}
+                    {!isOrg&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:9}}>
+                        {/* Comparison opt-in. Yours only: it takes both of you to
+                            turn it on, and switching it off never tells them. */}
+                        <button onClick={()=>toggleCompare(r.id,!r.compareMine)} disabled={cmpBusy===r.id}
+                          style={{background:r.compareMine?`${CA.accent}18`:"none",border:`1px solid ${r.compareMine?CA.accent:CA.border}`,color:r.compareMutual?CA.cyan:r.compareMine?CA.accent:CA.faint,borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.6,fontFamily:"ui-monospace,Menlo,monospace"}}>
+                          {r.compareMutual?"COMPARING":r.compareMine?"WAITING":"COMPARE"}
+                        </button>
+                        {/* Nobody should have to tap a thing to find out what it does,
+                            least of all one that shares their numbers with someone. */}
+                        <button onClick={()=>setInfoFor(infoFor===r.id?null:r.id)}
+                          aria-label="What does comparing do?" aria-expanded={infoFor===r.id}
+                          style={{background:"none",border:`1px solid ${infoFor===r.id?CA.accent:CA.border}`,color:infoFor===r.id?CA.accent:CA.faint,borderRadius:"50%",width:17,height:17,lineHeight:1,padding:0,cursor:"pointer",fontSize:10,fontWeight:700,fontFamily:"'DM Sans'",flexShrink:0}}>i</button>
+                        <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
+                          style={{marginLeft:"auto",background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
+                      </div>
+                    )}
+                    {infoFor===r.id&&(
+                      <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px 12px",marginBottom:10,color:CA.muted2,fontSize:11.5,lineHeight:1.6}}>
+                        <div style={{color:CA.accent,fontSize:9.5,letterSpacing:1.4,fontFamily:"ui-monospace,Menlo,monospace",marginBottom:7}}>WHAT COMPARING DOES</div>
+                        <div style={{marginBottom:6}}>You both have to turn it on. Nothing shows up until {r.name.split(" ")[0]} turns it on too, and they are not told that you did.</div>
+                        <div style={{marginBottom:6}}>Once you both have: your strength scores sit side by side down in Head to Head, and a small marker shows up on your benchmark bars for how far through their own rank they are.</div>
+                        <div style={{marginBottom:6}}>Ranks only. Your actual weights are never shared, in either direction.</div>
+                        <div>Turn it off whenever you want. They do not get told that either.</div>
+                      </div>
+                    )}
                     <div style={{display:"flex",alignItems:"center",gap:3}}>
                       {chain.map((on,k)=><div key={k} className={`streaklnk${on?" on":""}`}/>)}
                     </div>
