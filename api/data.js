@@ -657,7 +657,7 @@ async function loadCallerAthlete(caller) {
   if (caller.role !== "athlete") throw httpErr(403, "This account can't use Crew");
   // sport + crew_team come along because they resolve the caller's TEAM, which
   // is what an org crew is scoped to since the 2026-07-30 review pass (#3).
-  const rows = await sbSelect("athletes", `?id=eq.${enc(caller.id)}&select=id,name,crew_org_key,crew_code,school_id,coach_id,sport,crew_team`);
+  const rows = await sbSelect("athletes", `?id=eq.${enc(caller.id)}&select=id,name,crew_org_key,crew_code,school_id,coach_id,sport,crew_team,crew_goal_text,crew_goal_targets,crew_goal_label`);
   const me = rows[0];
   if (!me) throw httpErr(401, "Not authorized");
   return me;
@@ -786,8 +786,9 @@ async function handleCrew(body, caller, res) {
     // whether or not they have peers — an athlete with an empty crew should
     // still be able to see and set this.
     const myGoals = await loadOwnGoals(me.id);
+    const crewGoal = await loadCrewGoal(me.id);
     if (!peers.length) {
-      return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoals });
+      return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoals, crewGoal });
     }
     const idList = peers.map((id) => `"${id}"`).join(",");
     // The caller's OWN week rides along in the same this-week query, because the
@@ -795,7 +796,7 @@ async function handleCrew(body, caller, res) {
     // your own crew's total makes that number quietly wrong.
     const weekIdList = [...peers, me.id].map((id) => `"${id}"`).join(",");
     const [athletesRows, goalsRows, workoutRows, recentWorkoutRows] = await Promise.all([
-      sbSelect("athletes", `?id=in.(${idList})&select=id,name,training_days_per_week`),
+      sbSelect("athletes", `?id=in.(${idList})&select=id,name,training_days_per_week,crew_goal_targets,crew_goal_label`),
       // Goal-at-a-glance ONLY for peers who opted in (share_with_crew=true) — default
       // off. ALL of their shared goals, not just the latest: an athlete can be
       // chasing three lifts across three separate goals and the row shows them all.
@@ -839,7 +840,21 @@ async function handleCrew(body, caller, res) {
       // short labels for goals with nothing measurable in them. `quiet` is the
       // missed-dated-goal case and is deliberately NOT a miss — see
       // goalTargetState in api/_crew.js.
-      const goal = composeGoalGlance(myGoals, currentByLift);
+      // A crew-goal override REPLACES what this athlete's row shows. They wrote it
+      // FOR their crew, so it is implicitly shared and their per-goal share flags
+      // stop applying. Their real goals are untouched: nothing outside this
+      // surface reads these columns, so the AI still programs off the real thing.
+      const override = (Array.isArray(a.crew_goal_targets) && a.crew_goal_targets.length) || a.crew_goal_label
+        ? [{ parsed_targets: a.crew_goal_targets, short_label: a.crew_goal_label }]
+        : null;
+      if (override) {
+        for (const t of goalTargets(override[0])) {
+          const key = t.lift.toLowerCase();
+          if (key in currentByLift) continue;
+          currentByLift[key] = await bestE1rmLbsForLift(a.id, t.lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
+        }
+      }
+      const goal = composeGoalGlance(override || myGoals, currentByLift);
       // NOTE: compare_a/compare_b (V2 opt-in) are never selected/returned here at
       // all — there is no comparison surface in V1, org or individual. When V2
       // lands, this is the spot that must keep stripping those fields for org
@@ -866,7 +881,7 @@ async function handleCrew(body, caller, res) {
       trainedThisWeek: (trainedByAthlete[me.id] || new Set()).size,
       trainingDaysPerWeek: (meRows[0] && meRows[0].training_days_per_week) || null,
     };
-    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoals, myWeek });
+    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoals, crewGoal, myWeek });
   }
 
   if (action === "crew-feed") {
@@ -891,6 +906,25 @@ async function handleCrew(body, caller, res) {
   // Goal sharing opt-in (finding #4). Default is OFF and stays OFF until the
   // athlete flips it here — this is the only write path to share_with_crew, and
   // it can only ever touch the CALLER's own most recent goal.
+  // What your CREW sees of your goals, which is not the same question as what
+  // you are training for. Writes only to the athletes.crew_goal_* columns, which
+  // nothing outside this surface reads, so it can never change what the AI
+  // programs against. Sending empty text clears the override and your real
+  // shared goals come back.
+  if (action === "crew-goal-display") {
+    const text = String(body.text ?? "").trim().slice(0, 600);
+    const patch = text
+      ? {
+          crew_goal_text: text,
+          crew_goal_targets: Array.isArray(body.targets) ? body.targets.slice(0, 8) : [],
+          crew_goal_label: body.label ? String(body.label).slice(0, 60) : null,
+          crew_goal_at: new Date().toISOString(),
+        }
+      : { crew_goal_text: null, crew_goal_targets: null, crew_goal_label: null, crew_goal_at: null };
+    await sbWrite({ method: "PATCH", table: "athletes", query: `?id=eq.${enc(me.id)}`, body: patch, prefer: "return=minimal" });
+    return res.status(200).json({ ok: true, crewGoal: await loadCrewGoal(me.id) });
+  }
+
   if (action === "crew-goal-share") {
     const share = body.share === true;
     // Per GOAL now, not per athlete: someone can share the bench number and keep
@@ -1022,6 +1056,23 @@ async function comparePeers(peerIds) {
 // result. Never on render of anyone else's row, and never more than once per
 // goal, so the AI cost stays bounded and nobody's goal is parsed by a stranger's
 // device.
+// The caller's own crew-goal override, rendered through the exact component a
+// peer's row uses, so what they see in the editor is what their crew sees.
+async function loadCrewGoal(athleteId) {
+  const rows = await sbSelect("athletes", `?id=eq.${enc(athleteId)}&select=crew_goal_text,crew_goal_targets,crew_goal_label`);
+  const a = rows[0];
+  if (!a || !a.crew_goal_text) return null;
+  const row = { parsed_targets: a.crew_goal_targets, short_label: a.crew_goal_label };
+  const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
+  const currentByLift = {};
+  for (const t of goalTargets(row)) {
+    const key = t.lift.toLowerCase();
+    if (key in currentByLift) continue;
+    currentByLift[key] = await bestE1rmLbsForLift(athleteId, t.lift, { resolveLift, bestE1RMForExercise, toLbs, epley1RM });
+  }
+  return { text: a.crew_goal_text, glance: composeGoalGlance([row], currentByLift, Date.now(), 0) };
+}
+
 async function loadOwnGoals(athleteId) {
   const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=12&select=*`);
   if (!rows.length) return [];
