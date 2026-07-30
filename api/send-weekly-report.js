@@ -3,6 +3,12 @@
 
 // Vercel Pro: cap this function's execution time. Was implicitly the Hobby 10s
 // wall; 60s gives external Stripe/email/DB calls room without paying for idle time.
+// effectiveDate honors parsed_data.log_date, so a backdated log ("I did this
+// yesterday") lands on the day it HAPPENED in the coach's weekly email, not the
+// day it was typed. Re-exported from src/grit.js so this file cannot drift from
+// the client's grouping (see api/_grit.js).
+import { effectiveDate } from "./_grit.js";
+
 export const maxDuration = 60;
 
 export default async function handler(req, res) {
@@ -115,11 +121,11 @@ const isRealEntry = (w) => {
 const GAP_MS = 3 * 60 * 60 * 1000;
 function groupIntoSessions(workouts) {
   const real   = workouts.filter(isRealEntry);
-  const sorted = [...real].sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
+  const sorted = [...real].sort((a,b) => effectiveDate(a) - effectiveDate(b));
   const groups = [];
   let cur = null, lastTime = null;
   sorted.forEach(w => {
-    const t  = new Date(w.created_at).getTime();
+    const t  = effectiveDate(w).getTime();
     const pd = getPD(w);
     if(!lastTime || pd.new_session === true || t - lastTime > GAP_MS) {
       cur = [w]; groups.push(cur);
@@ -133,7 +139,7 @@ function groupIntoSessions(workouts) {
 
 // Merges entries in a session group into one display row.
 function mergeSession(entries) {
-  const date     = new Date(entries[0].created_at).toLocaleDateString("en-US", {weekday:"short", month:"short", day:"numeric"});
+  const date     = effectiveDate(entries[0]).toLocaleDateString("en-US", {weekday:"short", month:"short", day:"numeric"});
   const exercises = [];
   const painAreas = [];
   const feelRank  = {rough:0, average:1, good:2, great:3};

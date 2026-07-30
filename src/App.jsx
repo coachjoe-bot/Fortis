@@ -6341,6 +6341,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           }
         } catch(_){ /* best-effort */ }
       }
+      // A correction can REMOVE a session (stripping its exercises makes the row
+      // stop counting), so the lifetime total has to be re-read and allowed to
+      // fall. Without this the header stays pinned at its pre-delete high and
+      // silently swallows the next real workout. Same view the log path trusts.
+      await syncSessionCountAfterChange(athlete, setAthlete);
       haptic(15);
       // The transcript line IS the evidence the next turn reads (see the two-state
       // LOG CORRECTIONS rule in JOEBOT_STATIC_SYS). Name the session and its real
@@ -7844,7 +7849,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       )}
 
       {/* My Log Modal */}
-      {showLog&&<MyLogModal workoutHistory={workoutHistory} athlete={athlete} onClose={()=>setShowLog(false)} proofDigest={proofDigest} onDigestRead={(d)=>setProofDigest(d)} onOpenProofChat={(past)=>{setShowLog(false);setChatDigest(past&&past.id?past:null);setShowProofChat(true);}} setWorkoutHistory={setWorkoutHistory}/>}
+      {showLog&&<MyLogModal workoutHistory={workoutHistory} athlete={athlete} onClose={()=>setShowLog(false)} proofDigest={proofDigest} onDigestRead={(d)=>setProofDigest(d)} onOpenProofChat={(past)=>{setShowLog(false);setChatDigest(past&&past.id?past:null);setShowProofChat(true);}} setWorkoutHistory={setWorkoutHistory} onSessionCountChanged={()=>syncSessionCountAfterChange(athlete,setAthlete)}/>}
 
       {/* Program View Modal */}
       {showProgram&&(
@@ -8826,7 +8831,7 @@ function CountUp({end, dur=800, style}) {
   return <span style={style}>{n}</span>;
 }
 
-function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead, onOpenProofChat, setWorkoutHistory}) {
+function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead, onOpenProofChat, setWorkoutHistory, onSessionCountChanged}) {
   const [tab,setTab] = useState("workouts");
   const [editSession,setEditSession] = useState(null);
   // Older-session paging. workoutHistory is the recent working set (capped at ~100 raw
@@ -9232,6 +9237,10 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
           onRowUpdated={(id,newParsedData)=>{
             setWorkoutHistory(prev=>prev.map(w=>w.id===id?{...w,parsed_data:newParsedData}:w));
             setOlderWorkouts(prev=>prev.map(w=>w.id===id?{...w,parsed_data:newParsedData}:w));
+            // A hand edit can empty a session's exercises, which removes it from
+            // the count exactly like a Joe correction does. Same refresh, so the
+            // two removal paths can never disagree.
+            onSessionCountChanged&&onSessionCountChanged();
           }}
         />
       )}
@@ -9243,6 +9252,42 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
 // Lets the athlete fix a past logged workout: adjust sets/reps/weight per exercise,
 // or remove an exercise entirely. Edits are written back to whichever underlying
 // "workouts" row each exercise came from (a session can span more than one entry).
+// ─── AUTHORITATIVE SESSION COUNT (T19 #3) ────────────────────────────────────
+// The header "WORKOUTS: N" reads Math.max(athlete.total_sessions_logged, local
+// groupIntoSessions(...)). The floor is deliberate: workoutHistory is capped at
+// the last ~100 raw rows, so a local recompute UNDER-counts a long history and
+// would ratchet the number down on every log. But it also means the stored value
+// can never fall, and NOTHING refreshed it when work was removed — so deleting a
+// mislogged session left the count pinned at its old high (Will's 31 -> 32 ->
+// deleted -> still 32 -> logged a real one -> still 32, where the real workout
+// was swallowed because it merely re-reached a number already showing).
+//
+// Removal is not a row delete anywhere in this app: a correction strips the
+// exercises, which makes the row stop satisfying isRealSession / the view's
+// WHERE. So the view already reports the lower number. The only missing step was
+// reading it back and letting the stored value go DOWN. This is that step, and
+// it is the SAME source of truth the log path uses, so the two can never
+// disagree.
+const readAuthoritativeSessionCount = async (athleteId) => {
+  try {
+    const rows = await sbRead("v_athlete_session_counts", `?athlete_id=eq.${athleteId}&select=session_count`);
+    const n = Array.isArray(rows) && rows[0] != null ? Number(rows[0].session_count) : NaN;
+    return Number.isFinite(n) ? n : null;
+  } catch (_) { return null; }
+};
+
+// Re-read the count after work was edited or removed and persist it if it moved,
+// in EITHER direction. Returns the new count (or null when the view is
+// unreachable, in which case the stored value is deliberately left alone rather
+// than guessed at from the capped local window).
+const syncSessionCountAfterChange = async (athlete, setAthlete) => {
+  const n = await readAuthoritativeSessionCount(athlete.id);
+  if (n == null || n === (athlete.total_sessions_logged || 0)) return n;
+  try { await sbUpdate("athletes", athlete.id, { total_sessions_logged: n }); } catch (_) { return null; }
+  setAthlete(prev => ({ ...prev, total_sessions_logged: n }));
+  return n;
+};
+
 function EditWorkoutModal({session, onClose, onRowUpdated}) {
   const parseEntry = (e) => typeof e.parsed_data==="string" ? (()=>{try{return JSON.parse(e.parsed_data);}catch{return {};}})() : (e.parsed_data||{});
 

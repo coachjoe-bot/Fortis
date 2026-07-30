@@ -24,8 +24,56 @@
 // Env: CRON_SECRET, SUPABASE_URL + SUPABASE_SERVICE_KEY (via ./_supa.js).
 
 import { sbSelect, sbDelete, sbWrite, logError } from "./_supa.js";
+import { getStripe } from "./_stripe.js";
 
 const enc = encodeURIComponent;
+
+// ─── Cancel billing BEFORE purging the account ───────────────────────────────
+// Found 07-30: this job deleted the athlete row and every trace of them while
+// never touching Stripe, so a deleted account kept its subscription alive and
+// kept charging a real card that no longer had any account behind it, with the
+// only record of the link (athletes.stripe_subscription_id) destroyed in the
+// same pass. Billing has to die first.
+//
+// Return contract: true = safe to proceed with the purge, false = do NOT purge
+// this run. "Already gone" is a success, not a failure: a subscription Stripe
+// says is missing or already canceled cannot bill anyone, so those proceed.
+// Any OTHER error (network, auth, rate limit) returns false, which leaves the
+// request `pending` so the next run retries. That is deliberate. Deleting on a
+// failed cancel would orphan live billing AND destroy the evidence needed to
+// find it, which is strictly worse than a deletion landing a day late; a
+// persistent failure surfaces in error_events for a human rather than silently
+// resolving in either direction.
+async function cancelBillingFor(aid) {
+  let rows;
+  try {
+    rows = await sbSelect("athletes", `?id=eq.${enc(aid)}&select=stripe_subscription_id`);
+  } catch (e) {
+    console.error(`[process-deletions] could not read billing for athlete ${aid}:`, e.message);
+    return false;
+  }
+  const subId = Array.isArray(rows) && rows[0] ? rows[0].stripe_subscription_id : null;
+  if (!subId) return true; // never subscribed, or already cleared — nothing to cancel
+
+  try {
+    await getStripe().subscriptions.cancel(subId);
+    return true;
+  } catch (e) {
+    // resource_missing = the subscription does not exist. Stripe also rejects a
+    // cancel on one that is already canceled; both mean nothing can bill.
+    const code = e?.code || e?.raw?.code;
+    const msg = String(e?.message || "");
+    if (code === "resource_missing" || /no such subscription|already canceled|already been canceled/i.test(msg)) {
+      return true;
+    }
+    console.error(`[process-deletions] Stripe cancel FAILED for athlete ${aid} (sub ${subId}):`, msg);
+    await logError({
+      source: "server", severity: "error", area: "billing", route: "api/process-deletions",
+      message: `Stripe cancel failed before account deletion (sub ${subId}): ${msg}`,
+    }).catch(() => {});
+    return false;
+  }
+}
 
 // Every table that holds athlete-scoped data. Tables with an ON DELETE CASCADE FK
 // to athletes(id) would be cleaned by the athletes delete anyway, but we delete
@@ -98,6 +146,12 @@ async function runDeletions() {
     }
 
     try {
+      // 0. Kill billing FIRST. If this cannot be confirmed, skip the purge and
+      //    retry next run rather than orphan a live subscription.
+      if (!(await cancelBillingFor(aid))) {
+        summary.failed++;
+        continue;
+      }
       // 1. Delete all athlete-scoped data.
       for (const tbl of ATHLETE_TABLES) {
         await sbDelete(tbl, `?athlete_id=eq.${enc(aid)}`);
