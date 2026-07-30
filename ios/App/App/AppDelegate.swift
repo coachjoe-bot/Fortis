@@ -58,8 +58,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
     }
 
+    // Capacitor 8 publishes exactly TWO remote-notification names,
+    // capacitorDidRegisterForRemoteNotifications and
+    // capacitorDidFailToRegisterForRemoteNotifications (verified against
+    // Capacitor.swiftmodule). There is no "did receive" name and no
+    // ApplicationDelegateProxy forwarder for it, so the earlier
+    // `.capacitorDidReceiveRemoteNotification` post did not compile.
+    //
+    // Nothing is lost by dropping it: @capacitor/push-notifications delivers
+    // pushNotificationReceived / pushNotificationActionPerformed through its own
+    // UNUserNotificationCenterDelegate, which covers every alert push. All four
+    // WILCO push types are alerts, so this hook only needs to close out the
+    // background-fetch contract. If silent data-only pushes are ever added, they
+    // need their own handling here, not a Capacitor notification.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        NotificationCenter.default.post(name: .capacitorDidReceiveRemoteNotification, object: userInfo, userInfo: userInfo as? [AnyHashable: Any])
         completionHandler(.noData)
     }
 
