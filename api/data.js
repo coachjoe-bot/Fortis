@@ -782,11 +782,15 @@ async function handleCrew(body, caller, res) {
       return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster: [], myGoal });
     }
     const idList = peers.map((id) => `"${id}"`).join(",");
+    // The caller's OWN week rides along in the same this-week query, because the
+    // crew reads as one object in the UI (the spine) and leaving yourself out of
+    // your own crew's total makes that number quietly wrong.
+    const weekIdList = [...peers, me.id].map((id) => `"${id}"`).join(",");
     const [athletesRows, goalsRows, workoutRows, recentWorkoutRows] = await Promise.all([
       sbSelect("athletes", `?id=in.(${idList})&select=id,name,training_days_per_week`),
       // Goal-at-a-glance ONLY for peers who opted in (share_with_crew=true) — default off.
       sbSelect("athlete_goals", `?athlete_id=in.(${idList})&share_with_crew=eq.true&order=created_at.desc&select=*`),
-      sbSelect("workouts", `?athlete_id=in.(${idList})&created_at=gte.${enc(mondayIso())}&select=athlete_id,parsed_data,created_at`),
+      sbSelect("workouts", `?athlete_id=in.(${weekIdList})&created_at=gte.${enc(mondayIso())}&select=athlete_id,parsed_data,created_at`),
       // Quiet-crewmate nudge (8-day rule): bounded to a generous window so "quiet"
       // still distinguishes from "never logged" without an unbounded per-peer scan.
       sbSelect("workouts", `?athlete_id=in.(${idList})&created_at=gte.${enc(new Date(Date.now() - 400 * 864e5).toISOString())}&select=athlete_id,created_at&order=created_at.desc`),
@@ -833,7 +837,12 @@ async function handleCrew(body, caller, res) {
         quietDays,
       });
     }
-    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoal });
+    const meRows = await sbSelect("athletes", `?id=eq.${enc(me.id)}&select=training_days_per_week`);
+    const myWeek = {
+      trainedThisWeek: (trainedByAthlete[me.id] || new Set()).size,
+      trainingDaysPerWeek: (meRows[0] && meRows[0].training_days_per_week) || null,
+    };
+    return res.status(200).json({ isOrg: org.isOrg, team: org.teamName, code: me.crew_code || null, pending, roster, myGoal, myWeek });
   }
 
   if (action === "crew-feed") {

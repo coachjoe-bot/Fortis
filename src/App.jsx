@@ -10716,9 +10716,13 @@ function CrewTab({athlete, demo=false}){
   const looksLikeCode = /^[A-Za-z]{2,8}-[A-Za-z0-9]{3,6}$/.test(query.trim());
   const shown = q&&!looksLikeCode ? roster.filter(r=>String(r.name||"").toLowerCase().includes(q)) : roster;
 
-  // How charged the crew's week is, as one number. Drives the spine.
-  const weekDone = roster.reduce((n,r)=>n+(r.trainedThisWeek||0),0);
-  const weekTarget = roster.reduce((n,r)=>n+(r.trainingDaysPerWeek||4),0);
+  // How charged the crew's week is, as one number. Drives the spine. YOU are
+  // part of your own crew's total, so myWeek is folded in: the spine is supposed
+  // to read as the whole group charging together, and leaving yourself out makes
+  // the number quietly wrong.
+  const mine = data?.myWeek||null;
+  const weekDone = roster.reduce((n,r)=>n+(r.trainedThisWeek||0),0) + (mine?.trainedThisWeek||0);
+  const weekTarget = roster.reduce((n,r)=>n+(r.trainingDaysPerWeek||4),0) + (mine?(mine.trainingDaysPerWeek||4):0);
   const lit = weekTarget>0 ? Math.max(0,Math.min(1,weekDone/weekTarget)) : 0;
 
   return (
@@ -10747,7 +10751,7 @@ function CrewTab({athlete, demo=false}){
           </div>
 
           <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:11,textTransform:"uppercase",fontFamily:"ui-monospace,Menlo,monospace"}}>
-            {isOrg&&data?.team ? data.team : "Your crew"} · {weekTarget>0?`${weekDone} of ${weekTarget} sessions logged`:`${roster.length} ${roster.length===1?"person":"people"}`}
+            {isOrg&&data?.team ? data.team : "Your crew"}{roster.length>0&&weekTarget>0?` · ${weekDone} of ${weekTarget} sessions logged`:""}
           </div>
 
           {/* Your own goal + the share opt-in. Off by default; this is the only
@@ -10873,17 +10877,19 @@ function CrewTab({athlete, demo=false}){
             const cut = Date.now()-7*864e5;
             const recent = feed.filter(m=>new Date(m.created_at).getTime()>=cut);
             const stats = [
-              ["RANK-UPS", recent.filter(m=>m.type==="pr").length],
-              ["WEEKS CLOSED", recent.filter(m=>m.type==="week"&&m.payload&&m.payload.perfect).length],
-              ["GOALS HIT", recent.filter(m=>m.type==="goal").length],
-              ["MILESTONES", recent.filter(m=>m.type==="milestone").length],
-            ].filter(([,n])=>n>0);
+              ["RANK-UP","RANK-UPS", recent.filter(m=>m.type==="pr").length],
+              ["WEEK CLOSED","WEEKS CLOSED", recent.filter(m=>m.type==="week"&&m.payload&&m.payload.perfect).length],
+              ["GOAL HIT","GOALS HIT", recent.filter(m=>m.type==="goal").length],
+              ["MILESTONE","MILESTONES", recent.filter(m=>m.type==="milestone").length],
+            ].filter(([,,n])=>n>0);
             if(!stats.length) return null;
             return (
               <div style={{border:`1px solid ${CA.border}`,borderRadius:8,background:CA.navy2,padding:"9px 11px",marginBottom:16,
-                fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.9,color:CA.muted,overflowX:"auto",whiteSpace:"nowrap"}}>
-                LAST 7D{stats.map(([label,n])=>(
-                  <span key={label}> · <span style={{color:CA.cyan}}>{n} {label}</span></span>
+                display:"flex",flexWrap:"wrap",alignItems:"center",gap:"4px 10px",
+                fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.9,color:CA.muted}}>
+                <span>LAST 7D</span>
+                {stats.map(([one,many,n])=>(
+                  <span key={many} style={{color:CA.cyan}}>{n} {n===1?one:many}</span>
                 ))}
               </div>
             );
