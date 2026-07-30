@@ -382,6 +382,80 @@ export const sbUpsert = async (table,data,conflict) => {
   await dataApi("upsert",table,{data,conflict});
 };
 
+// ─── WILCO CREW V1 ────────────────────────────────────────────────────────────
+// Every crew read/write except plain moment writes (a plain athlete-owned insert
+// into crew_moments, same trust level as workouts/prs — see api/data.js) routes
+// through this one op. `demo` is the replay-safety seam the crew test plan calls
+// for: the same guarantee QuickLogSheet's `demo` prop gives the onboarding tour
+// (a tour/demo replay never hits the real gateway). Nothing threads a truthy
+// demo flag through today — Crew doesn't touch the tour in this build — but the
+// checkpoint is here now so it isn't a retrofit later.
+export const crewApi = async (action, params = {}, { demo = false } = {}) => {
+  if (demo) return { ok: true, faked: true };
+  const r = await fetch("/api/data", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ auth: CURRENT_AUTH, op: "crew", action, ...params }),
+  });
+  const t = await r.text();
+  let d; try { d = t ? JSON.parse(t) : null; } catch (_) { d = t; }
+  if (!r.ok) throw new Error((d && d.error) || `Crew request failed (${r.status})`);
+  return d;
+};
+
+// One AI call per goal text, on insert/edit only — never on render (Crew build
+// spec, "Goal parsing"). Haiku, mechanical extraction only: the AI NEVER computes
+// progress, only structure. Returns {lift,target_lbs,target_date} or {lift:null}
+// when the goal isn't numeric ("make varsity" etc.). Best-effort: a parse failure
+// leaves the goal as plain text (still shown, just without a progress bar) —
+// never blocks the goal from saving.
+export const parseAthleteGoal = async (goalText) => {
+  try {
+    const raw = await askClaude(
+      `Extract structure from an athlete's stated training goal. Return ONLY JSON, no markdown: {"lift":string|null,"target_lbs":number|null,"target_date":string|null}. "lift" is the plain lift name ("bench press", "back squat", "deadlift") ONLY if the goal names a specific numeric lift target — else null. "target_lbs" is the numeric weight goal in POUNDS (convert kg to lbs: 1kg=2.205lbs) — else null. "target_date" is an ISO date (YYYY-MM-DD) ONLY if a date/timeframe is explicitly stated — else null. A non-numeric goal ("make varsity", "get stronger") returns lift:null and both other fields null.`,
+      `Goal: "${goalText}"`, 300, [], "claude-haiku-4-5", "goal_parse"
+    );
+    const parsed = JSON.parse(String(raw).replace(/```json|```/g, "").trim());
+    return {
+      lift: parsed.lift ? String(parsed.lift).slice(0, 60) : null,
+      target_lbs: Number.isFinite(+parsed.target_lbs) && +parsed.target_lbs > 0 ? +parsed.target_lbs : null,
+      target_date: typeof parsed.target_date === "string" && !Number.isNaN(Date.parse(parsed.target_date)) ? parsed.target_date : null,
+    };
+  } catch (_) {
+    return null; // parse unavailable (e.g. ANTHROPIC_KEY missing on preview) — goal still saves as plain text
+  }
+};
+// Parse a just-inserted athlete_goals row fire-and-forget and patch the parsed
+// fields on — called right after every athlete_goals insert (flush rule: every
+// sibling call site gets this, not just one). Never awaited on the save path.
+export const parseAndStampGoal = (row) => {
+  if (!row || !row.id || !row.goal_text) return;
+  parseAthleteGoal(row.goal_text).then((p) => {
+    if (!p) return;
+    const patch = { parsed_lift: p.lift, target_lbs: p.target_lbs, parsed_at: new Date().toISOString() };
+    if (p.target_date) patch.target_date = p.target_date;
+    sbUpdate("athlete_goals", row.id, patch).catch(() => {});
+  }).catch(() => {});
+};
+
+// Write this turn's detected crew moments — best-effort, fire-and-forget, gated
+// on the athlete actually having ≥1 crew peer (no point writing a moment nobody
+// can ever read — this replaces the old spec's coach/school eligibility gate
+// entirely: there is no more "who's allowed Crew" gate, only "does anyone see
+// this"). A failure here must be invisible to the athlete; never awaited on the
+// chat reply's critical path — see the 4 call sites in send() (pr/week/
+// milestone/goal, build spec §8).
+const crewWriteMoments = async (athlete, moments) => {
+  if(!moments || !moments.length) return;
+  try {
+    const list = await crewApi("crew-list");
+    if(!list || !Array.isArray(list.roster) || list.roster.length===0) return; // no peers → nothing to write
+    for(const m of moments){
+      await sbInsert("crew_moments", {athlete_id:athlete.id, type:m.type, payload:m.payload});
+    }
+  } catch(_){ /* best-effort — never surfaces to the athlete */ }
+};
+
 // Program-history block snapshot (Program Builder Phase B). Called fire-and-forget
 // after EVERY successful program_text write — athlete chat branches, tab saves,
 // propagation rewrites, and coach.jsx's onProgramSave all route here (flush rule:
@@ -1116,6 +1190,20 @@ export const fmtWeight = (weight, unit) => {
 // Normalize any weight to lbs-equivalent for cross-unit comparison.
 export const toLbs = (weight, unit) => (unit==="kg" ? weight*2.205 : weight);
 
+// Crew PR moments only fire on a TIER change (a rank-up), never every PR (build
+// spec §8) — same tier ladder the Benchmarks power cells use (BENCH_THRESHOLDS/
+// scaledThresholds/tierForRatio), computed here so send() can compare before/
+// after a log without touching the Progress modal's own (separately
+// localStorage-baselined) rank-up tracker. -1 when the lift has no benchmark
+// ladder, bodyweight is unknown, or there's no e1RM yet.
+export const tierIdxForBenchLift = (benchKey, e1rmLbs, {bodyweight, genderKey="male", age=null}={}) => {
+  if(!bodyweight || !benchKey || !e1rmLbs) return -1;
+  const threshRaw = BENCH_THRESHOLDS[genderKey]?.[benchKey];
+  if(!threshRaw) return -1;
+  const thresh = scaledThresholds(threshRaw, bodyweight, genderKey, age);
+  return tierForRatio(e1rmLbs/bodyweight, thresh);
+};
+
 // A "real session" has at least one parsed exercise or run_data (filters out pure Q&A messages)
 // isRealSession + groupIntoSessions now live in ./grit.js (imported+re-exported
 // above) — pure, server-safe, and next to effectiveDate which they sort by.
@@ -1830,11 +1918,36 @@ export const GSA = `
 /* streak charge-chain — thin bars, trained days fill blue→cyan */
 .streaklnk{flex:1;height:6px;border-radius:2px;background:#0c1526;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
 .streaklnk.on::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,${CA.accent},${CA.cyan});box-shadow:0 0 6px ${CA.cyan};}
+/* ── CREW: the "charge line" skin (Will's pick, 07-30) ──────────────────────
+   The roster hangs off ONE spine that lights from the top down in proportion to
+   how much of the crew's week is actually logged, so the team reads as a single
+   charging object. --lit is that fraction. Rows carry a tier-coloured puck; the
+   whole language is borrowed from the Benchmarks power cell and the rank-up
+   stamp rather than inventing anything new. */
+.crewline{position:relative;padding-left:30px;}
+.crewspine{position:absolute;left:9px;top:4px;bottom:4px;width:3px;border-radius:2px;background:#132449;overflow:hidden;}
+.crewspine::after{content:"";position:absolute;left:0;right:0;top:0;height:calc(var(--lit,0)*100%);
+  background:linear-gradient(180deg,${CA.cyan},${CA.accent});box-shadow:0 0 12px ${CA.accent}73;
+  transition:height 1.05s cubic-bezier(.3,.8,.3,1);}
+.crewpuck{position:absolute;left:-30px;top:14px;width:23px;height:23px;border-radius:50%;display:grid;place-items:center;
+  font-family:'Bebas Neue';font-size:11px;letter-spacing:.5px;color:${CA.navy};background:var(--pc,${CA.accent});
+  box-shadow:0 0 11px var(--pc,${CA.accent});}
+/* Moment card: the rank-up colour washes in from the left edge. This is the one
+   place Crew is allowed to look alive, because it's the one place where
+   something actually just happened. */
+.mcard{position:relative;background:${CA.navy2};border:1px solid ${CA.border};border-radius:12px;padding:13px 14px;margin-bottom:10px;overflow:hidden;}
+.mcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mc,${CA.accent});box-shadow:0 0 16px var(--mc,${CA.accent});}
+.mcard::after{content:"";position:absolute;left:0;top:0;bottom:0;width:64px;pointer-events:none;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--mc,${CA.accent}) 17%,transparent),transparent);}
+.mstamp{font-family:ui-monospace,Menlo,monospace;font-size:8px;font-weight:700;letter-spacing:.9px;padding:2px 7px;border-radius:5px;
+  color:var(--mc,${CA.accent});border:1px solid var(--mc,${CA.accent});background:color-mix(in srgb,var(--mc,${CA.accent}) 9%,transparent);
+  box-shadow:0 0 12px color-mix(in srgb,var(--mc,${CA.accent}) 40%,transparent);}
 /* mono HUD-kicker register (matches Field Mode kickers / loader captions) — used
    for Settings group labels ("PROOF FEED", "WEIGHT UNIT", etc.) */
 .setgrp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${CA.faint};}
 @media (prefers-reduced-motion: reduce){
   .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
+  .crewspine::after{transition:none!important;}
   .hcell.go .hfill{transform:scaleX(var(--pct,0))!important;}
   .hcell.revealup .hfill{animation:none!important;transform:scaleX(var(--pct,0))!important;}
   .a-draw{stroke-dasharray:none!important;}
@@ -2463,7 +2576,7 @@ function ProofEnvelope({digest, athleteName, onOpen}) {
 // The opened edition: the digest read as a full page (rank hero, distinct gold PR
 // block, receded routine sections, red injury card, closing FOCUS directive) — shown
 // when the athlete opens the front page, before the check-in begins below it.
-function ProofLetter({intro, sections, flags, label, dateStr}) {
+function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
   const secs = sections || [];
   const rankSec  = secs.find(s=>isRankLabel(s.label));
   const prSec    = secs.find(s=>isPRLabel(s.label));
@@ -2549,6 +2662,16 @@ function ProofLetter({intro, sections, flags, label, dateStr}) {
         <div className="proof-drop" style={{...delay(),borderLeft:`3px solid ${CA.accent}`,background:`${CA.accent}10`,borderRadius:"0 12px 12px 0",padding:"12px 14px",marginBottom:6}}>
           <div style={{fontSize:9,letterSpacing:2,color:CA.accent,fontWeight:700,marginBottom:6}}>▶ {focusSec.label}</div>
           <div style={{fontSize:13,lineHeight:1.55,color:CA.text,fontWeight:500,whiteSpace:"pre-wrap"}}>{focusSec.body}</div>
+        </div>
+      )}
+
+      {/* Crew blip — a small, quiet highlight, never louder than anything above
+          it (UX doctrine: relatively invisible, discoverable when wanted). Rides
+          the existing weekly Proof digest; omitted entirely when there's nothing
+          (server never sends "your crew was quiet" — see api/_crew.js). */}
+      {crew&&crew.text&&(
+        <div className="proof-drop" style={{...delay(),fontSize:11,lineHeight:1.5,color:CA.muted,marginTop:2,paddingLeft:2}}>
+          {crew.text}
         </div>
       )}
     </div>
@@ -2846,7 +2969,13 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     // shift goals slightly while running the same program. Block boundaries are
     // date-driven (planned end dates) or explicit; fuzzy signals may only ASK,
     // in plain language. See docs/program-builder-blocks-goals-design.md.
-    try{ if(ex.goal_update && ex.goal_update.length>3) await sbInsert("athlete_goals",{athlete_id:athlete.id,goal_text:ex.goal_update}); }catch(_){}
+    try{
+      if(ex.goal_update && ex.goal_update.length>3){
+        const inserted = await sbInsert("athlete_goals",{athlete_id:athlete.id,goal_text:ex.goal_update});
+        const row = Array.isArray(inserted)?inserted[0]:inserted;
+        parseAndStampGoal(row); // fire-and-forget — never blocks the check-in
+      }
+    }catch(_){}
 
     // Optional injury-protective program tweak (respects program_locked). Skipped when a
     // coach request was already filed this session for the same pain — the coach now
@@ -2964,7 +3093,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             page, so the modal is just Coach Joe's conversation. */}
         {/* The opened page — the digest, formatted with hierarchy. Stays at the top as
             context once the check-in Q&A begins below it. */}
-        <ProofLetter intro={c.intro} sections={sections} flags={c.flags} label={label}
+        <ProofLetter intro={c.intro} sections={sections} flags={c.flags} label={label} crew={c.crew}
           dateStr={digest?.generated_at?new Date(digest.generated_at).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}).toUpperCase():null}/>
 
         {/* Check-in Q&A. messages[0] is the raw digest text (shown as the page above),
@@ -5861,6 +5990,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // session moves the authoritative count, so this stays null on same-session
       // follow-up messages and on non-workout chatter.
       let loggedSessionNumber = null;
+      // WILCO Crew V1 — the 4 moment types detected THIS turn (pr/week/milestone/
+      // goal), collected here and written once at the end via crewWriteMoments
+      // (fire-and-forget, gated on having ≥1 crew peer). Build spec §8 — get all
+      // four sites or the feed is silently partial.
+      const crewMoments = [];
       try {
         const prevCount = updatedAthlete.total_sessions_logged||0;
         // Authoritative session count comes from the SQL view (v_athlete_session_counts,
@@ -5912,7 +6046,34 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             :isBadge?`Workout ${crossed}. WILCO Certified${badgeTier}. Keep stacking.`
             :`Workout ${crossed}. Keep stacking.`;
           setTimeout(()=>setMessages(prev=>[...prev,{role:"assistant",content:milestoneMsg}]),1500);
+          // Crew "milestone" moment — reuses the SAME crossing rule (prevCount<m<=newCount).
+          crewMoments.push({type:"milestone", payload:{count:crossed}});
         }
+        // Crew "week" moment — fires once when THIS log crosses the athlete's
+        // weekly training-day target (Mon-Sun, real sessions only — same rule as
+        // the header's trainedThisWeek strip). Gated on an actual CROSSING so it
+        // fires once per week, not on every session after the target is already met.
+        try {
+          const target = updatedAthlete.training_days_per_week;
+          if(target>0){
+            const dowOf = (d)=>(d.getDay()+6)%7;
+            const nowD = new Date();
+            const dow = dowOf(nowD);
+            const monday = new Date(nowD); monday.setHours(0,0,0,0); monday.setDate(nowD.getDate()-dow);
+            const trainedBefore = new Set();
+            workoutHistory.forEach(w=>{
+              const d = effectiveDate(w); if(d<monday) return;
+              const pd = typeof w.parsed_data==="string"?(()=>{try{return JSON.parse(w.parsed_data);}catch{return{};}})():(w.parsed_data||{});
+              if((Array.isArray(pd.exercises)&&pd.exercises.length>0)||!!pd.run_data) trainedBefore.add(dowOf(d));
+            });
+            const prevDone = trainedBefore.size;
+            const todayDow = dowOf(nowD);
+            const newDone = trainedBefore.has(todayDow) ? prevDone : prevDone+1; // this log's own day, only if new
+            if(prevDone<target && newDone>=target){
+              crewMoments.push({type:"week", payload:{done:newDone, target, perfect:newDone>=target}});
+            }
+          }
+        } catch(_){}
         // SECOND-CHANCE INSTALL. The only automatic install offer fires seconds
         // after signup — before the athlete has felt anything — and one dismissal
         // is permanent except for a buried Settings entry. Installed users are also
@@ -6021,6 +6182,24 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         }
         if(prInsertRows.length) await sbInsert("prs",prInsertRows);
 
+        // Crew "goal" moment — fires when a lift's e1RM CROSSES athlete_goals.
+        // target_lbs for its parsed_lift, in THIS log. Deterministic client-side
+        // math (bestE1RMForExercise) — the AI only ever parsed the goal, it never
+        // computes progress (build spec, "Goal parsing").
+        try {
+          const numericGoals = (athleteGoals||[]).filter(g=>g.parsed_lift && g.target_lbs>0);
+          for(const g of numericGoals){
+            const matchEx = (parsed.exercises||[]).find(ex=>ex.name && resolveLift(ex.name).id===g.parsed_lift);
+            if(!matchEx) continue;
+            const newE1 = bestE1RMForExercise(matchEx);
+            if(!newE1 || newE1 < g.target_lbs) continue;
+            const priorBestRow = prMap[g.parsed_lift];
+            const priorBest = priorBestRow ? epley1RM(toLbs(priorBestRow.weight,priorBestRow.unit), priorBestRow.reps||1) : 0;
+            if(priorBest >= g.target_lbs) continue; // already hit before this log — don't re-fire
+            crewMoments.push({type:"goal", payload:{goalText:g.goal_text, lift:g.parsed_lift, target:g.target_lbs}});
+          }
+        } catch(_){}
+
         // Manual (actual, non-estimated) 1RM — set via chat declaration or an achieved true single.
         const oneRMAttempts = (parsed.pr_attempts||[]).filter(p=>p.reps===1 && p.achieved && p.exercise && p.weight);
         for(const attempt of oneRMAttempts){
@@ -6053,6 +6232,28 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       setWorkoutHistory(prev=>[{id:insertedId,athlete_id:updatedAthlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsedFinal,created_at:new Date().toISOString()},...prev]);
 
       if(newPRs.length>0){
+        // Crew "pr" moment — ONLY when the lift changed TIER (a rank-up), not
+        // every PR, or the feed floods (build spec §8). Same tier ladder as the
+        // Benchmarks power cells. Skips a lift's first-ever record (old1RM===0 —
+        // nothing to rank UP from, matches the Benchmarks tab's own "first time
+        // seen → record silently, no button" rule).
+        try {
+          const bwLbs = updatedAthlete.weight_lbs;
+          const genderKey = updatedAthlete.gender==="Female" ? "female" : "male";
+          const ageYrs = updatedAthlete.birthday
+            ? Math.floor((Date.now()-new Date(updatedAthlete.birthday))/(365.25*24*60*60*1000))
+            : (updatedAthlete.age||null);
+          newPRs.forEach(pr=>{
+            if(!(pr.old1RM>0)) return;
+            const lift = resolveLift(pr.exercise);
+            if(!lift.benchKey) return;
+            const prevTier = tierIdxForBenchLift(lift.benchKey, pr.old1RM, {bodyweight:bwLbs, genderKey, age:ageYrs});
+            const newTier = tierIdxForBenchLift(lift.benchKey, pr.e1rm, {bodyweight:bwLbs, genderKey, age:ageYrs});
+            if(newTier>prevTier){
+              crewMoments.push({type:"pr", payload:{lift:lift.name, tier:TIER_NAMES[newTier], prevTier:TIER_NAMES[prevTier]||null, weight:pr.weight, unit:pr.unit}});
+            }
+          });
+        } catch(_){}
         // PR propagation: update program weights for each new PR — but only the
         // numbers that actually track the athlete's max. The AI pass reads the
         // program first and leaves deliberately-set working weights / training
@@ -6162,6 +6363,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const wait = Math.max(0, prStampClearsAt + 300 - Date.now());
         if(wait>0) setTimeout(showLogStamp, wait); else showLogStamp();
       }
+      // WILCO Crew V1 — write whatever moments this turn detected (pr/week/
+      // milestone/goal). Fire-and-forget: never awaited, a failure here must
+      // never surface as "hit a snag" on an otherwise-successful log.
+      if(crewMoments.length) crewWriteMoments(updatedAthlete, crewMoments);
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Hit a snag saving that. Try again."}]);
     }
@@ -6603,7 +6808,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         );
         try {
           const parsed = JSON.parse(goalJson.replace(/```json|```/g,"").trim());
-          await sbInsert("athlete_goals",{
+          const inserted = await sbInsert("athlete_goals",{
             athlete_id:athlete.id,
             goal_text:msg,
             goal_type:parsed.goal_type||"general",
@@ -6611,6 +6816,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             target_value:parsed.target_value||null,
             target_date:parsed.target_date||null
           });
+          // Crew goal-at-a-glance needs parsed_lift/target_lbs specifically (a
+          // different, numeric-lift-only shape from this legacy goal_type/
+          // target_metric parse above) — fire-and-forget, never blocks onboarding.
+          parseAndStampGoal(Array.isArray(inserted)?inserted[0]:inserted);
           setAthleteGoals([{goal_text:msg,goal_type:parsed.goal_type||"general",created_at:new Date().toISOString()}]);
         } catch(e){}
         // Mark first_chat_complete
@@ -10056,7 +10265,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
 
       {/* Tabs */}
       <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0}}>
-        {["benchmarks","strength","running","pr"].map(t=>(
+        {["benchmarks","strength","running","pr",...(athlete?.crew_allowed===false?[]:["crew"])].map(t=>(
           <button key={t} onClick={()=>setTab(t)}
             style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,transition:"color 0.15s"}}>
             {t==="pr"?"PRs":t}
@@ -10275,6 +10484,9 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
             ))}
           </div>
         )}
+
+        {/* ── CREW TAB ── */}
+        {tab==="crew"&&<CrewTab athlete={athlete}/>}
       </div>
 
       {/* Top Rank — what the ranks mean (× bodyweight, squat as the example) */}
@@ -10333,6 +10545,381 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
       <div style={{padding:"10px 16px",paddingBottom:"10px",borderTop:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0}}>
         <button onClick={onClose} style={{width:"100%",background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"12px 14px",cursor:"pointer",fontSize:14,fontWeight:600}}>✕ Close</button>
       </div>
+    </div>
+  );
+}
+
+// ─── CREW (WILCO Crew V1) ─────────────────────────────────────────────────────
+// The 5th Progress-modal tab. Two sub-tabs, and the split between them is strict
+// (Will, 07-30): the Crew tab is the roster and everything to do with WHO is in
+// your crew, the Moments tab is the feed and nothing else. No moments leak onto
+// the roster; no code, search or requests leak into the feed.
+//
+// Visual language = "charge line" (Will's pick from the 07-30 aesthetic pitch,
+// direction C). The roster hangs off one spine that lights in proportion to how
+// much of the crew's week is logged, so the team reads as a single charging
+// object; moment cards get a tier-coloured edge wash and a rank-up stamp. Both
+// are borrowed from the app's own best surfaces (the Benchmarks power cell and
+// the RANK UP claim) rather than a new language. Doctrine is unchanged: passive,
+// no unread dots, no badges, never louder than Benchmarks.
+//
+// `demo` is threaded to every crewApi call for the replay-safety seam (see
+// crewApi in this file); nothing sets it true yet.
+
+// A moment's colour + stamp. The rank-up case uses the athlete's REAL new tier
+// colour, so a moment card and the power cell that produced it agree.
+function momentSkin(m){
+  const p = m.payload||{};
+  if(m.type==="pr"){
+    const idx = TIER_NAMES.indexOf(String(p.tier||"").toUpperCase());
+    return {color: idx>=0?TIER_COLORS[idx]:CA.accent, stamp:"⬆ RANK UP"};
+  }
+  if(m.type==="goal") return {color:CA.cyan, stamp:"GOAL HIT"};
+  if(m.type==="milestone") return {color:CA.blue, stamp:"MILESTONE"};
+  return {color:p.perfect?CA.cyan:CA.accent, stamp:p.perfect?"WEEK CLOSED":"WEEK DONE"};
+}
+
+// The line under the name on a moment card. The name itself is rendered
+// separately (in Bebas, on the card head), so these never repeat it.
+function momentBody(m){
+  const p = m.payload||{};
+  if(m.type==="pr") return `${p.lift||"A lift"} is ${p.tier||"a new tier"} now${p.weight?` · ${p.weight}${p.unit||"lbs"}`:""}`;
+  if(m.type==="week") return `Went ${p.done ?? "?"} for ${p.target ?? "?"} this week`;
+  if(m.type==="milestone") return `Logged workout #${p.count ?? "?"}`;
+  if(m.type==="goal") return `Hit their goal · ${p.goalText||p.lift||""}`;
+  return "Had a moment";
+}
+
+const initialsOf = (name)=>String(name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase()||"?";
+
+// Goal-at-a-glance. The server already decided WHICH of the four states this is
+// (see goalDisplayState in api/_crew.js); this only draws it. The `quiet` state
+// is a dated goal whose date passed without being hit: it shows the number they
+// reached and nothing else, never a miss, never a red bar.
+function GoalGlance({goal}){
+  if(!goal) return null;
+  const lift = goal.lift ? goal.lift.replace(/\b\w/g,c=>c.toUpperCase()) : "";
+  if(goal.state==="aspiration") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>Working toward · {goal.text}</div>;
+  if(goal.state==="quiet") return <div style={{marginTop:9,color:CA.muted,fontSize:11,lineHeight:1.5}}>{lift} at {Math.round(goal.currentLbs)}lbs</div>;
+  if(goal.state==="hit") return <div style={{marginTop:9,color:CA.cyan,fontSize:11,lineHeight:1.5,fontWeight:600}}>Hit it · {Math.round(goal.targetLbs)}lbs on {lift}</div>;
+  return (
+    <div style={{marginTop:9,color:CA.muted2,fontSize:11,lineHeight:1.5}}>
+      Chasing {Math.round(goal.targetLbs)}lbs on {lift}{goal.currentLbs!=null?` · at ${Math.round(goal.currentLbs)}lbs`:""}
+      {goal.pct!=null&&(
+        <div style={{marginTop:6,height:5,borderRadius:3,background:"#0c1526",overflow:"hidden"}}>
+          <div style={{height:"100%",borderRadius:3,width:`${Math.max(3,Math.min(100,goal.pct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CrewTab({athlete, demo=false}){
+  const [sub,setSub] = useState("crew");
+  const [loading,setLoading] = useState(true);
+  const [err,setErr] = useState("");
+  const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoal}
+  const [query,setQuery] = useState("");
+  const [codeInput,setCodeInput] = useState("");
+  const [requesting,setRequesting] = useState(false);
+  const [reqMsg,setReqMsg] = useState("");
+  const [sentNudge,setSentNudge] = useState(()=>new Set());
+  const [feed,setFeed] = useState(null);
+  const [feedLoading,setFeedLoading] = useState(false);
+  const [busyId,setBusyId] = useState(null);
+  const [copied,setCopied] = useState(false);
+  const [goalBusy,setGoalBusy] = useState(false);
+
+  const loadRoster = ()=>{
+    setLoading(true); setErr("");
+    crewApi("crew-list",{},{demo}).then(d=>{
+      setData(d);
+      // Generate the crew code lazily on first open for individual athletes, so
+      // it's simply THERE instead of behind a button (Will's review, finding #1:
+      // he could not find anywhere to see his code or add someone). Org athletes
+      // never get one and the server rejects the call for them, so don't make it.
+      if(d&&!d.isOrg&&!d.code){
+        crewApi("crew-code-ensure",{},{demo})
+          .then(r=>{ if(r&&r.code) setData(prev=>({...(prev||{}),code:r.code})); })
+          .catch(()=>{}); // silent: the manual button below is still there as a fallback
+      }
+    }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
+  };
+  useEffect(()=>{ loadRoster(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadFeed = ()=>{
+    setFeedLoading(true);
+    crewApi("crew-feed",{},{demo}).then(rows=>setFeed(Array.isArray(rows)?rows:[])).catch(()=>setFeed([])).finally(()=>setFeedLoading(false));
+  };
+  useEffect(()=>{ if(sub==="moments"&&feed===null) loadFeed(); },[sub]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ensureCode = async ()=>{
+    try{ const r = await crewApi("crew-code-ensure",{},{demo}); setData(prev=>({...(prev||{}),code:r.code})); }
+    catch(e){ setReqMsg(e.message||"Couldn't generate a code."); }
+  };
+
+  const sendRequest = async (raw)=>{
+    const code = String(raw||"").trim().toUpperCase();
+    if(!code) return;
+    setRequesting(true); setReqMsg("");
+    try{ await crewApi("crew-request",{code},{demo}); setCodeInput(""); setQuery(""); setReqMsg("Request sent."); loadRoster(); }
+    catch(e){ setReqMsg(e.message||"Couldn't send that request."); }
+    finally{ setRequesting(false); }
+  };
+  const accept = async (id)=>{ setBusyId(id); try{ await crewApi("crew-accept",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't accept."); } finally{ setBusyId(null); } };
+  const decline = async (id)=>{ setBusyId(id); try{ await crewApi("crew-decline",{id},{demo}); loadRoster(); }catch(_){ } finally{ setBusyId(null); } };
+  const removeMember = async (id)=>{ setBusyId(id); try{ await crewApi("crew-remove",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't remove."); } finally{ setBusyId(null); } };
+
+  const copyCode = async ()=>{
+    const code = data?.code; if(!code) return;
+    try{ await navigator.clipboard.writeText(code); setCopied(true); haptic(15); setTimeout(()=>setCopied(false),1600); }catch(_){ }
+  };
+
+  const toggleGoalShare = async ()=>{
+    if(!data?.myGoal||goalBusy) return;
+    setGoalBusy(true);
+    const next = !data.myGoal.shared;
+    setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:next}})); // optimistic
+    try{ const r = await crewApi("crew-goal-share",{share:next},{demo}); if(r&&r.myGoal) setData(prev=>({...prev,myGoal:r.myGoal})); }
+    catch(_){ setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:!next}})); }
+    finally{ setGoalBusy(false); }
+  };
+
+  const react = async (momentId, emoji)=>{
+    // Optimistic toggle so a tap feels instant; re-syncs from the server on failure.
+    setFeed(prev=>(prev||[]).map(m=>{
+      if(m.id!==momentId) return m;
+      const has = (m.reactions||[]).some(r=>String(r.athlete_id)===String(athlete.id) && r.emoji===emoji);
+      const reactions = has
+        ? m.reactions.filter(r=>!(String(r.athlete_id)===String(athlete.id)&&r.emoji===emoji))
+        : [...(m.reactions||[]), {athlete_id:athlete.id, emoji}];
+      return {...m, reactions};
+    }));
+    haptic(15);
+    try{ await crewApi("crew-react",{momentId,emoji},{demo}); }catch(_){ loadFeed(); }
+  };
+
+  if(loading) return <div style={{color:CA.muted,fontSize:12}}>Loading your crew…</div>;
+  if(err) return <div style={{color:CA.red,fontSize:12}}>{err}</div>;
+
+  const isOrg = !!data?.isOrg;
+  const roster = data?.roster||[];
+  const pending = data?.pending||[];
+  const incoming = pending.filter(p=>String(p.requested_by)!==String(athlete.id));
+  const outgoing = pending.filter(p=>String(p.requested_by)===String(athlete.id));
+
+  // The search box does double duty (Will, 07-30): it filters the crew you
+  // already have, and when what you typed looks like a crew code it offers to
+  // add that person. It never searches anyone outside your own crew: no name
+  // directory, no stranger discovery, ever (hard non-goal).
+  const q = query.trim().toLowerCase();
+  const looksLikeCode = /^[A-Za-z]{2,8}-[A-Za-z0-9]{3,6}$/.test(query.trim());
+  const shown = q&&!looksLikeCode ? roster.filter(r=>String(r.name||"").toLowerCase().includes(q)) : roster;
+
+  // How charged the crew's week is, as one number. Drives the spine. YOU are
+  // part of your own crew's total, so myWeek is folded in: the spine is supposed
+  // to read as the whole group charging together, and leaving yourself out makes
+  // the number quietly wrong.
+  const mine = data?.myWeek||null;
+  const weekDone = roster.reduce((n,r)=>n+(r.trainedThisWeek||0),0) + (mine?.trainedThisWeek||0);
+  const weekTarget = roster.reduce((n,r)=>n+(r.trainingDaysPerWeek||4),0) + (mine?(mine.trainingDaysPerWeek||4):0);
+  const lit = weekTarget>0 ? Math.max(0,Math.min(1,weekDone/weekTarget)) : 0;
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:16}}>
+        {["crew","moments"].map(s=>(
+          <button key={s} onClick={()=>setSub(s)} style={{flex:1,padding:"8px 0",background:sub===s?`${CA.accent}18`:"none",border:`1px solid ${sub===s?CA.accent:CA.border}`,borderRadius:8,color:sub===s?CA.accent:CA.muted,cursor:"pointer",fontSize:12,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>
+            {s==="crew"?"Crew":"Moments"}
+          </button>
+        ))}
+      </div>
+
+      {sub==="crew"&&(
+        <div>
+          {/* Search your crew, or paste a code to add someone. */}
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            <input value={query} onChange={e=>setQuery(e.target.value)}
+              placeholder={isOrg?"Search your team":"Search your crew, or paste a code"}
+              style={inpA({padding:"9px 11px",fontSize:13,flex:1})}/>
+            {!isOrg&&looksLikeCode&&(
+              <button onClick={()=>sendRequest(query)} disabled={requesting}
+                style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"9px 15px",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
+                {requesting?"…":"Add"}
+              </button>
+            )}
+          </div>
+
+          <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:11,textTransform:"uppercase",fontFamily:"ui-monospace,Menlo,monospace"}}>
+            {isOrg&&data?.team ? data.team : "Your crew"}{roster.length>0&&weekTarget>0?` · ${weekDone} of ${weekTarget} sessions logged`:""}
+          </div>
+
+          {/* Your own goal + the share opt-in. Off by default; this is the only
+              place it can be turned on, and it's why goals were missing from
+              every crew row before (nothing could ever set the flag). */}
+          {data?.myGoal&&(
+            <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:2}}>YOUR GOAL</div>
+              <GoalGlance goal={data.myGoal}/>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:11,paddingTop:11,borderTop:`1px solid ${CA.border}`}}>
+                <span style={{color:CA.muted,fontSize:11}}>{data.myGoal.shared?"Your crew can see this":"Only you can see this"}</span>
+                <button onClick={toggleGoalShare} disabled={goalBusy}
+                  style={{background:data.myGoal.shared?`${CA.accent}18`:"none",border:`1px solid ${data.myGoal.shared?CA.accent:CA.border}`,color:data.myGoal.shared?CA.accent:CA.muted,borderRadius:6,padding:"4px 11px",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                  {data.myGoal.shared?"Shared":"Share it"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── the charge line ── */}
+          {roster.length===0?(
+            isOrg
+              ? <AwaitingSignal hint="Nobody else on your team yet."/>
+              : <AwaitingSignal hint="Add someone you train with. Paste their code above, or share yours from the bottom of this tab."/>
+          ):shown.length===0?(
+            <div style={{color:CA.muted,fontSize:12,padding:"18px 2px"}}>Nobody in your crew matches that.</div>
+          ):(
+            <div className="crewline">
+              <div className="crewspine" style={{"--lit":lit}}/>
+              {shown.map((r,i)=>{
+                const chain = Array.from({length:7},(_,k)=>k<r.trainedThisWeek);
+                const showNudge = r.quietDays==null || r.quietDays>=8;
+                const nudgeSent = sentNudge.has(r.id);
+                const target = r.trainingDaysPerWeek||null;
+                // Puck colour tracks how far into their own week they are, so a
+                // glance down the pucks reads the crew's week without any ranking.
+                const pc = target&&r.trainedThisWeek>=target ? CA.cyan : r.trainedThisWeek>0 ? CA.accent : CA.steel;
+                return (
+                  <div key={r.id} style={{position:"relative",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:11}}>
+                    <div className="crewpuck" style={{"--pc":pc}}>{initialsOf(r.name)}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+                      <span style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{r.name}</span>
+                      <span style={{marginLeft:"auto",fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:1,color:r.trainedThisWeek>0?CA.cyan:CA.muted}}>
+                        {r.trainedThisWeek}{target?` OF ${target}`:""}
+                      </span>
+                      {!isOrg&&(
+                        <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
+                          style={{background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
+                      )}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                      {chain.map((on,k)=><div key={k} className={`streaklnk${on?" on":""}`}/>)}
+                    </div>
+                    <GoalGlance goal={r.goal}/>
+                    {showNudge&&(
+                      <div style={{marginTop:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,borderTop:`1px solid ${CA.border}`,paddingTop:10}}>
+                        <span style={{color:CA.muted,fontSize:10.5}}>gone quiet · no workout in {r.quietDays==null?"a while":`${r.quietDays} days`}</span>
+                        <button onClick={()=>{ setSentNudge(prev=>new Set(prev).add(r.id)); haptic(20); }} disabled={nudgeSent}
+                          style={{background:"none",border:`1px solid ${CA.border}`,color:nudgeSent?CA.muted:CA.accent,borderRadius:6,padding:"4px 10px",cursor:nudgeSent?"default":"pointer",fontSize:10.5,fontWeight:700}}>
+                          {nudgeSent?"Sent 💪":"Send 💪"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── bottom: your code, adding people, and pending requests ──
+              Individual flow only. An org athlete is already on their team, so
+              there is nothing here for them to do. Kept at the BOTTOM (Will,
+              07-30) so the roster is what you land on, not the plumbing. */}
+          {!isOrg&&(
+            <div style={{marginTop:26,paddingTop:18,borderTop:`1px solid ${CA.border}`}}>
+              {incoming.length>0&&(
+                <div style={{marginBottom:16}}>
+                  <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>REQUESTS</div>
+                  {incoming.map(p=>(
+                    <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+                      <span style={{color:CA.text,fontSize:13}}>Someone wants to train with you</span>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
+                        <button onClick={()=>decline(p.id)} disabled={busyId===p.id} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11}}>Decline</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:14}}>
+                <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:7,fontFamily:"ui-monospace,Menlo,monospace"}}>YOUR CREW CODE</div>
+                {data?.code?(
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                    <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2}}>{data.code}</span>
+                    <button onClick={copyCode} style={{background:"none",border:`1px solid ${CA.border}`,color:copied?CA.cyan:CA.muted,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5}}>{copied?"Copied":"Copy"}</button>
+                  </div>
+                ):(
+                  <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
+                )}
+                <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Give it to someone you train with, or put theirs in below.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} placeholder="Their crew code" style={inpA({padding:"8px 10px",fontSize:13,flex:1,textTransform:"uppercase"})}/>
+                  <button onClick={()=>sendRequest(codeInput)} disabled={requesting||!codeInput.trim()} style={{background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>{requesting?"…":"Add"}</button>
+                </div>
+                {reqMsg&&<div style={{color:CA.muted2,fontSize:11.5,marginTop:8}}>{reqMsg}</div>}
+                {outgoing.length>0&&(
+                  <div style={{color:CA.muted,fontSize:11.5,marginTop:8}}>{outgoing.length} request{outgoing.length===1?"":"s"} waiting on the other side.</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {sub==="moments"&&(
+        <div>
+          {feedLoading&&<div style={{color:CA.muted,fontSize:12}}>Loading…</div>}
+          {!feedLoading&&feed&&(()=>{
+            // Last-7-days readout across the whole crew, at the top of the feed.
+            // Counts only, no names and no order: a summary of what the crew did,
+            // never a standings board.
+            const cut = Date.now()-7*864e5;
+            const recent = feed.filter(m=>new Date(m.created_at).getTime()>=cut);
+            const stats = [
+              ["RANK-UP","RANK-UPS", recent.filter(m=>m.type==="pr").length],
+              ["WEEK CLOSED","WEEKS CLOSED", recent.filter(m=>m.type==="week"&&m.payload&&m.payload.perfect).length],
+              ["GOAL HIT","GOALS HIT", recent.filter(m=>m.type==="goal").length],
+              ["MILESTONE","MILESTONES", recent.filter(m=>m.type==="milestone").length],
+            ].filter(([,,n])=>n>0);
+            if(!stats.length) return null;
+            return (
+              <div style={{border:`1px solid ${CA.border}`,borderRadius:8,background:CA.navy2,padding:"9px 11px",marginBottom:16,
+                display:"flex",flexWrap:"wrap",alignItems:"center",gap:"4px 10px",
+                fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.9,color:CA.muted}}>
+                <span>LAST 7D</span>
+                {stats.map(([one,many,n])=>(
+                  <span key={many} style={{color:CA.cyan}}>{n} {n===1?one:many}</span>
+                ))}
+              </div>
+            );
+          })()}
+          {!feedLoading&&feed&&feed.length===0&&<AwaitingSignal hint="Nothing yet. Moments show up here as your crew hits PRs, weeks, and goals."/>}
+          {!feedLoading&&feed&&feed.map(m=>{
+            const emojis = ["🤝","💪","🔥"];
+            const counts = {}; (m.reactions||[]).forEach(r=>{counts[r.emoji]=(counts[r.emoji]||0)+1;});
+            const mine = new Set((m.reactions||[]).filter(r=>String(r.athlete_id)===String(athlete.id)).map(r=>r.emoji));
+            const skin = momentSkin(m);
+            const who = String(m.athleteName||"Someone").split(" ")[0];
+            return (
+              <div key={m.id} className="mcard" style={{"--mc":skin.color}}>
+                <div style={{position:"relative",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontFamily:"'Bebas Neue'",fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{who}</span>
+                  <span className="mstamp">{skin.stamp}</span>
+                </div>
+                <div style={{position:"relative",color:CA.muted2,fontSize:12.5,lineHeight:1.5}}>{momentBody(m)}</div>
+                <div style={{position:"relative",display:"flex",gap:7,marginTop:11}}>
+                  {emojis.map(e=>(
+                    <button key={e} onClick={()=>react(m.id,e)} style={{background:mine.has(e)?`${CA.accent}22`:"none",border:`1px solid ${mine.has(e)?CA.accent:CA.border}`,borderRadius:20,padding:"3px 10px",cursor:"pointer",fontSize:12,color:CA.text}}>
+                      {e}{counts[e]?<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:9.5,marginLeft:4,color:CA.muted}}>{counts[e]}</span>:null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
