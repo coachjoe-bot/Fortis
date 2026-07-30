@@ -21,7 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
-import { crewPeerIds, resolveCrewOrg, crewAllowedFor, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
+import { crewPeerIds, resolveCrewOrg, crewAllowedFor, goalDisplayState, bestE1rmLbsForLift, orderedPair, withinWindow, withinTierPct, compareStateFor, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
 
@@ -803,6 +803,13 @@ async function handleCrew(body, caller, res) {
       // still distinguishes from "never logged" without an unbounded per-peer scan.
       sbSelect("workouts", `?athlete_id=in.(${idList})&created_at=gte.${enc(new Date(Date.now() - 400 * 864e5).toISOString())}&select=athlete_id,created_at&order=created_at.desc`),
     ]);
+    // Accepted edges, keyed by the OTHER side, so each roster row knows its own
+    // comparison state without a query per row.
+    const acceptedEdgeByPeer = {};
+    if (!org.isOrg) {
+      const accepted = await sbSelect("crew_edges", `?status=eq.accepted&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=*`);
+      for (const e of accepted) acceptedEdgeByPeer[String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a] = e;
+    }
     const trainedByAthlete = trainedDaysThisWeekByAthlete(workoutRows);
     const latestGoalByAthlete = {};
     for (const g of goalsRows) if (!latestGoalByAthlete[g.athlete_id]) latestGoalByAthlete[g.athlete_id] = g;
@@ -834,8 +841,12 @@ async function handleCrew(body, caller, res) {
       // callers (see api/_crew.js's org-comparison ban + the DB trigger).
       const lastAt = lastWorkoutAt[a.id] || null;
       const quietDays = lastAt ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 864e5) : null;
+      const cmp = compareStateFor(acceptedEdgeByPeer[a.id], me.id);
       roster.push({
         id: a.id, name: a.name,
+        // V2 comparison opt-in, my side and whether it's mutual. Org rosters have
+        // no edges, so this is always off for them, which is the permanent ban.
+        compareMine: cmp.mine, compareMutual: cmp.mutual,
         trainedThisWeek: (trainedByAthlete[a.id] || new Set()).size,
         trainingDaysPerWeek: a.training_days_per_week || null,
         goal,
@@ -883,6 +894,40 @@ async function handleCrew(body, caller, res) {
     return res.status(200).json({ ok: true, share, myGoal: await loadOwnGoal(me.id) });
   }
 
+  // ── V2 comparison ────────────────────────────────────────────────────────
+  // Mutual opt-in, individual crews only. An org athlete has no crew_edges row
+  // at all, so both actions below simply have nothing to act on for them; the
+  // explicit reject is the belt to the DB trigger's braces.
+  if (action === "crew-compare-set") {
+    if (org.isOrg) throw httpErr(403, "Comparison isn't available on a team account");
+    const on = body.on === true;
+    const peerId = str(body.peerId, { max: 64, name: "peerId" });
+    const [a, b] = orderedPair(me.id, peerId);
+    const rows = await sbSelect("crew_edges", `?athlete_a=eq.${enc(a)}&athlete_b=eq.${enc(b)}&status=eq.accepted&select=*`);
+    const edge = rows[0];
+    if (!edge) throw httpErr(404, "Not in your crew");
+    // Only ever flips the CALLER's own side. Turning it off is silent by design:
+    // the other person is never told, so switching off costs nothing socially.
+    const col = String(edge.athlete_a) === String(me.id) ? "compare_a" : "compare_b";
+    const updated = await sbWrite({ method: "PATCH", table: "crew_edges", query: `?id=eq.${enc(edge.id)}`, body: { [col]: on }, prefer: "return=representation" });
+    const fresh = Array.isArray(updated) ? updated[0] : updated;
+    return res.status(200).json({ ok: true, ...compareStateFor(fresh, me.id) });
+  }
+
+  if (action === "crew-compare") {
+    if (org.isOrg) return res.status(200).json({ me: null, peers: [] });
+    const edges = await sbSelect("crew_edges", `?status=eq.accepted&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=*`);
+    const mutual = edges.filter((e) => compareStateFor(e, me.id).mutual);
+    if (!mutual.length) return res.status(200).json({ me: null, peers: [] });
+    const peerIds = mutual.map((e) => (String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a));
+    // The CALLER's own snapshot comes from the same function as the peers', so a
+    // head-to-head is one piece of math against itself. Computing your own score
+    // client-side and theirs server-side would let the two drift and quietly put
+    // a wrong number beside a right one.
+    const [mine, peers] = await Promise.all([comparePeers([me.id]), comparePeers(peerIds)]);
+    return res.status(200).json({ me: mine[0] || null, peers });
+  }
+
   if (action === "crew-react") {
     const momentId = str(body.momentId, { max: 64, name: "momentId" });
     const emoji = String(body.emoji || "");
@@ -905,6 +950,54 @@ async function handleCrew(body, caller, res) {
   }
 
   throw httpErr(400, "Unknown crew action");
+}
+
+// Build the comparison payload for a set of mutually-opted-in peers.
+//
+// What goes out is TIER and WITHIN-TIER POSITION only, plus a strength score.
+// Never an e1RM, a bodyweight, an age or a gender. That is the design rule
+// ("ranks and tiers, never raw weights") and enforcing it at the point the data
+// is assembled means no client mistake can leak what was never sent.
+//
+// Each peer's numbers come from computeGritSnapshot, the SAME function that
+// produces the athlete's own Benchmarks tab, so a strip and the tube it rides on
+// are computed by one piece of math rather than two that can drift.
+async function comparePeers(peerIds) {
+  const { computeGritSnapshot, BENCH_THRESHOLDS, scaledThresholds, TIER_NAMES } = await import("./_grit.js");
+  const idList = peerIds.map((id) => `"${id}"`).join(",");
+  const athletes = await sbSelect("athletes", `?id=in.(${idList})&select=id,name,weight_lbs,gender,birthday`);
+  const out = [];
+  for (const a of athletes) {
+    const bodyweight = a.weight_lbs || 0;
+    if (!bodyweight) { out.push({ id: a.id, name: a.name, strengthScore: null, lifts: {} }); continue; }
+    const genderKey = a.gender === "Female" ? "female" : "male";
+    const age = a.birthday ? Math.floor((Date.now() - new Date(a.birthday).getTime()) / (365.25 * 864e5)) : null;
+    let snap = null;
+    try {
+      const [workouts, prs, manual] = await Promise.all([
+        sbSelect("workouts", `?athlete_id=eq.${enc(a.id)}&select=parsed_data,created_at&order=created_at.desc&limit=100`),
+        sbSelect("prs", `?athlete_id=eq.${enc(a.id)}&select=exercise,weight,reps,unit,estimated_1rm`),
+        sbSelect("manual_one_rms", `?athlete_id=eq.${enc(a.id)}&select=normalized_exercise,exercise,weight,unit`),
+      ]);
+      snap = computeGritSnapshot(workouts, manual, { bodyweightLbs: bodyweight, gender: a.gender, age, seedFromPRs: prs });
+    } catch {
+      // Best effort: a peer whose history fails to load simply shows no strips
+      // rather than breaking everyone else's comparison.
+      out.push({ id: a.id, name: a.name, strengthScore: null, lifts: {} });
+      continue;
+    }
+    const lifts = {};
+    for (const b of snap.rankedLifts || []) {
+      const threshRaw = BENCH_THRESHOLDS[genderKey]?.[b.benchKey];
+      if (!threshRaw || !b.benchKey) continue;
+      const thresh = scaledThresholds(threshRaw, bodyweight, genderKey, age);
+      const pct = withinTierPct(b.e1rm / bodyweight, thresh, b.tierIdx, TIER_NAMES.length);
+      if (pct == null) continue;
+      lifts[b.benchKey] = { tierIdx: b.tierIdx, pct };
+    }
+    out.push({ id: a.id, name: a.name, strengthScore: snap.strengthScore ?? null, topTierIdx: snap.topTierIdx ?? null, lifts });
+  }
+  return out;
 }
 
 // The caller's own latest goal, in the same display shape a peer's roster row

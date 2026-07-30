@@ -167,6 +167,49 @@ export async function crewPeerIds(athlete, sbSelect = realSbSelect, org = null) 
   return rows.map((r) => (String(r.athlete_a) === String(athlete.id) ? String(r.athlete_b) : String(r.athlete_a)));
 }
 
+// ─── V2 COMPARISON ───────────────────────────────────────────────────────────
+// Two surfaces, both mutual opt-in, both individual-crew only:
+//   1. a thin tier-coloured strip riding on your own Benchmarks power cell for
+//      each opted-in crewmate, positioned by how far through THEIR OWN tier they
+//      are (near the end = about to rank up), coloured by their tier;
+//   2. a strength-score head-to-head inside the Crew tab.
+//
+// Org accounts are barred from both, permanently. That is structural rather than
+// a check: comparison lives on crew_edges, and an org crew is derived at read
+// time with no edges at all, so there is no row for an org athlete to flip. The
+// DB trigger and the gateway are the floor under that, not the mechanism.
+//
+// What crosses the wire for a peer is ONLY tier and within-tier position. Never
+// an e1RM, never a bodyweight, never an age or gender. Schools compare ranks,
+// never raw weights, and holding that line here means the client cannot leak
+// what it was never sent.
+
+// Where a lift sits INSIDE its own tier, 0..1. Mirrors the Benchmarks power
+// cell's own fill math exactly (App.jsx, `fillPct`), so a strip and the tube it
+// rides on can never disagree about what "most of the way through STRONG" means.
+// tierCount is TIER_NAMES.length; the top tier has no ceiling in the table, so
+// it borrows the same 1.25x headroom the cell uses.
+export function withinTierPct(ratio, thresh, tierIdx, tierCount = 8) {
+  if (!Array.isArray(thresh) || !thresh.length) return null;
+  if (!Number.isFinite(ratio) || !Number.isFinite(tierIdx) || tierIdx < 0) return null;
+  const isTop = tierIdx >= tierCount - 1;
+  const floor = tierIdx === 0 ? 0 : thresh[tierIdx - 1];
+  const ceil = isTop ? thresh[tierIdx - 1] * 1.25 : thresh[tierIdx];
+  if (!Number.isFinite(floor) || !Number.isFinite(ceil) || !(ceil > floor)) return null;
+  return Math.min(Math.max((ratio - floor) / (ceil - floor), 0.03), 1);
+}
+
+// Which side of an edge is this athlete, and is comparison mutually on?
+// Comparison needs BOTH sides opted in: one person deciding to compare is not
+// consent from the other, and a silent switch-off must never notify anyone.
+export function compareStateFor(edge, myId) {
+  if (!edge) return { mine: false, theirs: false, mutual: false };
+  const iAmA = String(edge.athlete_a) === String(myId);
+  const mine = (iAmA ? edge.compare_a : edge.compare_b) === true;
+  const theirs = (iAmA ? edge.compare_b : edge.compare_a) === true;
+  return { mine, theirs, mutual: mine && theirs };
+}
+
 // ─── GOAL-AT-A-GLANCE (finding #4) ───────────────────────────────────────────
 // Turn a raw athlete_goals row plus the athlete's current e1RM into the display
 // state a crew row renders. Computed here, server-side, so the client renders

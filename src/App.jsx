@@ -1939,6 +1939,13 @@ export const GSA = `
 .mcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mc,${CA.accent});box-shadow:0 0 16px var(--mc,${CA.accent});}
 .mcard::after{content:"";position:absolute;left:0;top:0;bottom:0;width:64px;pointer-events:none;
   background:linear-gradient(90deg,color-mix(in srgb,var(--mc,${CA.accent}) 17%,transparent),transparent);}
+/* V2 comparison: a crewmate's position INSIDE their own tier, riding on top of
+   your own power-cell tube. Position = how far through their tier they are (near
+   the right = about to rank up), colour = their tier. Deliberately thin and
+   low-contrast: this is a glance, not a scoreboard, and your own fill has to stay
+   the thing you read first. */
+.cmpstrip{position:absolute;top:2px;bottom:2px;width:2.5px;border-radius:2px;background:var(--sc);
+  box-shadow:0 0 7px var(--sc);opacity:.92;pointer-events:none;transform:translateX(-50%);}
 .mstamp{font-family:ui-monospace,Menlo,monospace;font-size:8px;font-weight:700;letter-spacing:.9px;padding:2px 7px;border-radius:5px;
   color:var(--mc,${CA.accent});border:1px solid var(--mc,${CA.accent});background:color-mix(in srgb,var(--mc,${CA.accent}) 9%,transparent);
   box-shadow:0 0 12px color-mix(in srgb,var(--mc,${CA.accent}) 40%,transparent);}
@@ -9160,11 +9167,13 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0}}>
-        {["workouts","proof"].map(t=>(
+      {/* Tabs. Crew moved here from the Progress modal (Will, 07-30): that bar was
+          already carrying four tabs and clipped the fifth off-screen, this one had
+          two. overflowX + nowrap so a third can never be stranded the same way. */}
+      <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0,overflowX:"auto"}}>
+        {["workouts","proof",...(athlete?.crew_allowed===false?[]:["crew"])].map(t=>(
           <button key={t} onClick={()=>setTab(t)}
-            style={{padding:"10px 20px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",position:"relative"}}>
+            style={{padding:"10px 20px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",position:"relative",whiteSpace:"nowrap"}}>
             {t}
             {t==="proof"&&proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:8,right:8,width:6,height:6,borderRadius:"50%",background:CA.accent,display:"block"}}/>}
           </button>
@@ -9410,6 +9419,9 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
             })()}
           </div>
         )}
+
+        {/* ── CREW TAB ── */}
+        {tab==="crew"&&<CrewTab athlete={athlete}/>}
 
       </div>
 
@@ -10009,6 +10021,16 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
     : (athlete.age||null);
   const ageFactor = ageTierFactor(age);
 
+  // V2 comparison strips. Loaded once per modal open, best-effort: an athlete
+  // with nobody opted in (which is everyone until they choose otherwise) simply
+  // gets an empty array and the cells render exactly as they always have.
+  const [compareRows,setCompareRows] = useState([]);
+  useEffect(()=>{
+    let live = true;
+    crewApi("crew-compare").then(r=>{ if(live&&r&&Array.isArray(r.peers)) setCompareRows(r.peers); }).catch(()=>{});
+    return ()=>{ live = false; };
+  },[]);
+
   // ── Aggregation (search-INDEPENDENT) ──────────────────────────────────────
   // JSON-parsing every workout's parsed_data, threshold scaling, dedup and sorting is
   // the heavy work in this modal. It depends only on history / manual-1RMs / athlete,
@@ -10263,11 +10285,14 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
         />
       </div>
 
-      {/* Tabs */}
-      <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0}}>
-        {["benchmarks","strength","running","pr",...(athlete?.crew_allowed===false?[]:["crew"])].map(t=>(
+      {/* Tabs. overflowX + nowrap because this bar silently CLIPPED its 5th tab on
+          a phone when Crew lived here: plain flex, no wrap, no scroll, so the tab
+          existed and rendered and simply could not be reached. Crew has moved to
+          MY LOG, but the bar keeps the fix so it can't happen again. */}
+      <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0,overflowX:"auto"}}>
+        {["benchmarks","strength","running","pr"].map(t=>(
           <button key={t} onClick={()=>setTab(t)}
-            style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,transition:"color 0.15s"}}>
+            style={{padding:"10px 16px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,transition:"color 0.15s",whiteSpace:"nowrap"}}>
             {t==="pr"?"PRs":t}
           </button>
         ))}
@@ -10367,7 +10392,17 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                     )}
                     <span style={{marginLeft:"auto",fontFamily:"'Bebas Neue'",fontSize:16,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{Math.round(b.e1rm)}<small style={{fontFamily:"'DM Sans'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small></span>
                   </div>
-                  <div className="htube"><div className="hfill" style={{"--tc":TIER_COLORS[tierIdx],"--tb":tierIdx/(TIER_NAMES.length-1),"--pct":fillPct}}/></div>
+                  <div className="htube">
+                    <div className="hfill" style={{"--tc":TIER_COLORS[tierIdx],"--tb":tierIdx/(TIER_NAMES.length-1),"--pct":fillPct}}/>
+                    {/* Crewmates who have mutually opted into comparison. Tier and
+                        position only — the server never sends their weights. */}
+                    {compareRows.map(c=>{
+                      const l = c.lifts&&c.lifts[b.benchKey];
+                      if(!l) return null;
+                      return <div key={c.id} className="cmpstrip" title={`${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`}
+                        style={{"--sc":TIER_COLORS[l.tierIdx],left:`${Math.round(l.pct*100)}%`}}/>;
+                    })}
+                  </div>
                   <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:pending?CA.cyan:CA.faint,marginTop:5,letterSpacing:0.3}}>
                     {pending
                       ? <>TAP RANK UP TO CLAIM {TIER_NAMES[computedTier]}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>
@@ -10485,8 +10520,6 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
           </div>
         )}
 
-        {/* ── CREW TAB ── */}
-        {tab==="crew"&&<CrewTab athlete={athlete}/>}
       </div>
 
       {/* Top Rank — what the ranks mean (× bodyweight, squat as the example) */}
@@ -10629,6 +10662,10 @@ function CrewTab({athlete, demo=false}){
   const [busyId,setBusyId] = useState(null);
   const [copied,setCopied] = useState(false);
   const [goalBusy,setGoalBusy] = useState(false);
+  // V2 comparison. Mutual opt-in, individual crews only. Loaded lazily with the
+  // roster; an org athlete never has an edge to opt in on, which IS the ban.
+  const [compare,setCompare] = useState({me:null,peers:[]});
+  const [cmpBusy,setCmpBusy] = useState(null);
 
   const loadRoster = ()=>{
     setLoading(true); setErr("");
@@ -10645,7 +10682,7 @@ function CrewTab({athlete, demo=false}){
       }
     }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
   };
-  useEffect(()=>{ loadRoster(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{ loadRoster(); loadCompare(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFeed = ()=>{
     setFeedLoading(true);
@@ -10683,6 +10720,21 @@ function CrewTab({athlete, demo=false}){
     try{ const r = await crewApi("crew-goal-share",{share:next},{demo}); if(r&&r.myGoal) setData(prev=>({...prev,myGoal:r.myGoal})); }
     catch(_){ setData(prev=>({...prev,myGoal:{...prev.myGoal,shared:!next}})); }
     finally{ setGoalBusy(false); }
+  };
+
+  const loadCompare = ()=>{ crewApi("crew-compare",{},{demo}).then(r=>setCompare(r&&Array.isArray(r.peers)?r:{me:null,peers:[]})).catch(()=>setCompare({me:null,peers:[]})); };
+  const toggleCompare = async (peerId, on)=>{
+    setCmpBusy(peerId);
+    // Optimistic, because the whole point of a silent opt-out is that it feels
+    // like nothing happened.
+    setData(prev=>({...prev,roster:(prev?.roster||[]).map(r=>r.id===peerId?{...r,compareMine:on}:r)}));
+    try{
+      const r = await crewApi("crew-compare-set",{peerId,on},{demo});
+      setData(prev=>({...prev,roster:(prev?.roster||[]).map(x=>x.id===peerId?{...x,compareMine:r.mine,compareMutual:r.mutual}:x)}));
+      loadCompare();
+    }catch(_){
+      setData(prev=>({...prev,roster:(prev?.roster||[]).map(x=>x.id===peerId?{...x,compareMine:!on}:x)}));
+    }finally{ setCmpBusy(null); }
   };
 
   const react = async (momentId, emoji)=>{
@@ -10798,8 +10850,17 @@ function CrewTab({athlete, demo=false}){
                         {r.trainedThisWeek}{target?` OF ${target}`:""}
                       </span>
                       {!isOrg&&(
-                        <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
-                          style={{background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
+                        <>
+                          {/* Comparison opt-in. Yours only: it takes both of you to
+                              turn it on, and switching it off never tells them. */}
+                          <button onClick={()=>toggleCompare(r.id,!r.compareMine)} disabled={cmpBusy===r.id}
+                            title={r.compareMutual?"Comparing with each other":r.compareMine?"Waiting on them to compare back":"Compare lifts with each other"}
+                            style={{background:r.compareMine?`${CA.accent}18`:"none",border:`1px solid ${r.compareMine?CA.accent:CA.border}`,color:r.compareMutual?CA.cyan:r.compareMine?CA.accent:CA.faint,borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.6,fontFamily:"ui-monospace,Menlo,monospace"}}>
+                            {r.compareMutual?"COMPARING":r.compareMine?"WAITING":"COMPARE"}
+                          </button>
+                          <button onClick={()=>removeMember(r.id)} disabled={busyId===r.id} title="Remove from your crew"
+                            style={{background:"none",border:"none",color:CA.faint,cursor:"pointer",fontSize:11,padding:0}}>Remove</button>
+                        </>
                       )}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:3}}>
@@ -10815,6 +10876,36 @@ function CrewTab({athlete, demo=false}){
                         </button>
                       </div>
                     )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── head to head ── Only for crewmates who BOTH opted in. Strength
+              score is the one whole-athlete number the app already computes, so
+              this compares that and nothing else. No ordering beyond the score
+              itself, no ranking of the crew, no bottom of a board to be on. */}
+          {compare.peers.length>0&&(
+            <div style={{marginTop:22}}>
+              <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:10,fontFamily:"ui-monospace,Menlo,monospace"}}>HEAD TO HEAD</div>
+              {compare.peers.map(c=>{
+                const mine = compare.me?.strengthScore ?? null, theirs = c.strengthScore;
+                const total = (mine||0)+(theirs||0);
+                const minePct = total>0 ? (mine||0)/total : 0.5;
+                return (
+                  <div key={c.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9}}>
+                      <span style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:0.8,color:CA.cyan}}>YOU</span>
+                      <span style={{fontFamily:"'Bebas Neue'",fontSize:17,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{mine==null?"--":Math.round(mine)}</span>
+                      <span style={{marginLeft:"auto",fontFamily:"'Bebas Neue'",fontSize:17,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{theirs==null?"--":Math.round(theirs)}</span>
+                      <span style={{fontFamily:"'Bebas Neue'",fontSize:15,letterSpacing:0.8,color:CA.text}}>{c.name.split(" ")[0].toUpperCase()}</span>
+                    </div>
+                    <div style={{display:"flex",height:7,borderRadius:4,overflow:"hidden",background:"#0c1526"}}>
+                      <div style={{width:`${Math.max(4,Math.min(96,minePct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
+                      <div style={{flex:1,background:c.topTierIdx!=null?TIER_COLORS[c.topTierIdx]:CA.steel,opacity:0.75}}/>
+                    </div>
+                    <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:CA.faint,marginTop:6,letterSpacing:0.3}}>STRENGTH SCORE</div>
                   </div>
                 );
               })}

@@ -15,7 +15,7 @@
 import {
   CREW_CAP, REACTION_EMOJI, WINDOW_DAYS, orderedPair, momentPriorityScore,
   withinWindow, templateMomentLine, crewPeerIds, resolveCrewOrg, crewTeamKey,
-  goalDisplayState, crewAllowedFor,
+  goalDisplayState, crewAllowedFor, withinTierPct, compareStateFor,
 } from "../api/_crew.js";
 
 let pass = 0, fail = 0;
@@ -251,6 +251,38 @@ console.log("goalDisplayState:");
   ok(goalDisplayState({ goal_text: "g", parsed_lift: "squat", target_lbs: 400 }, null, NOW).pct === null, "no current e1RM yet means no bar, not a zero bar");
 }
 
+// ── V2 comparison: mutual opt-in + where a strip sits on the tube ──────────
+console.log("compareStateFor (mutual opt-in):");
+{
+  const edge = (a, b) => ({ athlete_a: "aaa", athlete_b: "bbb", compare_a: a, compare_b: b });
+  eq(compareStateFor(edge(true, true), "aaa"), { mine: true, theirs: true, mutual: true }, "both sides opted in: mutual");
+  eq(compareStateFor(edge(true, false), "aaa"), { mine: true, theirs: false, mutual: false }, "only I opted in: NOT mutual, nothing is shown");
+  eq(compareStateFor(edge(false, true), "aaa"), { mine: false, theirs: true, mutual: false }, "only THEY opted in: still not mutual, one person's choice is not consent from the other");
+  eq(compareStateFor(edge(true, true), "bbb"), { mine: true, theirs: true, mutual: true }, "resolves the same from the other side of the edge");
+  eq(compareStateFor(edge(true, false), "bbb"), { mine: false, theirs: true, mutual: false }, "'mine' follows WHICH SIDE the caller is, not the column name");
+  eq(compareStateFor(null, "aaa"), { mine: false, theirs: false, mutual: false }, "no edge at all (an org athlete): never mutual, which IS the permanent ban");
+}
+
+console.log("withinTierPct (strip position on the power cell):");
+{
+  // Same 7-threshold shape the real BENCH_THRESHOLDS use, 8 tiers.
+  const t = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5];
+  ok(Math.abs(withinTierPct(1.0, t, 1) - 0.03) < 1e-9, "exactly at a tier floor clamps to the 3% minimum, so a strip is never invisible");
+  ok(Math.abs(withinTierPct(1.125, t, 1) - 0.5) < 1e-9, "halfway through a tier reads 0.5");
+  ok(withinTierPct(1.24, t, 1) > 0.9, "just short of the next tier sits near the right end, which is the 'about to rank up' read");
+  eq(withinTierPct(3.5, t, 7), 1, "top tier is capped at 1, never overflows the tube");
+  ok(withinTierPct(2.6, t, 7) > 0 && withinTierPct(2.6, t, 7) < 1, "top tier still has somewhere to sit, using the same 1.25x headroom the cell uses");
+  // Tier 0 (ROOKIE) measures from ZERO up to the first threshold, exactly as the
+  // power cell does (`tierFloor = tierIdx===0 ? 0 : thresh[tierIdx-1]`).
+  ok(Math.abs(withinTierPct(0.5, t, 0) - 0.5) < 1e-9, "tier 0 measures from zero up to the first threshold");
+  eq(withinTierPct(1.4, t, 0), 1, "a ratio past its own tier's ceiling clamps to full rather than overflowing the tube");
+  eq(withinTierPct(NaN, t, 2), null, "a missing ratio yields no strip, never NaN%");
+  eq(withinTierPct(1.5, [], 2), null, "no thresholds (an unranked lift) yields no strip");
+  eq(withinTierPct(1.5, t, -1), null, "a nonsense tier yields no strip");
+  const p = withinTierPct(1.6, t, 2);
+  ok(p >= 0 && p <= 1, "output is always inside the tube");
+}
+
 // ── Cap-of-10 enforcement (the logic api/data.js's crew-request/crew-accept
 // re-checks — mirrored here as a plain predicate since the real check needs a
 // live DB round trip to count accepted edges) ────────────────────────────────
@@ -283,14 +315,21 @@ function toggleReaction(existingReactions, athleteId, emoji) {
 // trigger, verified live against Supabase during the build) so the RULE stays
 // covered by `npm test` even though the trigger itself needs a real DB. ────
 console.log("comparison-ban predicate (mirrors the DB trigger):");
-function wouldBlockCompare({ compareA, compareB, aOrgKey, bOrgKey }) {
+// The trigger was NARROWED on 07-30 to match what "an organization account"
+// means everywhere else: a school explicitly flagged crew_enabled. It used to
+// fire on athletes.crew_org_key (ANY school or coach link), which also caught
+// ordinary individual users carrying a leftover coach link.
+function wouldBlockCompare({ compareA, compareB, aInEnabledSchool, bInEnabledSchool }) {
   if (!compareA && !compareB) return false;
-  return aOrgKey != null || bOrgKey != null;
+  return !!aInEnabledSchool || !!bInEnabledSchool;
 }
-ok(wouldBlockCompare({ compareA: true, compareB: false, aOrgKey: null, bOrgKey: "school-x" }), "compare_a=true blocked when the OTHER side (b) is org-linked");
-ok(wouldBlockCompare({ compareA: false, compareB: true, aOrgKey: "school-x", bOrgKey: null }), "compare_b=true blocked when the OTHER side (a) is org-linked");
-ok(!wouldBlockCompare({ compareA: true, compareB: true, aOrgKey: null, bOrgKey: null }), "two individual athletes CAN both opt in (V2, not built yet, but never blocked)");
-ok(!wouldBlockCompare({ compareA: false, compareB: false, aOrgKey: null, bOrgKey: "school-x" }), "no compare flags set at all — never blocked regardless of org linkage");
+ok(wouldBlockCompare({ compareA: true, compareB: false, aInEnabledSchool: false, bInEnabledSchool: true }), "compare_a=true blocked when the OTHER side is in a crew-enabled school");
+ok(wouldBlockCompare({ compareA: false, compareB: true, aInEnabledSchool: true, bInEnabledSchool: false }), "compare_b=true blocked when the OTHER side is in a crew-enabled school");
+ok(!wouldBlockCompare({ compareA: true, compareB: true, aInEnabledSchool: false, bInEnabledSchool: false }), "two individual athletes CAN both opt in");
+ok(!wouldBlockCompare({ compareA: false, compareB: false, aInEnabledSchool: false, bInEnabledSchool: true }), "no compare flags set at all: never blocked regardless of affiliation");
+// The narrowing itself, stated as a test so it can't silently regress: a coach
+// link, or a school that is NOT crew-enabled, must no longer block comparison.
+ok(!wouldBlockCompare({ compareA: true, compareB: true, aInEnabledSchool: false, bInEnabledSchool: false }), "a leftover coach link no longer bars an individual athlete from comparison");
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} crew checks pass.`);
