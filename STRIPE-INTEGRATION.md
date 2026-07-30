@@ -1,5 +1,19 @@
 # Stripe Integration — Status & Runbook
 
+**T18 iOS external-checkout branch (2026-07-29, `payments-external-0729`, not yet
+merged):** adds a standalone, unlinked `/upgrade` page on THIS SAME app so the
+Capacitor iOS build never ships the embedded Stripe Elements PaymentStep (App
+Review 3.1.1). Zero changes to `create-subscription` / `stripe-webhook` /
+`subscription-manage` / `_stripe.js` — the page just mounts the existing
+`PaymentStep` after exchanging a short-lived, one-time signed "checkout token"
+(minted by `api/identity.js` action `mint-checkout-token`, consumed by
+`resolve-checkout-token`, crypto in `api/_supa.js`) for a normal session token.
+**Before this branch's preview can complete a real checkout, run the migration**
+`supabase/migrations/20260729_checkout_tokens.sql` (two new nullable columns on
+`athletes`: `checkout_token_jti`, `checkout_token_exp` — additive, safe on the
+live table) — not auto-applied by this agent, same manual-apply convention as
+every migration below. See `docs/` / the T18 report for the full design.
+
 **STATUS (updated 2026-06-25): LIVE in production.** Merged to `main` and serving on
 `app.trainwilco.com`. `STRIPE_MODE` defaults to **live** (`api/_stripe.js`), and the
 subscription endpoints (`create-subscription`, `stripe-webhook`, `subscription-manage`,

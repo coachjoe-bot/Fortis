@@ -16,8 +16,9 @@ import {
   applyCors, httpErr, str, pin4, clientIp, stripPin, escapeLike,
   sbSelect, sbWrite, rateLimit, rateLimitReset, verifyPin, hashPin,
   authCaller, authThrottle, mintSessionToken, logError, logEvents,
+  mintCheckoutToken, parseCheckoutToken,
 } from "./_supa.js";
-import { EVENT_SOURCES } from "./_stripe.js";
+import { EVENT_SOURCES, verifyAthlete } from "./_stripe.js";
 // Telemetry ingestion moved to api/telemetry.js (Vercel Pro lifted the fn cap). These
 // cases stay here as a DEPRECATED fallback so cached PWA clients still posting to
 // /api/identity keep working; new clients post to /api/telemetry. Remove a release
@@ -61,6 +62,8 @@ export default async function handler(req, res) {
       case "add-coach":            return await addCoachAction(req, res, body);
       case "log-error":            return await handleLogError(req, res, body);
       case "log-events":           return await handleLogEvents(req, res, body);
+      case "mint-checkout-token":  return await mintCheckoutTokenAction(req, res, body);
+      case "resolve-checkout-token": return await resolveCheckoutTokenAction(req, res, body);
       default:                     return res.status(400).json({ error: "Unknown action" });
     }
   } catch (e) {
@@ -423,4 +426,57 @@ async function coachAthleteFields(req, res, body) {
       temp_program_text: a.temp_program_text,
     },
   });
+}
+
+// ── mint-checkout-token (T18 iOS payments surgery) ───────────────────────────
+// Called by the native app (never by web/PWA — see src/platform.js isNativeIOS)
+// the moment an already-authenticated athlete reaches the payment step. Proves
+// the caller IS that athlete (token-first, PIN fallback — same rule every money
+// endpoint uses, see _stripe.js verifyAthlete) before minting anything, then
+// stamps the token's jti/expiry onto the athlete row so resolve-checkout-token
+// can later claim it exactly once. Overwrites any still-pending prior token —
+// intentional: only the newest handoff link is ever valid, so re-tapping
+// "Continue to checkout" can't leave two redeemable links outstanding.
+async function mintCheckoutTokenAction(req, res, body) {
+  const athlete = await verifyAthlete({ athleteId: body.athleteId, pin: body.pin, auth: body.auth });
+  await rateLimit(`mint-checkout-token:${athlete.id}`, { max: 20, windowMin: 15 });
+  const { token, jti, exp } = mintCheckoutToken(athlete.id);
+  await sbWrite({
+    method: "PATCH", table: "athletes", query: `?id=eq.${enc(athlete.id)}`,
+    body: { checkout_token_jti: jti, checkout_token_exp: new Date(exp).toISOString() },
+    prefer: "return=minimal",
+  });
+  return res.status(200).json({ token, exp });
+}
+
+// ── resolve-checkout-token (the standalone /upgrade page's first call) ──────
+// Unauthenticated by design — the token IS the credential, exactly like a
+// password-reset link. Verifies the signature+expiry (pure, no DB), then
+// atomically claims the matching jti on the athlete row: the PATCH filter
+// requires checkout_token_jti to STILL equal this token's jti, so a second
+// concurrent/replayed request for the same token claims nothing (mirrors
+// claimGiftGeneration's compare-and-swap in api/_stripe.js). A successful claim
+// mints a normal 7-day session token — the SAME shape create-subscription and
+// every other gateway already accept — so the checkout page proceeds through
+// the UNCHANGED create-subscription / validate-gift-code / Stripe Elements
+// flow from here on. Tier itself is never touched here or anywhere client-side;
+// it only ever changes via stripe-webhook's syncSubscription (or the
+// already-audited optimistic patch in create-subscription for a reused sub with
+// a card already on file).
+async function resolveCheckoutTokenAction(req, res, body) {
+  await rateLimit(`resolve-checkout-token:${clientIp(req)}`, { max: 30, windowMin: 15 });
+  const parsed = parseCheckoutToken(str(body.token, { max: 300, name: "token" }));
+  if (!parsed) return res.status(400).json({ error: "This link has expired. Go back to the WILCO app and try again." });
+
+  const claimed = await sbWrite({
+    method: "PATCH", table: "athletes",
+    query: `?id=eq.${enc(parsed.athleteId)}&checkout_token_jti=eq.${enc(parsed.jti)}`,
+    body: { checkout_token_jti: null, checkout_token_exp: null },
+    prefer: "return=representation",
+  });
+  const athlete = Array.isArray(claimed) && claimed.length ? claimed[0] : null;
+  if (!athlete) {
+    return res.status(400).json({ error: "This link has already been used. Go back to the WILCO app and try again." });
+  }
+  return res.status(200).json({ athlete: stripPin(athlete), token: mintSessionToken("athlete", athlete.id) });
 }

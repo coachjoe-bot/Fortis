@@ -1,0 +1,9 @@
+# app.trainwilco.com has no public/marketing content to index (it's the
+# authenticated athlete/coach app). /upgrade is the T18 iOS external-checkout
+# handoff page — direct-link only, never linked from any nav, reached only via
+# a one-time signed token the native app hands out at the payment step. The
+# authoritative noindex signal is the X-Robots-Tag response header set in
+# vercel.json for this exact path; this Disallow is defense in depth so
+# well-behaved crawlers never even fetch it.
+User-agent: *
+Disallow: /upgrade
