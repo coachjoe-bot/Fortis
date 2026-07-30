@@ -50,6 +50,7 @@ import { nativeBiometricAvailable, nativeBiometricVerify } from "./nativeBiometr
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
+const ProgramEditPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramEditPane })));
 // Chat-routing decisions (model escalation, "remember this", is-this-a-log, PR
 // propagation guards). Pure regexes/logic pulled out of send() so they have a
 // suite — see src/chatRouting.js and scripts/test-chat-routing.mjs.
@@ -1469,7 +1470,10 @@ BANNED PHRASES:
 
 LOGGING IS AUTOMATIC: The app parses and saves every workout the athlete types, the logging happens on its own, and you never need "backend" or "account" access to record anything. NEVER tell the athlete you can't log something, that logging is "handled on the backend," or to contact whoever manages their account. If they say "log this," "make sure to log this," or "record this," they're just sharing the workout, acknowledge it and coach the numbers. Only decline things that are genuinely outside coaching (billing, account changes), never the workout itself.
 
-LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. Your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). NEVER claim the log is already fixed, never say you changed a number yourself, and never treat the corrected number as a brand-new workout or PR.
+LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. This rule has TWO states and you must tell them apart by reading the transcript.
+BEFORE the athlete taps: your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). Do not claim the log is already fixed and do not say you changed a number yourself, because at that point nothing has been written yet.
+AFTER the athlete taps: the transcript will contain a line from you beginning "Done, log corrected." That line is the app's record that the correction WAS written to the database. From then on it is a fact, so confirm it plainly if they ask ("Yeah, that one's gone, I pulled it and reset the max it created."). NEVER deny it, never say you lack the ability to change or remove logs, and never say you cannot confirm whether it happened. You DO have a log-correction tool and you just used it. Denying your own completed correction is the single worst answer you can give here, because it makes the athlete distrust their own training data.
+Either way, never treat the corrected number as a brand-new workout or PR.
 
 FOR NORMAL WORKOUT LOGS respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." -- then one specific observation. That's it.
 
@@ -4964,6 +4968,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Program Builder Phase A: the Program view is three subtabs (My Program /
   // Builder / Drafts). Always reopens on My Program.
   const [programTab,setProgramTab] = useState("program");
+  // Builder sub-mode (Will, 07-30): "build" is the existing goal interview,
+  // "edit" is bring-your-own-program. A sub-mode rather than a 5th subtab, since
+  // the whole point of this pass was making that section lighter, not heavier.
+  const [builderMode,setBuilderMode] = useState("build"); // build | edit
   // Once the Builder subtab has been visited it stays MOUNTED (display:none)
   // for the life of the modal, so subtab hops never reset the interview.
   const [builderMounted,setBuilderMounted] = useState(false);
@@ -5484,7 +5492,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       await sbUpdate("athletes",athlete.id,{program_text:null});
       setAthlete(prev=>({...prev,program_text:null}));
       setAthleteProgramText("");
-      setProgramTab("blocks");
+      setProgramTab("phases");   // retired phases live in the PHASES tab, under the in-progress ones
     } catch(e){ setAthleteProgramMsg("Couldn't retire that, try again."); setTimeout(()=>setAthleteProgramMsg(""),3000); }
     setRetiring(false);
   };
@@ -6325,7 +6333,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } catch(_){ /* best-effort */ }
       }
       haptic(15);
-      setMessages(prev=>[...prev,{role:"assistant",content:`Done, log corrected.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
+      // The transcript line IS the evidence the next turn reads (see the two-state
+      // LOG CORRECTIONS rule in JOEBOT_STATIC_SYS). Name the session and its real
+      // day concretely so Joe can confirm the specific fix instead of hedging, and
+      // so "did you delete that?" has a factual answer sitting right there.
+      const fixedWhen = effectiveDate(target).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+      setMessages(prev=>[...prev,{role:"assistant",content:`Done, log corrected. I applied this to your ${fixedWhen} session and saved it.\n${pending.plan.summary}${cleanupNotes.length?`\nAlso ${cleanupNotes.join("; ")}.`:""}`}]);
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't apply that fix cleanly, so I changed nothing. Open MY LOG → Edit on the workout to correct it by hand."}]);
     }
@@ -7582,7 +7595,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </div>
           ):blockPrompt.kind==="scheduled"?(
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+              <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("phases");}}
                 style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap it in</button>
               <button onClick={()=>setBlockPrompt(null)} style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 14px",cursor:"pointer",fontSize:12.5}}>Later</button>
             </div>
@@ -7598,7 +7611,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           ):(
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {blockPrompt.draft&&(
-                <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("drafts");}}
+                <button onClick={()=>{setDraftsAutoConfirm(blockPrompt.draft.id);setBlockPrompt(null);setShowProgram(true);setProgramTab("phases");}}
                   style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:12.5,fontWeight:600}}>⚡ Swap in the one I drafted</button>
               )}
               <button onClick={()=>{setBlockPrompt(null);setShowProgram(true);setProgramTab("builder");}}
@@ -7835,7 +7848,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </div>
             {/* Phase A subtabs — same bar pattern as the MY LOG / Progress modals */}
             <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,flexShrink:0,overflowX:"auto"}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
+              {/* PHASES folded into DRAFTS (Will, 07-30): four subtabs made this
+                  section heavy, and past phases are read-only history that belongs
+                  under the drafts they came from, not beside them as a peer. */}
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["phases","PHASES"]].map(([k,label])=>(
                 <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'DM Sans'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
@@ -7850,27 +7866,48 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 keeps writing while the athlete browses Drafts/Past Blocks. */}
             {(builderMounted||programTab==="builder")&&(
               <div style={{flex:1,minHeight:0,overflowY:"auto",padding:"14px 16px",display:programTab==="builder"?"flex":"none",flexDirection:"column"}}>
-                <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
-                  <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
-                    locked={!!athlete.program_locked}
-                    workoutHistory={workoutHistory}
-                    initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
-                    rebuildFrom={builderDraft?.__rebuildFrom||null}
-                    onParked={()=>setProgramTab("drafts")}
-                    onSaveToProgram={applyBuilderText}/>
-                </Suspense>
+                {/* Sub-mode picker. The interview pane below stays mounted even in
+                    edit mode, for the same reason it survives subtab switches: an
+                    in-flight draft must keep writing. */}
+                <div style={{display:"flex",gap:6,marginBottom:12,flexShrink:0}}>
+                  {[["build","Build me a program"],["edit","Edit a program"]].map(([k,label])=>(
+                    <button key={k} onClick={()=>setBuilderMode(k)}
+                      style={{flex:1,background:builderMode===k?`${CA.accent}20`:"transparent",border:`1px solid ${builderMode===k?CA.accent:CA.border}`,color:builderMode===k?CA.accent:CA.muted,borderRadius:9,padding:"8px 10px",cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"'DM Sans'",whiteSpace:"nowrap"}}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{display:builderMode==="build"?"flex":"none",flexDirection:"column",flex:1,minHeight:0}}>
+                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+                    <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
+                      locked={!!athlete.program_locked}
+                      workoutHistory={workoutHistory}
+                      initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
+                      rebuildFrom={builderDraft?.__rebuildFrom||null}
+                      onParked={()=>setProgramTab("phases")}
+                      onSaveToProgram={applyBuilderText}/>
+                  </Suspense>
+                </div>
+                {builderMode==="edit"&&(
+                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading…</div>}>
+                    <ProgramEditPane athlete={athlete} viewer="athlete" onSaveToProgram={applyBuilderText}/>
+                  </Suspense>
+                )}
               </div>
             )}
-            {programTab==="drafts"&&(
+            {/* PHASES = one scroll covering a phase's whole life. A draft IS a
+                phase still being built, so it sits under IN PROGRESS on top; the
+                blocks you've already run sit under FINISHED beneath the rule.
+                Both panes are unchanged, they just share a tab and get headers. */}
+            {programTab==="phases"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>In progress</div>
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
-              </div>
-            )}
-            {programTab==="blocks"&&(
-              <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
+                <div style={{margin:"22px 0 16px",borderTop:`1px solid ${CA.border}`}}/>
+                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>Finished</div>
                 <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
               </div>
             )}
