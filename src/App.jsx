@@ -10815,6 +10815,58 @@ function GoalGlance({goal, compact=false}){
   );
 }
 
+// The crew invite. One builder so the native share sheet and the clipboard
+// fallback can never say different things.
+//
+// The link carries the code (?crew=CODE) so it can prefill for whoever taps it,
+// AND the code is written out in plain text, because plenty of share targets
+// strip or mangle a URL and a code you can read and type always survives. This
+// invite does double duty: it is how someone joins a crew, and it is the only
+// place in the app that hands a non-user a way to download it.
+// Someone tapped an invite link. Stash the code so it survives everything
+// between landing and actually reaching the Crew tab: a signup, a PIN, a reload.
+// Read once and cleared on use, so it can never quietly re-add someone they
+// already removed. Runs at module load, before the URL is tidied up.
+export const CREW_INVITE_KEY = "wilco_pending_crew_code";
+export const captureCrewInvite = () => {
+  try{
+    const code = new URLSearchParams(window.location.search).get("crew");
+    if(!code) return;
+    localStorage.setItem(CREW_INVITE_KEY, code.toUpperCase().slice(0,20));
+    // Drop the param so a refresh or a shared screenshot of the URL bar does not
+    // keep re-arming it.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("crew");
+    window.history.replaceState({}, "", url.toString());
+  }catch(_){ /* private mode, or no storage — the code just doesn't prefill */ }
+};
+export const takeCrewInvite = () => {
+  try{
+    const v = localStorage.getItem(CREW_INVITE_KEY);
+    if(v) localStorage.removeItem(CREW_INVITE_KEY);
+    return v || null;
+  }catch(_){ return null; }
+};
+
+export const APP_INSTALL_URL = "https://app.trainwilco.com";
+// Fire immediately: the param has to be captured before anything reroutes or
+// tidies the URL, and long before the Crew tab exists.
+try{ captureCrewInvite(); }catch(_){ }
+
+export const buildCrewInvite = (code, name) => {
+  const first = String(name || "").trim().split(/\s+/)[0] || "";
+  const url = `${APP_INSTALL_URL}/?crew=${encodeURIComponent(code)}`;
+  const opener = `Join my crew on WILCO${first ? `, it's ${first}` : ""}.`;
+  return {
+    title: "Join my crew on WILCO",
+    text: `${opener}\n\nWILCO is the training app I log my lifts in. Get it here, then put in my crew code:\n\n${code}`,
+    url,
+    // Everything in one string, for the desktop clipboard fallback and for any
+    // share target that takes text only.
+    full: `${opener}\n\nWILCO is the training app I log my lifts in. Get it here:\n${url}\n\nThen put in my crew code:\n${code}`,
+  };
+};
+
 function CrewTab({athlete, demo=false}){
   const [sub,setSub] = useState("crew");
   const [loading,setLoading] = useState(true);
@@ -10829,6 +10881,7 @@ function CrewTab({athlete, demo=false}){
   const [feedLoading,setFeedLoading] = useState(false);
   const [busyId,setBusyId] = useState(null);
   const [copied,setCopied] = useState(false);
+  const [shareMsg,setShareMsg] = useState("");
   const [goalBusy,setGoalBusy] = useState(null);
   // V2 comparison. Mutual opt-in, individual crews only. Loaded lazily with the
   // roster; an org athlete never has an edge to opt in on, which IS the ban.
@@ -10867,6 +10920,13 @@ function CrewTab({athlete, demo=false}){
     }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
   };
   useEffect(()=>{ loadRoster(); loadCompare(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Arrived from someone's invite link. Prefill their code rather than adding
+  // anyone automatically: joining a crew is still a thing you choose to do.
+  useEffect(()=>{
+    if(loading||!data||data.isOrg) return;
+    const pending = takeCrewInvite();
+    if(pending&&!codeInput) setCodeInput(pending);
+  },[loading,data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFeed = ()=>{
     setFeedLoading(true);
@@ -10891,6 +10951,23 @@ function CrewTab({athlete, demo=false}){
   const decline = async (id)=>{ setBusyId(id); try{ await crewApi("crew-decline",{id},{demo}); loadRoster(); }catch(_){ } finally{ setBusyId(null); } };
   const removeMember = async (id)=>{ setBusyId(id); try{ await crewApi("crew-remove",{id},{demo}); loadRoster(); }catch(e){ setReqMsg(e.message||"Couldn't remove."); } finally{ setBusyId(null); } };
 
+  const shareCode = async ()=>{
+    const code = data?.code; if(!code) return;
+    const invite = buildCrewInvite(code, athlete?.name);
+    haptic(15);
+    try{
+      if(navigator.share){
+        // Native sheet: Messages, WhatsApp, wherever they actually talk.
+        await navigator.share({title:invite.title, text:invite.text, url:invite.url});
+        return;
+      }
+      // No share sheet (most desktop browsers): put the whole invite on the
+      // clipboard so it can still be pasted into a message.
+      await navigator.clipboard.writeText(invite.full);
+      setShareMsg("Invite copied, paste it into a message.");
+      setTimeout(()=>setShareMsg(""),2600);
+    }catch(_){ /* they backed out of the share sheet, which is not an error */ }
+  };
   const copyCode = async ()=>{
     const code = data?.code; if(!code) return;
     try{ await navigator.clipboard.writeText(code); setCopied(true); haptic(15); setTimeout(()=>setCopied(false),1600); }catch(_){ }
@@ -11144,11 +11221,13 @@ function CrewTab({athlete, demo=false}){
                   <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                     <span style={{fontFamily:"'Bebas Neue'",fontSize:22,color:CA.accent,letterSpacing:2}}>{data.code}</span>
                     <button onClick={copyCode} style={{background:"none",border:`1px solid ${CA.border}`,color:copied?CA.cyan:CA.muted,borderRadius:6,padding:"3px 9px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5}}>{copied?"Copied":"Copy"}</button>
+                    <button onClick={shareCode} style={{background:CA_BTN,border:"none",color:"#fff",borderRadius:6,padding:"3px 11px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5,boxShadow:`0 2px 10px ${CA_GLOW}`}}>Share</button>
                   </div>
                 ):(
                   <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
                 )}
-                <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Give it to someone you train with, or put theirs in below.</div>
+                <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Share sends a text with your code and a link to get the app, so it works on someone who doesn't have WILCO yet.</div>
+                {shareMsg&&<div style={{color:CA.cyan,fontSize:11.5,marginBottom:10}}>{shareMsg}</div>}
                 <div style={{display:"flex",gap:8}}>
                   <input value={codeInput} onChange={e=>setCodeInput(e.target.value)} placeholder="Their crew code" style={inpA({padding:"8px 10px",fontSize:13,flex:1,textTransform:"uppercase"})}/>
                   <button onClick={()=>sendRequest(codeInput)} disabled={requesting||!codeInput.trim()} style={{background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>{requesting?"…":"Add"}</button>
