@@ -45,6 +45,11 @@ export const qlLoad = (athleteId, workoutHistory) => {
       // Warm-up / cool-down tap-to-log toggles (Program Builder: two booleans
       // only — full prep detail lives in the program text, never the log).
       prep: d.prep && typeof d.prep==="object" ? {warmup:!!d.prep.warmup, cooldown:!!d.prep.cooldown} : {warmup:false, cooldown:false},
+      // The day this draft is FOR (T19 #4). null = today. Carried so a backdated
+      // draft can never be resumed as today's log, or vice versa: the sheet
+      // compares this against the day currently being logged and throws the
+      // draft away on a mismatch rather than silently prefilling the wrong day.
+      targetDate: typeof d.targetDate==="string" ? d.targetDate : null,
     };
   }catch(_){ return null; }
 };
@@ -57,7 +62,7 @@ export const qlLoad = (athleteId, workoutHistory) => {
 // the RESUME LOG nav label, which is a promise about the athlete's own unfinished
 // work. Any later save from the sheet omits the flag, so the moment they touch it
 // the draft becomes a normal parked one.
-export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt, prep}) => {
+export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt, prep, targetDate}) => {
   try{
     if(!draft||!draft.trim()){ qlClear(athleteId); return; }
     localStorage.setItem(qlKey(athleteId), JSON.stringify({
@@ -68,6 +73,7 @@ export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, preb
       stamp: qlStamp(workoutHistory),
       prebuilt: !!prebuilt,
       prep: prep && (prep.warmup||prep.cooldown) ? {warmup:!!prep.warmup, cooldown:!!prep.cooldown} : undefined,
+      targetDate: typeof targetDate==="string" && targetDate ? targetDate : undefined,
     }));
   }catch(_){}
 };
@@ -93,6 +99,93 @@ export const qlMarkUsed = (athleteId) => {
 // LOCAL date, never UTC — a UTC day stamp rolls over mid-evening and would re-fire
 // the pre-build for a second time on the same training day.
 export const qlLocalDay = (now) => new Date(now||Date.now()).toLocaleDateString();
+
+// ─── REQUESTED DAY (T19 #4) ──────────────────────────────────────────────────
+// Quick Log always drafted TODAY'S session. Told "log yesterday's workout" it
+// prefilled the wrong day, and Will ended up typing the whole thing by hand,
+// which defeats the entire feature.
+//
+// These are deliberately the SAME rules the chat parser applies to log_date
+// (App.jsx's parse prompt): resolve to the MOST RECENT PAST occurrence, look
+// back at most 14 days, never accept a future day, and return null when it is
+// ambiguous so the caller can ask instead of guessing. Kept here as a pure
+// function so it is testable without a model call and so the sheet, the draft
+// generator and the draft key all read ONE answer.
+//
+// Returns a local "YYYY-MM-DD" string, or null for "no date stated / unclear".
+const QL_WEEKDAYS = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+export const QL_MAX_BACKDATE_DAYS = 14;
+
+const qlYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const qlMidnight = (now) => { const d = new Date(now||Date.now()); d.setHours(0,0,0,0); return d; };
+const qlShift = (base, days) => { const d = new Date(base); d.setDate(d.getDate()-days); return d; };
+
+export const parseRequestedDate = (text, now) => {
+  const t = String(text||"").toLowerCase();
+  if (!t.trim()) return null;
+  const today = qlMidnight(now);
+
+  // Explicit "today" beats everything and means no backdating.
+  if (/\btoday\b|\bthis morning\b|\bthis afternoon\b|\bjust (now|finished|did)\b/.test(t)) return null;
+
+  // "day before yesterday" MUST be tested before the bare "yesterday" rule —
+  // /\byesterday\b/ matches inside it and would silently resolve one day late.
+  if (/\bday before yesterday\b/.test(t)) return qlYmd(qlShift(today,2));
+
+  // "yesterday"
+  if (/\byesterday\b|\blast night\b/.test(t)) return qlYmd(qlShift(today,1));
+
+  // "N days ago" — bounded by the same 14-day window as the chat parser.
+  const ago = t.match(/\b(\d{1,2})\s*days?\s+ago\b/);
+  if (ago) {
+    const n = parseInt(ago[1],10);
+    if (n >= 1 && n <= QL_MAX_BACKDATE_DAYS) return qlYmd(qlShift(today,n));
+    return null;                                   // out of range → ask, don't guess
+  }
+
+  // ISO or M/D (optionally M/D/YY(YY)). Never a future date.
+  const iso = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2])-1, Number(iso[3]));
+    d.setHours(0,0,0,0);
+    if (isNaN(d.getTime()) || d > today) return null;
+    return qlYmd(d);
+  }
+  const md = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (md) {
+    const yRaw = md[3] ? Number(md[3]) : today.getFullYear();
+    const y = yRaw < 100 ? 2000 + yRaw : yRaw;
+    const d = new Date(y, Number(md[1])-1, Number(md[2]));
+    d.setHours(0,0,0,0);
+    if (isNaN(d.getTime()) || d.getMonth() !== Number(md[1])-1) return null;  // e.g. 2/30
+    if (d > today) return null;
+    return qlYmd(d);
+  }
+  // "on the 24th" — this month, or last month if that day hasn't happened yet.
+  const nth = t.match(/\bon the (\d{1,2})(?:st|nd|rd|th)\b/);
+  if (nth) {
+    const day = Number(nth[1]);
+    if (day < 1 || day > 31) return null;
+    let d = new Date(today.getFullYear(), today.getMonth(), day); d.setHours(0,0,0,0);
+    if (d > today) { d = new Date(today.getFullYear(), today.getMonth()-1, day); d.setHours(0,0,0,0); }
+    if (d.getDate() !== day) return null;          // day doesn't exist in that month
+    const back = Math.round((today - d) / 86400000);
+    return back <= QL_MAX_BACKDATE_DAYS ? qlYmd(d) : null;
+  }
+
+  // Weekday name → most recent ALREADY-PASSED occurrence. If today IS that
+  // weekday the athlete means LAST week's, never today's (same rule as the chat
+  // parser), because "log Monday's workout" said on a Monday about a session
+  // already done reads as this morning, and that case is caught by /today/ above.
+  const wd = t.match(/\b(?:last\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+  if (wd) {
+    const want = QL_WEEKDAYS.indexOf(wd[1]);
+    let back = (today.getDay() - want + 7) % 7;
+    if (back === 0) back = 7;
+    return back <= QL_MAX_BACKDATE_DAYS ? qlYmd(qlShift(today, back)) : null;
+  }
+  return null;
+};
 
 // ─── APP-OPEN OPENER CACHE ───────────────────────────────────────────────────
 // The generated "here's today's session" opener, cached for the LOCAL calendar day

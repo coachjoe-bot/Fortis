@@ -18,7 +18,7 @@
 // — they are intentionally distinct helpers. Use this one for per-athlete brief
 // math; do not conflate the two.
 
-import { epley1RM, computeGritSnapshot, TIER_NAMES, getBenchKey, parseDbDate } from "./grit.js";
+import { epley1RM, computeGritSnapshot, TIER_NAMES, getBenchKey, parseDbDate, effectiveDate } from "./grit.js";
 import { weekAheadFor } from "./programPosition.js";
 
 // ── parsed_data access ────────────────────────────────────────────────────────
@@ -55,11 +55,11 @@ export const isRealSession = (w) => {
 const GAP_MS = 3 * 60 * 60 * 1000;
 export const groupIntoSessions = (workouts) => {
   const real = workouts.filter(isRealSession)
-    .sort((a, b) => parseDbDate(a.created_at).getTime() - parseDbDate(b.created_at).getTime());
+    .sort((a, b) => effectiveDate(a).getTime() - effectiveDate(b).getTime());
   const groups = [];
   let cur = null, lastTime = 0;
   real.forEach((w) => {
-    const t = parseDbDate(w.created_at).getTime();
+    const t = effectiveDate(w).getTime();
     const pd = getPD(w);
     if (!lastTime || pd.new_session === true || t - lastTime > GAP_MS) {
       cur = [w]; groups.push(cur);
@@ -95,7 +95,7 @@ const workingSets = (ex) => {
 export const buildLiftHistory = (sessions) => {
   const byLift = {};
   for (const group of sessions) {
-    const date = group[0].created_at;
+    const date = effectiveDate(group[0]).toISOString();
     const exercises = group.flatMap((e) => getPD(e).exercises || []);
     for (const ex of exercises) {
       if (!ex.name || !ex.weight || ex.unit === "bodyweight") continue;
@@ -168,7 +168,7 @@ export function computeRankMovement(allWorkouts, allManualRMs, athlete, previous
     return { now, before: null, rankUp: false, strengthScoreDelta: null, newRankedPRs: [] };
   }
   const cutoff = new Date(previousEntryAt).getTime();
-  const priorWorkouts = (allWorkouts || []).filter((w) => parseDbDate(w.created_at).getTime() < cutoff);
+  const priorWorkouts = (allWorkouts || []).filter((w) => effectiveDate(w).getTime() < cutoff);
   const priorManual = allManualRMs; // manual 1RMs carry no timestamp in this schema; treated as already-known (conservative — never OVER-credits a "new" PR)
   const before = computeGritSnapshot(priorWorkouts, priorManual, opts);
 
@@ -459,7 +459,7 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
 const sessionDate = (s) => {
   const entries = Array.isArray(s) ? s : (s?.entries || []);
   const last = entries[entries.length - 1];
-  return last ? parseDbDate(last.created_at).getTime() : Date.now();
+  return last ? effectiveDate(last).getTime() : Date.now();
 };
 
 // Adapt to athlete type from populated fields (spec §1 archetype row).
