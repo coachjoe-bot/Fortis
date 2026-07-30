@@ -238,7 +238,31 @@ export default async function handler(req, res) {
     const subTable = isCoachCaller ? "coach_push_subscriptions" : "push_subscriptions";
     const ownCol = isCoachCaller ? "coach_id" : "athlete_id";
 
+    // Platform-aware subscribe (App Store build plan §3/§6 step 5): native iOS
+    // sends a raw APNs device token, not a Web Push subscription object — same
+    // upsert-by-endpoint pattern, same auth, same per-role table routing, just a
+    // different request shape and a `platform` tag on the row so sendTo() (in
+    // _push.js) knows which transport to use later. Web callers are entirely
+    // unaffected: omitting `platform` (or sending "web") takes the exact path
+    // that shipped in v1/v2.
     if (body.action === "subscribe") {
+      const platform = body.platform === "ios" ? "ios" : "web";
+
+      if (platform === "ios") {
+        const deviceToken = str(body.deviceToken, { max: 300, name: "deviceToken" });
+        if (!/^[0-9a-fA-F]+$/.test(deviceToken)) throw httpErr(400, "deviceToken must be a hex APNs token");
+        await sbWrite({
+          method: "POST", table: subTable,
+          query: "?on_conflict=endpoint",
+          body: {
+            [ownCol]: caller.id, endpoint: deviceToken, platform: "ios", p256dh: null, auth: null,
+            user_agent: String(req.headers["user-agent"] || "").slice(0, 200) || null,
+          },
+          prefer: "resolution=merge-duplicates,return=minimal",
+        });
+        return res.status(200).json({ ok: true });
+      }
+
       const sub = body.subscription;
       if (!sub || typeof sub !== "object") throw httpErr(400, "subscription is required");
       const endpoint = str(sub.endpoint, { max: 1000, name: "endpoint" });
@@ -250,7 +274,7 @@ export default async function handler(req, res) {
         method: "POST", table: subTable,
         query: "?on_conflict=endpoint",
         body: {
-          [ownCol]: caller.id, endpoint, p256dh, auth,
+          [ownCol]: caller.id, endpoint, p256dh, auth, platform: "web",
           user_agent: String(req.headers["user-agent"] || "").slice(0, 200) || null,
         },
         prefer: "resolution=merge-duplicates,return=minimal",

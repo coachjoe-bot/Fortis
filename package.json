@@ -5,15 +5,26 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/check-api-config.mjs",
+    "prebuild": "node scripts/check-api-config.mjs && node scripts/build-app-version.mjs",
     "build": "vite build",
     "check:api": "node scripts/check-api-config.mjs",
+    "build:ota": "node scripts/build-app-version.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:smoke": "playwright test"
   },
   "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "^10.0.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/browser": "^8.0.4",
     "@capacitor/core": "^8.4.2",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3",
+    "@capawesome/capacitor-badge": "^8.0.2",
     "@stripe/react-stripe-js": "^3.1.1",
     "@stripe/stripe-js": "^5.5.0",
     "@vercel/analytics": "^1.6.1",
@@ -25,9 +36,13 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/ios": "^8.4.2",
     "@playwright/test": "^1.61.1",
     "@vitejs/plugin-react": "^4.2.0",
     "qrcode": "^1.5.4",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }

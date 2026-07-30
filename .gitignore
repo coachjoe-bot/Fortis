@@ -6,7 +6,21 @@
 node_modules
 *.bak
 dist
+dist-ota
 
 # Playwright
 test-results
 playwright-report
+
+# Native iOS OTA bundle — generated per-build by scripts/build-app-version.mjs
+# (content-addressed filename/hash; committing it would just churn the repo on
+# every build with no source-of-truth value — public/app-version.json and
+# public/ota/bundle-*.html are build OUTPUT, not source).
+public/app-version.json
+public/ota/
+
+# Xcode user-specific project state (never shared/portable across machines).
+ios/App/App.xcodeproj/project.xcworkspace/xcuserdata/
+ios/App/App.xcodeproj/xcuserdata/
+ios/.build/
+ios/DerivedData/
