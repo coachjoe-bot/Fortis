@@ -779,6 +779,21 @@ async function handleCrew(body, caller, res) {
     let pending = [];
     if (!org.isOrg) {
       pending = await sbSelect("crew_edges", `?status=eq.pending&or=(athlete_a.eq.${enc(me.id)},athlete_b.eq.${enc(me.id)})&select=*`);
+      // Say WHO wants to join. "Someone wants to join your crew" is useless when
+      // the whole decision is whether you know that person. They already have
+      // your code, which is the only way to reach you, so their name is not a
+      // disclosure: it is the one fact the accept/decline call needs.
+      if (pending.length) {
+        const otherIds = [...new Set(pending.map((e) => (String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a)))];
+        try {
+          const names = await sbSelect("athletes", `?id=in.(${otherIds.map((id) => `"${id}"`).join(",")})&select=id,name`);
+          const nameById = Object.fromEntries(names.map((a) => [String(a.id), a.name]));
+          pending = pending.map((e) => ({
+            ...e,
+            otherName: nameById[String(String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a)] || null,
+          }));
+        } catch { /* names are cosmetic — the request still renders and can still be accepted */ }
+      }
     }
     // The caller's OWN goal, so the tab can show it back to them with the
     // share toggle (finding #4: share_with_crew had no write path anywhere, so

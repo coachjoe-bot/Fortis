@@ -10853,10 +10853,9 @@ export const APP_INSTALL_URL = "https://app.trainwilco.com";
 // tidies the URL, and long before the Crew tab exists.
 try{ captureCrewInvite(); }catch(_){ }
 
-export const buildCrewInvite = (code, name) => {
-  const first = String(name || "").trim().split(/\s+/)[0] || "";
+export const buildCrewInvite = (code) => {
   const url = `${APP_INSTALL_URL}/?crew=${encodeURIComponent(code)}`;
-  const opener = `Join my crew on WILCO${first ? `, it's ${first}` : ""}.`;
+  const opener = "Join my crew on WILCO.";
   // ONE string, link inline, and deliberately NO separate `url` field.
   //
   // Passing both text and url to navigator.share looked right and shipped an
@@ -10864,7 +10863,7 @@ export const buildCrewInvite = (code, name) => {
   // the entire message away. Verified by Will actually sending one. With text
   // alone, Messages inserts it verbatim and still auto-links the URL, so the
   // words survive and the tap target is intact.
-  const body = `${opener}\n\nWILCO is the training app I log my lifts in. Get it here:\n${url}\n\nThen put in my crew code:\n${code}`;
+  const body = `${opener}\n\nWILCO is the best training app in the world. Get it here:\n${url}\n\nThen put in my crew code:\n${code}`;
   return { title: "Join my crew on WILCO", text: body, full: body };
 };
 
@@ -10958,7 +10957,7 @@ function CrewTab({athlete, demo=false}){
 
   const shareCode = async ()=>{
     const code = data?.code; if(!code) return;
-    const invite = buildCrewInvite(code, athlete?.name);
+    const invite = buildCrewInvite(code);
     haptic(15);
     try{
       if(navigator.share){
@@ -11210,8 +11209,8 @@ function CrewTab({athlete, demo=false}){
                     {infoFor===r.id&&(
                       <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px 12px",marginBottom:10,color:CA.muted2,fontSize:11.5,lineHeight:1.6}}>
                         <div style={{color:CA.accent,fontSize:9.5,letterSpacing:1.4,fontFamily:"ui-monospace,Menlo,monospace",marginBottom:7}}>WHAT COMPARING DOES</div>
-                        <div style={{marginBottom:6}}>Turns on full comparison between you two: benchmarks, strength score and ranks.</div>
-                        <div>You both have to turn it on, and either of you can turn it off whenever. Completely optional.</div>
+                        <div style={{marginBottom:6}}>Turns on full comparison between you two to maximize competition: benchmarks, strength score and ranks.</div>
+                        <div>You both have to turn it on, and either of you can turn it off whenever. Completely optional. Iron sharpens iron.</div>
                       </div>
                     )}
                     <div style={{display:"flex",alignItems:"center",gap:3}}>
@@ -11274,7 +11273,7 @@ function CrewTab({athlete, demo=false}){
                   <div style={{color:CA.muted,fontSize:10,letterSpacing:1.4,marginBottom:8,fontFamily:"ui-monospace,Menlo,monospace"}}>REQUESTS</div>
                   {incoming.map(p=>(
                     <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
-                      <span style={{color:CA.text,fontSize:13}}>Someone wants to train with you</span>
+                      <span style={{color:CA.text,fontSize:13}}>{p.otherName ? `${p.otherName} wants to join your crew` : "Someone wants to join your crew"}</span>
                       <div style={{display:"flex",gap:6}}>
                         <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
                         <button onClick={()=>decline(p.id)} disabled={busyId===p.id} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11}}>Decline</button>
