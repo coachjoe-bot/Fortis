@@ -17,6 +17,10 @@ import { loadStripe } from "@stripe/stripe-js/pure";
 // card form is the only consumer and most sessions never reach checkout.
 const StripePayBlock = lazy(()=>import("./payform.jsx"));
 import { ConsentFlow, TERMS_VERSION, PRIVACY_VERSION } from "./legal.jsx";
+// iOS can't ship the embedded Stripe Elements payment step (App Review 3.1.1) —
+// isNativeIOS() gates the two PaymentStep call sites below to an external
+// handoff instead. Always false on web/PWA, so that path is untouched.
+import { isNativeIOS } from "./platform.js";
 // Quick Log draft persistence — the rules that let an athlete close the sheet mid-workout
 // and pick it back up (expiry window, staleness check, clear-on-send).
 import {
@@ -155,6 +159,44 @@ const eventFromPath = (pathname) => {
   const clean = String(pathname||"").replace(/\/+$/,"") || "/";
   const hit = Object.entries(EVENTS).find(([,e]) => e.path === clean);
   return hit ? { source: hit[0], ...hit[1] } : null;
+};
+
+// ─── EXTERNAL CHECKOUT HANDOFF (/upgrade — T18 iOS payments surgery) ─────────
+// Deliberately outside the normal nav/funnel, like the /crunch event pages
+// above: direct-link only (never linked from anywhere in the UI), noindex
+// (vercel.json + robots.txt), and only ever reached because the native app
+// deep-linked here with a one-time token. Resolved once from the boot URL,
+// same pattern as eventFromPath.
+const checkoutFromPath = (pathname, search) => {
+  const clean = String(pathname||"").replace(/\/+$/,"") || "/";
+  if (clean !== "/upgrade") return null;
+  const p = new URLSearchParams(search||"");
+  return { token: p.get("t")||"", tier: p.get("tier")||"", billing: p.get("billing")==="annual"?"annual":"monthly" };
+};
+
+// Open the standalone external checkout page in the system browser (iOS only —
+// callers gate on isNativeIOS() first). Dynamically imported so the native-only
+// package never enters the web/PWA bundle. `@capacitor/browser` also ships a
+// working web fallback (window.open), so the catch below is belt-and-suspenders
+// for the rare case the import itself fails, not the expected path.
+const openExternalCheckout = async (url) => {
+  try {
+    const { Browser } = await import("@capacitor/browser");
+    await Browser.open({ url });
+  } catch (_) {
+    window.location.href = url;
+  }
+};
+
+// Mint a short-lived, single-use checkout token (api/identity.js) and hand the
+// athlete to app.trainwilco.com/upgrade for the actual card entry. Never sends
+// a bare athleteId or the athlete's PIN in the URL — just the opaque token,
+// which the /upgrade page immediately exchanges for a normal session (see
+// CheckoutHandoff below). Throws on failure — callers show the message inline.
+const goToExternalCheckout = async ({ athleteId, pin, tier, billing }) => {
+  const j = await idApi("mint-checkout-token", { athleteId, pin, auth: getAuth() });
+  const url = `https://app.trainwilco.com/upgrade?t=${encodeURIComponent(j.token)}&tier=${encodeURIComponent(tier)}&billing=${encodeURIComponent(billing||"monthly")}`;
+  await openExternalCheckout(url);
 };
 
 // ─── ADD TO HOME SCREEN (PWA install) ────────────────────────────────────────
@@ -2966,6 +3008,14 @@ function WilcoRoot() {
   const [eventCtx] = useState(()=>{
     try { return eventFromPath(window.location.pathname); } catch { return null; }
   });
+  // External checkout handoff (/upgrade — T18 iOS payments surgery): resolved
+  // ONCE from the boot URL, same pattern as eventCtx. Independent of `view` and
+  // of any restored session on purpose — landing on this URL always shows the
+  // standalone checkout page, never the app, regardless of what else is in
+  // localStorage in this browser.
+  const [checkoutCtx] = useState(()=>{
+    try { return checkoutFromPath(window.location.pathname, window.location.search); } catch { return null; }
+  });
   // Restore a recent sign-in (see persistAuthSession) so a cold reopen skips the
   // homescreen and lands back in the app. Runs once, before children mount, so
   // CURRENT_AUTH is re-armed in time for the first data/identity call.
@@ -2994,6 +3044,9 @@ function WilcoRoot() {
     if(eventCtx.active) track("event_landing_view","billing",{source:eventCtx.source});
     else { try { window.history.replaceState({}, "", "/"); } catch {} }
   },[]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Zero app chrome — no wordmark shell, no nav, not gated on login state.
+  if(checkoutCtx) return <CheckoutHandoff token={checkoutCtx.token} tier={checkoutCtx.tier} billing={checkoutCtx.billing}/>;
 
   if(view==="athlete"&&athlete) return <AthleteView athlete={athlete} onLogout={()=>{clearAuthSession();setAthlete(null);setView("home");}}/>;
   if(view==="coach"&&coach) return <Suspense fallback={<div style={{minHeight:"100vh",background:CA.navy}}/>}><CoachDashboard coach={coach} onLogout={()=>{clearAuthSession();setCoach(null);setView("home");}}/></Suspense>;
@@ -3385,6 +3438,111 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
   );
 }
 
+// ─── EXTERNAL CHECKOUT HANDOFF (/upgrade) ────────────────────────────────────
+// Standalone landing page, zero app chrome — see checkoutFromPath above and the
+// WilcoRoot early-return that mounts this. The ONLY way here is a deep link the
+// native app opened at the payment step (isNativeIOS() gate), carrying a
+// one-time token in the query string.
+//
+// Flow: exchange the token for a normal signed session (resolve-checkout-token
+// — atomically consumes it, so a revisited/copied link fails past this point),
+// then render the SAME <PaymentStep> the web app already uses, completely
+// unchanged. Tier is never flipped here or anywhere client-side — it changes
+// only via stripe-webhook's syncSubscription (or create-subscription's
+// optimistic patch, which itself only fires for a reused subscription that
+// already has a card on file) — identical rule as the in-app web flow.
+//
+// The resolved session is cached in sessionStorage (NOT the persistent
+// wilco_auth_v1 store — this is a single tab's checkout, not a logged-in app
+// session) so a mid-payment page refresh doesn't try to re-consume an
+// already-spent one-time token and strand the athlete.
+const CHECKOUT_SESSION_KEY = "wilco_checkout_session_v1";
+function CheckoutHandoff({ token, tier, billing }) {
+  const [phase, setPhase] = useState("resolving"); // resolving | ready | error | done
+  const [athleteId, setAthleteId] = useState(null);
+  const [errMsg, setErrMsg] = useState("");
+
+  // Belt-and-suspenders alongside the X-Robots-Tag response header (vercel.json)
+  // + public/robots.txt Disallow — a search engine that somehow already indexed
+  // /index.html's markup should still see noindex when a crawler renders this
+  // route's JS. Scoped to this component only (removed on unmount) so the meta
+  // tag never leaks onto any other view in this single-page app.
+  useEffect(() => {
+    const m = document.createElement("meta");
+    m.name = "robots"; m.content = "noindex, nofollow";
+    document.head.appendChild(m);
+    const prevTitle = document.title;
+    document.title = "Secure Checkout — WILCO";
+    return () => { document.head.removeChild(m); document.title = prevTitle; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(CHECKOUT_SESSION_KEY) || "null");
+        if (cached?.athleteId && cached?.token) {
+          CURRENT_AUTH = { role:"athlete", id:cached.athleteId, pin:null, token:cached.token };
+          setAthleteId(cached.athleteId); setPhase("ready"); return;
+        }
+      } catch (_) {}
+      if (!token) { setPhase("error"); setErrMsg("This link is missing its access code. Go back to the WILCO app and try again."); return; }
+      try {
+        const j = await idApi("resolve-checkout-token", { token });
+        if (cancelled) return;
+        if (!j.athlete || !j.token) { setPhase("error"); setErrMsg(j.error || "This link has expired or was already used. Go back to the WILCO app and try again."); return; }
+        CURRENT_AUTH = { role:"athlete", id:j.athlete.id, pin:null, token:j.token };
+        try { sessionStorage.setItem(CHECKOUT_SESSION_KEY, JSON.stringify({ athleteId:j.athlete.id, token:j.token })); } catch (_) {}
+        // Scrub the one-time token out of the URL (history, referrer headers,
+        // screenshots) the moment it's spent — keep tier/billing so a refresh
+        // still knows what to render.
+        try { window.history.replaceState({}, "", `/upgrade?tier=${encodeURIComponent(tier)}&billing=${encodeURIComponent(billing||"monthly")}`); } catch (_) {}
+        setAthleteId(j.athlete.id);
+        setPhase("ready");
+      } catch (e) {
+        if (!cancelled) { setPhase("error"); setErrMsg("Connection error. Try again."); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onPaid = () => {
+    try { sessionStorage.removeItem(CHECKOUT_SESSION_KEY); } catch (_) {}
+    setPhase("done");
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:CA.navy,color:CA.text,display:"flex",flexDirection:"column",alignItems:"center",padding:"calc(32px + env(safe-area-inset-top,0px)) 20px 40px"}}>
+      <style>{GS}</style>
+      <div style={{fontFamily:"'Bebas Neue'",fontSize:40,color:CA.accent,letterSpacing:5,marginBottom:4}}>WILCO</div>
+      <div style={{color:CA.muted,fontSize:11,letterSpacing:2,marginBottom:28}}>SECURE CHECKOUT</div>
+      <div style={{width:"100%",maxWidth:420}}>
+        {phase==="resolving" && (
+          <div style={{color:CA.muted,fontSize:14,textAlign:"center",padding:"40px 0"}}>Verifying your link…</div>
+        )}
+        {phase==="error" && (
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{color:CA.red,fontSize:14,lineHeight:1.6}}>{errMsg}</div>
+          </div>
+        )}
+        {phase==="ready" && athleteId && (tier==="pro"||tier==="elite") && (
+          <PaymentStep athleteId={athleteId} pin={null} tier={tier} billing={billing==="annual"?"annual":"monthly"}
+            eventCtx={null} onSuccess={onPaid}/>
+        )}
+        {phase==="ready" && athleteId && tier!=="pro" && tier!=="elite" && (
+          <div style={{color:CA.red,fontSize:13,textAlign:"center"}}>Invalid plan. Go back to the WILCO app and try again.</div>
+        )}
+        {phase==="done" && (
+          <div style={{textAlign:"center",padding:"30px 0"}}>
+            <div style={{color:CA.green,fontSize:17,fontWeight:700,marginBottom:12}}>You're all set.</div>
+            <div style={{color:CA.muted2,fontSize:13,lineHeight:1.7}}>Your WILCO plan is active. Head back to the WILCO app — it'll pick up your new plan the next time it syncs.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── ATHLETE SIGNUP ───────────────────────────────────────────────────────────
 // eventCtx (optional): the athlete arrived via an event landing page (QR at a gym
 // table). Locks the plan to the event's tier/billing, skips plan selection, and
@@ -3398,6 +3556,9 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
   const [showConsent,setShowConsent] = useState(false); // T&C + Privacy consent overlay
   const [codeState,setCodeState] = useState(null); // {status:"checking"|"ok"|"bad", school?:string}
   const [nameTakenNote,setNameTakenNote] = useState(false); // someone already uses this name → sign in by email
+  // iOS-only external checkout handoff state (step 16 — see checkoutFromPath /
+  // CheckoutHandoff / goToExternalCheckout above). Never touched on web/PWA.
+  const [extCheckout,setExtCheckout] = useState("idle"); // idle|opening|opened|error|finishing
   const setD = (k,v) => setData(p=>({...p,[k]:v}));
   useEffect(()=>{ track("signup_start","auth"); },[]); // activation-funnel top (pre-login)
 
@@ -3420,8 +3581,13 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
   //   1 who you are · 2 secure it · 3 about you · 4 your training · 5 optional extras
   // Plan (14) and payment (15) keep their numbers on purpose — the Crunch event
   // flow jumps straight to setStep(eventCtx?15:14) and school signups skip both.
+  // Step 16 (iOS-only): the external-checkout handoff screen. Replaces step 15
+  // (the embedded Stripe Elements PaymentStep) wherever a paid tier would have
+  // shown it — isNativeIOS() is the ONLY thing that ever routes here; web/PWA
+  // never sees 16 and keeps the exact step-15 flow unchanged.
+  const paymentStepNum = isNativeIOS() ? 16 : 15;
   const visibleSteps = [1,2,3,4,5,
-    ...(data.isSchool ? [] : eventCtx ? [15] : [14, ...(isPaidTier?[15]:[])])]; // event flow: plan is fixed, skip selection
+    ...(data.isSchool ? [] : eventCtx ? [paymentStepNum] : [14, ...(isPaidTier?[paymentStepNum]:[])])]; // event flow: plan is fixed, skip selection
   const lastDataStep = 5;   // final profile screen before consent
   const prevStep = () => { const i=visibleSteps.indexOf(step); return i>0 ? visibleSteps[i-1] : null; };
 
@@ -3503,7 +3669,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         return;
       }
       setLoading(false);
-      setStep(eventCtx?15:14); // event flow: plan is fixed → straight to payment
+      setStep(eventCtx?paymentStepNum:14); // event flow: plan is fixed → straight to payment
     } catch(e){ setShowConsent(false); setErr("Connection error."); setLoading(false); }
   };
 
@@ -3529,7 +3695,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         catch(e){ setErr("Connection error."); setLoading(false); }
         return;
       }
-      setStep(eventCtx?15:14);
+      setStep(eventCtx?paymentStepNum:14);
       return;
     }
     setShowConsent(true); // ConsentFlow → completeSignup() handles creation
@@ -3655,9 +3821,33 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         catch(e){ setErr("Connection error."); setLoading(false); }
         return;
       }
-      setStep(15); // Pro/Elite → payment
+      setStep(paymentStepNum); // Pro/Elite → payment (15 web/PWA, 16 iOS handoff)
     }
-    // step 15 (payment) is handled inside <PaymentStep/>, not here.
+    // step 15 (payment) is handled inside <PaymentStep/>; step 16 (iOS) inside
+    // the external-checkout block below — neither is handled here.
+  };
+
+  // iOS-only: mint the one-time checkout token and hand off to the standalone
+  // /upgrade page in the system browser. Never called on web/PWA (isNativeIOS()
+  // gates every path that reaches step 16).
+  const startExternalCheckout = async () => {
+    setExtCheckout("opening"); setErr("");
+    try {
+      await goToExternalCheckout({ athleteId: data.athleteId, pin: data.pin, tier: data.tier, billing: data.billing });
+      setExtCheckout("opened");
+    } catch(e){ setExtCheckout("error"); setErr(e.message || "Couldn't start checkout. Try again."); }
+  };
+  // "I've finished paying" — re-fetches the athlete's ACTUAL server-side tier
+  // (never assumed client-side: the payment happened in a different browser
+  // context this screen has no visibility into) and only then enters the app.
+  // A refetch failure keeps them on this screen rather than guessing a tier.
+  const finishAfterExternalCheckout = async () => {
+    setExtCheckout("finishing"); setErr("");
+    try {
+      const fresh = await idApi("get-athlete", { athleteId: data.athleteId, pin: data.pin });
+      if(!fresh.athlete) throw new Error("Couldn't confirm your account yet. Try again in a moment.");
+      await finishOnboarding(fresh.athlete.tier || "free", {...athleteRow, ...fresh.athlete, pin:data.pin});
+    } catch(e){ setExtCheckout("opened"); setErr(e.message || "Couldn't confirm payment yet. Try again in a moment."); }
   };
 
   // Tier card component used in step 5
@@ -3944,7 +4134,11 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
           </div>
         )}
       </>}
-      {step===15&&(
+      {/* Defense in depth: PaymentStep (embedded Stripe Elements) must NEVER
+          render inside the iOS Capacitor build (App Review 3.1.1) — gated both
+          by visibleSteps/paymentStepNum ABOVE (step is never actually 15 on
+          iOS) and here directly, so a stray back/forward can't resurrect it. */}
+      {step===15&&!isNativeIOS()&&(
         <PaymentStep
           athleteId={data.athleteId}
           pin={data.pin}
@@ -3955,8 +4149,39 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         />
       )}
 
+      {/* Step 16 — iOS-only external checkout handoff. No card entry happens in
+          this WebView; the athlete pays at app.trainwilco.com/upgrade in the
+          system browser, then taps back in to confirm. */}
+      {step===16&&(
+        <div className="fade-up">
+          <div style={{color:CA.muted2,fontSize:13,marginBottom:16,lineHeight:1.6}}>
+            To finish setting up your {data.tier==="elite"?"Elite":"Pro"} plan, we'll take you to our secure checkout at trainwilco.com. Your account is already created — you'll come right back to WILCO after.
+          </div>
+          {(extCheckout==="idle"||extCheckout==="error"||extCheckout==="opening") && (
+            <button onClick={startExternalCheckout} disabled={extCheckout==="opening"}
+              style={btn(CA.accent,"#000",{opacity:extCheckout==="opening"?0.7:1})}>
+              {extCheckout==="opening" ? "Opening checkout…" : "Continue to Secure Checkout →"}
+            </button>
+          )}
+          {(extCheckout==="opened"||extCheckout==="finishing") && (
+            <>
+              <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"12px 14px",marginBottom:14,color:CA.muted2,fontSize:12,lineHeight:1.6}}>
+                Finish your payment in the browser tab that just opened, then come back here.
+              </div>
+              <button onClick={finishAfterExternalCheckout} disabled={extCheckout==="finishing"}
+                style={btn(CA.accent,"#000",{opacity:extCheckout==="finishing"?0.7:1})}>
+                {extCheckout==="finishing" ? "Checking…" : "I've finished — Continue to WILCO →"}
+              </button>
+              <button onClick={startExternalCheckout} style={{width:"100%",background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer",marginTop:12}}>
+                Didn't open? Tap to try again
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {err&&<div style={{color:CA.red,fontSize:12,marginBottom:12,textAlign:"center"}}>{err}</div>}
-      {step!==15 && (
+      {step!==15 && step!==16 && (
         <button onClick={nextStep} disabled={loading} style={btn(CA.accent,"#000",{opacity:loading?0.7:1,cursor:loading?"not-allowed":"pointer"})}>
           {loading ? "Please wait..."
             : step===14 ? (isPaidTier ? "Continue to Payment →" : "Start with Free →")
@@ -10007,6 +10232,9 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
   const [actionMsg,setActionMsg] = useState(null);    // {ok,text}
   const [copiedCode,setCopiedCode] = useState(null);  // gift code just copied → "Copied!" for ~2s
   const [showUpgradePay,setShowUpgradePay] = useState(false);
+  // iOS-only external checkout handoff (see SignupScreen's identical step-16
+  // pattern). Never touched on web/PWA — isNativeIOS() gates every path in.
+  const [extUpgrade,setExtUpgrade] = useState("idle"); // idle|opening|opened|error|finishing
   const [cancelAtPeriodEnd,setCancelAtPeriodEnd] = useState(!!athlete.cancel_at_period_end);
   const [subStatus,setSubStatus] = useState(athlete.subscription_status||null);
   const [confirmDeleteAccount,setConfirmDeleteAccount] = useState(false); // delete-account confirm dialog
@@ -10178,6 +10406,14 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
       } catch(e){ setUpgradeMsg("Connection error."); }
       setUpgrading(false);
       setTimeout(()=>setUpgradeMsg(""),5000);
+    } else if(isNativeIOS()){
+      // App Review 3.1.1 — no embedded Stripe Elements on iOS. Hand off to the
+      // standalone /upgrade page instead of setShowUpgradePay(true).
+      setExtUpgrade("opening"); setUpgradeMsg("");
+      try {
+        await goToExternalCheckout({ athleteId:athlete.id, pin:actionPin, tier:selectedTier, billing:selectedBilling });
+        setExtUpgrade("opened");
+      } catch(e){ setExtUpgrade("error"); setUpgradeMsg(e.message || "Couldn't start checkout. Try again."); }
     } else {
       setShowUpgradePay(true); // collect a card via PaymentStep
     }
@@ -10187,6 +10423,20 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
     onCoachUpdate({tier:selectedTier,billing:selectedBilling});
     setUpgradeMsg("You're all set! Your "+selectedTier.toUpperCase()+" plan is active.");
     setTimeout(()=>setUpgradeMsg(""),5000);
+  };
+  // iOS "I've finished paying" — refetches the ACTUAL server-side tier (this
+  // screen has no visibility into what happened in the system browser) rather
+  // than assuming the payment succeeded.
+  const finishExternalUpgrade = async () => {
+    setExtUpgrade("finishing"); setUpgradeMsg("");
+    try {
+      const fresh = await idApi("get-athlete", { athleteId:athlete.id, pin:actionPin });
+      if(!fresh.athlete) throw new Error("Couldn't confirm your plan yet. Try again in a moment.");
+      setExtUpgrade("idle");
+      onCoachUpdate(fresh.athlete);
+      setUpgradeMsg(fresh.athlete.tier===selectedTier ? "You're all set! Your "+selectedTier.toUpperCase()+" plan is active." : "Still processing — check back in a moment.");
+      setTimeout(()=>setUpgradeMsg(""),5000);
+    } catch(e){ setExtUpgrade("opened"); setUpgradeMsg(e.message || "Couldn't confirm payment yet. Try again in a moment."); }
   };
 
   return (
@@ -10425,7 +10675,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
               {upgradeMsg}
             </div>
           )}
-          {planChanged&&selectedTier!=="free"&&!showUpgradePay&&(
+          {planChanged&&selectedTier!=="free"&&!showUpgradePay&&extUpgrade==="idle"&&(
             <div style={{marginTop:10}}>
               <input type="password" inputMode="numeric" maxLength={4} value={actionPin}
                 onChange={e=>setActionPin(e.target.value.replace(/\D/g,"").slice(0,4))}
@@ -10442,10 +10692,37 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
               To move to Free, cancel your current plan below, you'll keep access until the period ends.
             </div>
           )}
-          {showUpgradePay&&(
+          {/* Defense in depth (matches SignupScreen step 15): PaymentStep must
+              never render on iOS even if showUpgradePay were somehow true. */}
+          {showUpgradePay&&!isNativeIOS()&&(
             <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${CA.border}`}}>
               <PaymentStep athleteId={athlete.id} pin={actionPin} tier={selectedTier} billing={selectedBilling} onSuccess={onUpgradePaid}/>
               <button onClick={()=>setShowUpgradePay(false)} style={{background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer",width:"100%",marginTop:8}}>Cancel</button>
+            </div>
+          )}
+          {/* iOS-only external checkout handoff — same pattern as SignupScreen
+              step 16: no card entry in this WebView, athlete pays at
+              app.trainwilco.com/upgrade in the system browser. */}
+          {extUpgrade!=="idle"&&(
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${CA.border}`}}>
+              {(extUpgrade==="opening") && (
+                <div style={{color:CA.muted,fontSize:12,textAlign:"center",padding:"8px 0"}}>Opening secure checkout…</div>
+              )}
+              {(extUpgrade==="opened"||extUpgrade==="finishing") && (
+                <>
+                  <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6,marginBottom:10,textAlign:"center"}}>
+                    Finish your payment in the browser tab that just opened, then come back here.
+                  </div>
+                  <button onClick={finishExternalUpgrade} disabled={extUpgrade==="finishing"}
+                    style={btn(TIERS[selectedTier].color,"#000",{opacity:extUpgrade==="finishing"?0.7:1})}>
+                    {extUpgrade==="finishing" ? "Checking…" : "I've finished — Check My Plan →"}
+                  </button>
+                </>
+              )}
+              {extUpgrade==="error" && (
+                <div style={{color:CA.red,fontSize:12,textAlign:"center",marginBottom:8}}>{upgradeMsg}</div>
+              )}
+              <button onClick={()=>setExtUpgrade("idle")} style={{background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer",width:"100%",marginTop:8}}>Cancel</button>
             </div>
           )}
           {currentTier==="elite"&&!planChanged&&(

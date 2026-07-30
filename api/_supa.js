@@ -55,7 +55,7 @@ export async function hashPin(plain) {
 // Tradeoff accepted: a token stays valid for its lifetime even if the PIN is
 // changed — bounded by the short expiry (tokens are re-minted at every login,
 // and the client never persists a session across page loads).
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
 const SESSION_TOKEN_DAYS = 7;
 // FAIL CLOSED: sign ONLY with a server-secret (the service-role key). The general
@@ -95,6 +95,59 @@ export function tryTokenAuth(auth) {
     const given = Buffer.from(String(sig));
     if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
     return { role, id };
+  } catch {
+    return null;
+  }
+}
+
+// ── Checkout handoff tokens (T18 iOS payments surgery) ───────────────────────
+// The native iOS app can't ship the embedded Stripe Elements PaymentStep (App
+// Review 3.1.1), so it hands an athlete off to a standalone web checkout page
+// (app.trainwilco.com/upgrade) via the system browser. That page needs to know
+// WHICH athlete arrived, without the URL ever carrying a bare athleteId (no
+// enumeration) or a long-lived credential (a 7-day session token sitting in a
+// URL is a much worse leak surface than one in memory/localStorage).
+//
+// This token is a SEPARATE credential from the session token above: a distinct
+// HMAC domain ("checkout:" vs "wilco-session-v1") so a checkout token can never
+// be replayed as a session token or vice versa even though both derive from the
+// same server secret, a short fixed lifetime (15 min — just long enough to
+// background-switch into Safari and load the page), and a random `jti` that the
+// caller (api/identity.js) persists on the athlete row and clears ATOMICALLY on
+// first successful use (PATCH ... WHERE checkout_token_jti = <jti>, mirroring
+// the claimGiftGeneration compare-and-swap in api/_stripe.js) — so a copied or
+// revisited link can be redeemed exactly once. This module only signs/verifies
+// the token's shape and its own embedded expiry (self-contained — no DB read
+// needed to reject a stale token); one-time-use is enforced by the caller via
+// the atomic claim against athletes.checkout_token_jti/_exp, which it also
+// stores as a record of the token's expiry for support/debugging purposes.
+const CHECKOUT_TOKEN_MIN = 15;
+const signCheckout = (payload) =>
+  createHmac("sha256", sessionSecret()).update(`checkout:${payload}`).digest("base64url");
+
+export function mintCheckoutToken(athleteId) {
+  const jti = randomBytes(9).toString("base64url");
+  const exp = Date.now() + CHECKOUT_TOKEN_MIN * 60 * 1000;
+  const payload = `${athleteId}.${exp}.${jti}`;
+  return { token: `c1.${payload}.${signCheckout(payload)}`, jti, exp };
+}
+
+// Pure signature/shape verification — does NOT check one-time-use or consult
+// the DB. Returns {athleteId, exp, jti} on a structurally + cryptographically
+// valid, unexpired token; null on ANY problem (never throws).
+export function parseCheckoutToken(token) {
+  try {
+    if (typeof token !== "string") return null;
+    const parts = token.split(".");
+    if (parts.length !== 5 || parts[0] !== "c1") return null;
+    const [, athleteId, expStr, jti, sig] = parts;
+    if (!athleteId || !jti) return null;
+    const exp = Number(expStr);
+    if (!Number.isFinite(exp) || Date.now() > exp) return null;
+    const expected = Buffer.from(signCheckout(`${athleteId}.${expStr}.${jti}`));
+    const given = Buffer.from(String(sig));
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+    return { athleteId, exp, jti };
   } catch {
     return null;
   }
