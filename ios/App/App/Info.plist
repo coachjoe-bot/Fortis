@@ -28,9 +28,12 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<!-- arm64, not the Capacitor template's legacy armv7. The deployment target is
+	     iOS 15.0, which is arm64-only, so armv7 was declaring a 32-bit capability
+	     no supported device has. -->
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
-		<string>armv7</string>
+		<string>arm64</string>
 	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
@@ -47,5 +50,16 @@
 	<string>Dark</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>WILCO uses Face ID to sign you back in instantly instead of retyping your PIN.</string>
+	<!-- Camera + photo library: the form-review upload and the "photo of your
+	     program" inputs are plain HTML file inputs (src/App.jsx videoInputRef,
+	     athletePhotoRef; src/coach.jsx programPhotoRef). isNativeIOS() gates
+	     payments, push, biometrics and OTA, and deliberately does NOT gate these,
+	     so the WKWebView presents the iOS picker. Its "Take Photo or Video" option
+	     TERMINATES the process without NSCameraUsageDescription. These two keys are
+	     what keep form review from killing the app on a reviewer's device. -->
+	<key>NSCameraUsageDescription</key>
+	<string>WILCO uses the camera so you can film a lift and send it for form review.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>WILCO needs access to your photos so you can send an existing lift video or a photo of your program.</string>
 </dict>
 </plist>
