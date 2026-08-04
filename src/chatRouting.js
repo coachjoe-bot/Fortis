@@ -15,7 +15,11 @@
 // where Haiku reliably drops exercises into general_notes with an empty
 // exercises[] — the workout then never appears in the log at all. Those go
 // straight to Sonnet; everything else stays Haiku-first (~3x cheaper).
-export const ADVANCED_PARSE_RE = /superset|super set|drop\s?set|rest[- ]?pause|cluster|myo[- ]?reps?|amrap|to failure|warm[- ]?up|worked up|ramp(?:ed|ing)? up|giant set|triset/i;
+// Attempt/miss language is in the list because a misread there doesn't lose a
+// workout — it MINTS a false max (a failed 285 logged as a set becomes the
+// athlete's actual 1RM via the true-single promotion). Worth a Sonnet parse
+// every time.
+export const ADVANCED_PARSE_RE = /superset|super set|drop\s?set|rest[- ]?pause|cluster|myo[- ]?reps?|amrap|to failure|warm[- ]?up|worked up|ramp(?:ed|ing)? up|giant set|triset|attempt|missed|\bfail(?:ed)?\b|didn'?t (?:get|make|hit)|no lift/i;
 export const needsAdvancedParser = (message) => ADVANCED_PARSE_RE.test(String(message || ""));
 
 // Does this message clearly describe lifting? Only used to decide whether an
@@ -33,6 +37,47 @@ export const parseGotNothing = (parsed) =>
     !parsed.run_data && !parsed.practice_data &&
     (!Array.isArray(parsed.pr_attempts) || parsed.pr_attempts.length === 0)
   );
+
+// ── Failed attempts must never become logged sets ────────────────────────────
+// The parser is told a missed attempt goes ONLY in pr_attempts (achieved:false),
+// but a rule the model must remember is not a guarantee — and one leaked
+// "Bench 1x1 @285" from a miss gets promoted to the athlete's ACTUAL 1RM by the
+// true-single pass and lands on every progress surface. This strips the leak
+// deterministically before anything is saved or promoted: for each failed
+// attempt, remove matching sets (same lift, same weight, same rep count) from
+// exercises[]. The achieved:false entry itself stays in parsed_data — it's the
+// record that the attempt happened, and every max consumer already filters on
+// `achieved`. A weight the athlete ALSO reports as achieved at the same lift is
+// left alone (they hit it on another attempt in the same session).
+export const stripFailedAttempts = (parsed, normalizeName = (s) => String(s || "").toLowerCase().trim()) => {
+  const failed = (parsed?.pr_attempts || []).filter(p => p && p.achieved === false && p.exercise && p.weight);
+  if (!failed.length || !Array.isArray(parsed?.exercises) || !parsed.exercises.length) return parsed;
+  const achieved = (parsed.pr_attempts || []).filter(p => p && p.achieved && p.exercise && p.weight);
+  const isAchievedToo = (name, w) =>
+    achieved.some(a => normalizeName(a.exercise) === name && Math.abs(a.weight - w) < 0.51);
+  const exercises = parsed.exercises.map(ex => {
+    if (!ex || !ex.name) return ex;
+    const exName = normalizeName(ex.name);
+    const hits = failed.filter(f => normalizeName(f.exercise) === exName && !isAchievedToo(exName, f.weight));
+    if (!hits.length) return ex;
+    const matchesMiss = (w, reps) =>
+      w != null && hits.some(f => Math.abs(f.weight - w) < 0.51 && (reps == null || reps === (f.reps || 1)));
+    if (Array.isArray(ex.set_details) && ex.set_details.length) {
+      const kept = ex.set_details.filter(s => s.warmup || !matchesMiss(s.weight, s.reps));
+      if (kept.length === ex.set_details.length) return ex;
+      if (!kept.length) return null; // every set was the miss — the entry shouldn't exist
+      // Re-derive the flat summary from the surviving sets so nothing downstream
+      // reads the stripped weight out of the top-set fields.
+      const top = kept.reduce((b, s) => (!b || (s.weight || 0) > (b.weight || 0) ? s : b), null);
+      return { ...ex, set_details: kept, sets: kept.filter(s => !s.warmup).length || kept.length, weight: top?.weight ?? ex.weight, reps: top?.reps ?? ex.reps };
+    }
+    if (!matchesMiss(ex.weight, ex.reps)) return ex;
+    // Flat entry at the missed weight: a lone single vanishes; "5 singles,
+    // missed the last" keeps its 4 completed sets.
+    return (ex.sets || 1) > 1 ? { ...ex, sets: ex.sets - 1 } : null;
+  }).filter(Boolean);
+  return { ...parsed, exercises };
+};
 
 // ── "Remember this" detection ────────────────────────────────────────────────
 // A saved context note is durable and gets injected into every future prompt, so
