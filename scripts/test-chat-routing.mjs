@@ -17,7 +17,9 @@ import { readFileSync } from "node:fs";
 import {
   needsAdvancedParser, looksLikeLifting, parseGotNothing, asksToRemember,
   looksLikeWorkoutLog, hasExplicitWorkingBasis, propagate1RM, isFullProgramEcho,
+  stripFailedAttempts,
 } from "../src/chatRouting.js";
+import { normalizeExName } from "../src/grit.js";
 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { if (cond) pass++; else { fail++; console.error("  ✗ " + msg); } };
@@ -233,6 +235,110 @@ console.log("isFullProgramEcho:");
      "applyCorrection still writes the 'Done, log corrected.' transcript marker");
 }
 
+
+// ── stripFailedAttempts ──────────────────────────────────────────────────────
+// The 285-bench incident (2026-08-03): a MISSED attempt parsed into exercises[]
+// as a real single and the true-single pass promoted it to the athlete's actual
+// 1RM. This strip is the deterministic guarantee that a failed attempt can never
+// read as work performed, whatever the parser emits.
+console.log("stripFailedAttempts:");
+{
+  const strip = (p) => stripFailedAttempts(p, normalizeExName);
+
+  // Escalation: attempt/miss language goes to the stronger parser.
+  for (const m of [
+    "attempted 285 and missed it",
+    "missed my 285 bench attempt",
+    "failed 315 on squat",
+    "went for 300, didn't get it",
+    "no lift on the third attempt",
+  ]) ok(needsAdvancedParser(m), `attempt language escalates: ${m}`);
+
+  // The exact incident: double-emit of the missed bar. The set disappears, the
+  // achieved:false record stays.
+  const doubled = strip({
+    exercises: [{ name: "Bench Press", sets: 1, reps: 1, weight: 285, unit: "lbs" }],
+    pr_attempts: [{ exercise: "Bench Press", weight: 285, reps: 1, achieved: false }],
+  });
+  eq(doubled.exercises.length, 0, "missed single leaks into exercises -> stripped");
+  eq(doubled.pr_attempts.length, 1, "the achieved:false record itself is kept");
+
+  // Completed work in the same message survives, and the flat summary re-derives
+  // off the surviving sets, not the stripped one.
+  const mixed = strip({
+    exercises: [{ name: "Bench Press", sets: 2, reps: 1, weight: 285, unit: "lbs",
+      set_details: [{ weight: 275, reps: 1 }, { weight: 285, reps: 1 }] }],
+    pr_attempts: [
+      { exercise: "Bench Press", weight: 275, reps: 1, achieved: true },
+      { exercise: "Bench Press", weight: 285, reps: 1, achieved: false },
+    ],
+  });
+  eq(mixed.exercises.length, 1, "completed single survives the strip");
+  eq(mixed.exercises[0].set_details.length, 1, "only the missed set is removed");
+  eq(mixed.exercises[0].weight, 275, "flat top-set weight re-derived from survivors");
+
+  // Same weight both achieved AND missed (hit it on the second try): nothing strips.
+  const retried = strip({
+    exercises: [{ name: "Bench Press", sets: 1, reps: 1, weight: 285, unit: "lbs" }],
+    pr_attempts: [
+      { exercise: "Bench Press", weight: 285, reps: 1, achieved: false },
+      { exercise: "Bench Press", weight: 285, reps: 1, achieved: true },
+    ],
+  });
+  eq(retried.exercises.length, 1, "a weight also achieved in-session is left alone");
+
+  // "5 singles, missed the last" keeps its 4 completed sets.
+  const flatMulti = strip({
+    exercises: [{ name: "Deadlift", sets: 5, reps: 1, weight: 500, unit: "lbs" }],
+    pr_attempts: [{ exercise: "Deadlift", weight: 500, reps: 1, achieved: false }],
+  });
+  eq(flatMulti.exercises[0].sets, 4, "flat multi-set entry loses one set, not all");
+
+  // A failed TRIPLE must not delete a completed double at the same weight.
+  const triple = strip({
+    exercises: [{ name: "Back Squat", sets: 1, reps: 2, weight: 275, unit: "lbs" }],
+    pr_attempts: [{ exercise: "Back Squat", weight: 275, reps: 3, achieved: false }],
+  });
+  eq(triple.exercises.length, 1, "failed rep-3 doesn't erase the completed 275x2");
+
+  // Different lift missed -> untouched; no failed attempts -> untouched.
+  const other = strip({
+    exercises: [{ name: "Bench Press", sets: 3, reps: 5, weight: 225, unit: "lbs" }],
+    pr_attempts: [{ exercise: "Overhead Press", weight: 185, reps: 1, achieved: false }],
+  });
+  eq(other.exercises.length, 1, "a miss on another lift touches nothing");
+  const clean = { exercises: [{ name: "Bench Press", sets: 3, reps: 5, weight: 225 }], pr_attempts: [] };
+  eq(strip(clean), clean, "no failed attempts -> parsed returned as-is");
+
+  // Warm-up sets never strip (they're excluded from promotion anyway).
+  const warm = strip({
+    exercises: [{ name: "Bench Press", sets: 1, reps: 1, weight: 285, unit: "lbs",
+      set_details: [{ weight: 285, reps: 1, warmup: true }, { weight: 285, reps: 1 }] }],
+    pr_attempts: [{ exercise: "Bench Press", weight: 285, reps: 1, achieved: false }],
+  });
+  eq(warm.exercises[0].set_details.filter(s => s.warmup).length, 1, "warm-up sets are never stripped");
+}
+
+// ── prompt contracts for the failed-attempt + hierarchy fixes ────────────────
+// Same style as the LOG CORRECTIONS block above: the App.jsx prompt text is a
+// load-bearing contract; these fail the suite if a rewrite drops the rules.
+{
+  const src = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+  ok(/FAILED \/ MISSED ATTEMPTS \(critical\)/.test(src),
+     "parser prompt carries the failed-attempts-never-log-as-sets rule");
+  ok(/stripFailedAttempts\(parsed, normalizeExName\)/.test(src),
+     "finalizeWorkout runs the deterministic strip before saving/promoting");
+  ok(/actual 1RM.*ALWAYS outranks an "est\." entry/.test(src),
+     "chat cheat sheet declares actual-1RM-outranks-estimate");
+  ok(/training number \/ training max \/ reference max \/ baseline the PROGRAM ITSELF states/.test(src),
+     "chat hierarchy carries the program-training-number tier");
+  ok(src.includes('training number/TM/reference max the program itself states'),
+     "Quick Log edit prompt carries the program-training-number tier");
+  ok(/AN EDITED WEIGHT IS NOT A NEW BASE/.test(src),
+     "Quick Log declares an edited weight is not a new percentage base");
+  ok(/WHERE THE ATHLETE IS IN THEIR PROGRAM/.test(src),
+     "chat receives the resolved program position block");
+}
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} chat-routing checks pass.`);
