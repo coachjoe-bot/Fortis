@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const NEEDS_CREDENTIALS = new Set(["test-log-correction.mjs", "test-event-trial.mjs", "test-program-build.mjs"]);
+const NEEDS_CREDENTIALS = new Set(["test-log-correction.mjs", "test-event-trial.mjs", "test-program-build.mjs", "test-program-edit-eval.mjs"]);
 
 const suites = readdirSync(here)
   .filter((f) => f.startsWith("test-") && f.endsWith(".mjs") && !NEEDS_CREDENTIALS.has(f))

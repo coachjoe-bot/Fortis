@@ -8,6 +8,16 @@
 // propagate1RM length guard). React-free, side-effect-free — unit tested by
 // scripts/test-program-diff.mjs.
 
+// ── merge system prompt ───────────────────────────────────────────────────────
+// The ONE-change merge contract. Shipped from two call sites (App.jsx
+// runSelfMerge for the athlete, coach.jsx runMerge for the coach) that used to
+// carry hand-copied twins of this string differing only in the owner word — the
+// exact drift pattern T32 exists to kill. The program-edit eval harness
+// (scripts/test-program-edit-eval.mjs) imports THIS export, so what it measures
+// is always what ships.
+export const mergeSystemPrompt = (owner = "athlete") =>
+  `You are applying ONE change to a strength program for the ${owner} who owns it. Return ONLY the complete updated program text: no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given, carry over the existing sets/reps/loading unless the request changes them.`;
+
 // ── LCS line diff ─────────────────────────────────────────────────────────────
 // Simple O(n*m) DP. Fine up to a few hundred lines (a written program is never
 // anywhere near that); above ~600 lines this would get slow, which is an

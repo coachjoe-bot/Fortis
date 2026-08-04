@@ -31,7 +31,7 @@ import { buildMorningBrief, decisionNote, briefWeekKey } from "./coachBrief.js";
 import { TourOffer, TourSpotlight, coachTourSteps } from "./tour.jsx";
 // Staged program-edit loop: pure line-diff + placement lookup + merge-safety
 // guard backing the AthleteDetail "review & apply" flow below.
-import { lineDiff, diffStats, findPlacement, mergeGuard } from "./programDiff.js";
+import { lineDiff, diffStats, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 
 // ─── ON-DEMAND PROGRAM PARSE ──────────────────────────────────────────────────
 // The proof cron parses programs only on each athlete's weekly run, so a program
@@ -3558,7 +3558,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
         .slice(0,8)
         .map(r=>r.note)
         .filter(Boolean);
-      const sys = `You are applying ONE change to a strength program for the coach who owns it. Return ONLY the complete updated program text: no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given, carry over the existing sets/reps/loading unless the request changes them.`;
+      const sys = mergeSystemPrompt("coach");
       const parts = [`CURRENT PROGRAM:\n${base}`, `\nREQUESTED CHANGE: ${s.suggestion}`];
       if(s.placement) parts.push(`\nTARGET: ${s.placement.dayLabel||"unspecified day"} — currently "${s.placement.currentLine}"`);
       if(s.athleteWords) parts.push(`\nATHLETE'S OWN WORDS: "${s.athleteWords}"`);

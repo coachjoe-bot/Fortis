@@ -46,7 +46,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 // Coach change-request drafting/filing — single source of truth for the rule set
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
-import { lineDiff, findPlacement, mergeGuard } from "./programDiff.js";
+import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
 // display: fixtures never touch real data — see tour.jsx header.
@@ -6800,7 +6800,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     try {
       const base = athlete.program_text || "";
       const placement = findPlacement(base, p.lift);
-      const sys = `You are applying ONE change to a strength program for the athlete who owns it. Return ONLY the complete updated program text: no preamble, no markdown fences, no commentary. Rules: make ONLY the change the request requires; every other line must be preserved character-for-character (headers, spacing, notes, comments); keep the program's existing formatting conventions; if the change names a lift not in the program, add it under the most sensible day; never invent numbers you weren't given, carry over the existing sets/reps/loading unless the request changes them.`;
+      const sys = mergeSystemPrompt("athlete");
       const parts = [`CURRENT PROGRAM:\n${base}`, `\nREQUESTED CHANGE: ${p.suggestion}`];
       if(placement) parts.push(`\nTARGET: ${placement.dayLabel||"unspecified day"}, currently "${placement.currentLine}"`);
       parts.push(`\nATHLETE'S OWN WORDS: "${p.athleteMsg}"`);
