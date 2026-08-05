@@ -10,21 +10,30 @@
 // double-log their session — and rules that can corrupt history get a regression suite
 // (scripts/test-quicklog-draft.mjs).
 
+import { isRealSession } from "./grit.js";
+
 export const qlKey = (athleteId) => `wilco_quicklog_${athleteId}`;
 
-// How long a parked draft stays resumable. Deliberately a rolling window rather than "same
-// calendar day": a session that starts at 11:40pm has to still resume at 12:10am. Long
-// enough for any real workout, short enough that yesterday's draft never comes back.
+// How long a parked draft stays resumable. For a PREBUILT draft (the app's own
+// speculative generation) this rolling window is the whole rule. A draft the
+// athlete actually EDITED additionally survives for the rest of its local
+// calendar day (see qlLoad): Will edited a whole workout at the gym, came back
+// an hour later, and it was gone — an athlete's own typing must persist until
+// it's sent, discarded, or genuinely a different day. The rolling window still
+// covers the 11:40pm-session-resumed-at-12:10am case across midnight.
 export const QL_RESUME_MS = 8*60*60*1000;
 
-// Fingerprint of the athlete's logged history, stamped onto a saved draft. If it differs on
-// reopen, they logged through chat while the draft sat parked — the draft is stale and
-// resuming it would double-log the session, so it gets thrown out instead. Row 0 is the
-// newest (every load is order=created_at.desc and new logs are prepended). In-place
-// corrections re-map the array without changing its length or its head, so they leave a
-// draft resumable — only genuinely new sessions invalidate it.
+// Fingerprint of the athlete's LOGGED SESSIONS, stamped onto a saved draft. If it
+// differs on reopen, they logged a real session through chat while the draft sat
+// parked — the draft is stale and resuming it would double-log, so it gets thrown
+// out instead. REAL sessions only (isRealSession — the same definition session
+// grouping trusts): the workouts table holds a row for EVERY chat message, so
+// fingerprinting the raw list meant a plain conversation with Joe ("what day am I
+// on?") silently destroyed a fully-edited parked draft. That is exactly what ate
+// Will's gym-morning edits (2026-08-05). Q&A rows, position claims, and form
+// reviews no longer invalidate; only new logged training does.
 export const qlStamp = (workoutHistory) => {
-  const h = Array.isArray(workoutHistory)?workoutHistory:[];
+  const h = (Array.isArray(workoutHistory)?workoutHistory:[]).filter(isRealSession);
   return `${h.length}:${(h[0]&&(h[0].id??h[0].created_at))||""}`;
 };
 
@@ -35,13 +44,23 @@ export const qlLoad = (athleteId, workoutHistory) => {
   try{
     const d = JSON.parse(localStorage.getItem(qlKey(athleteId))||"null");
     if(!d || typeof d.draft!=="string" || !d.draft.trim()) return null;
-    if(Date.now()-(d.savedAt||0) >= QL_RESUME_MS) return null;
+    // Athlete-edited drafts survive the rolling window OR the same local day,
+    // whichever is longer; prebuilt drafts get the window only (nobody loses
+    // work if a speculative draft regenerates).
+    const withinWindow = Date.now()-(d.savedAt||0) < QL_RESUME_MS;
+    const sameLocalDay = !!d.savedAt && qlLocalDay(d.savedAt) === qlLocalDay();
+    if(d.prebuilt ? !withinWindow : !(withinWindow || sameLocalDay)) return null;
     if(d.stamp !== qlStamp(workoutHistory)) return null;
     return {
       draft: d.draft,
       notes: typeof d.notes==="string" ? d.notes : "",
       undoStack: Array.isArray(d.undoStack) ? d.undoStack : [],
       prebuilt: !!d.prebuilt,
+      // Resolved program position {week, day} this draft was built for — the
+      // boot path compares it against the CURRENT resolved position and
+      // regenerates on mismatch, so a draft built before "I'm on day 3" landed
+      // can never resume as the wrong day.
+      position: d.position && typeof d.position==="object" ? {week: d.position.week??null, day: d.position.day??null} : null,
       // Warm-up / cool-down tap-to-log toggles (Program Builder: two booleans
       // only — full prep detail lives in the program text, never the log).
       prep: d.prep && typeof d.prep==="object" ? {warmup:!!d.prep.warmup, cooldown:!!d.prep.cooldown} : {warmup:false, cooldown:false},
@@ -62,7 +81,7 @@ export const qlLoad = (athleteId, workoutHistory) => {
 // the RESUME LOG nav label, which is a promise about the athlete's own unfinished
 // work. Any later save from the sheet omits the flag, so the moment they touch it
 // the draft becomes a normal parked one.
-export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt, prep, targetDate}) => {
+export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, prebuilt, prep, targetDate, position}) => {
   try{
     if(!draft||!draft.trim()){ qlClear(athleteId); return; }
     localStorage.setItem(qlKey(athleteId), JSON.stringify({
@@ -74,8 +93,21 @@ export const qlSave = (athleteId, workoutHistory, {draft, notes, undoStack, preb
       prebuilt: !!prebuilt,
       prep: prep && (prep.warmup||prep.cooldown) ? {warmup:!!prep.warmup, cooldown:!!prep.cooldown} : undefined,
       targetDate: typeof targetDate==="string" && targetDate ? targetDate : undefined,
+      position: position && (position.week!=null || position.day!=null) ? {week: position.week??null, day: position.day??null} : undefined,
     }));
   }catch(_){}
+};
+
+// Does a parked draft's position disagree with the CURRENT resolved position?
+// Only a definite conflict counts: both sides must know the day (and the week,
+// when both weeks are known) — an unknown on either side is never grounds to
+// throw away work. This is what makes "I'm on day 3" reach a draft that was
+// built while the app still thought day 2.
+export const qlPositionConflict = (saved, current) => {
+  if(!saved || !current) return false;
+  if(saved.day!=null && current.day!=null && saved.day!==current.day) return true;
+  if(saved.week!=null && current.week!=null && saved.week!==current.week) return true;
+  return false;
 };
 
 // ─── BACKGROUND PRE-BUILD ELIGIBILITY (a cost gate, not a feature flag) ──────
@@ -370,19 +402,40 @@ export const markProgramSaveOffered = (athleteId, now) => {
 // read as a log whose first line happens to be "===".
 export const QL_SPLIT_RE = /(?:^|\n)[ \t]*={3,}[ \t]*(?:\n|$)/;
 
-export const splitQuickLogReply = (text) => {
+// A line that reads as logged training rather than prose: "Name 3x5 @ 185",
+// "Snatch 3x1 @ 225 (90%)", "Farmer Carry 4x40yd", "Plank 3x60s".
+const QL_LOG_LINE_RE = /(\d+\s*[x×]\s*\d+)|(@\s*_{0,3}\d)|(\d+\s*(?:lbs?|kgs?)\b)/i;
+const qlLogLineCount = (s) => String(s || "").split("\n").filter((l) => QL_LOG_LINE_RE.test(l)).length;
+
+// `normalize` guards against the model emitting the two sections in the WRONG
+// ORDER (log first, prose second) — which put the whole workout in the read-only
+// focus box and the explanation in the editable textarea, so the athlete
+// couldn't touch their own numbers (Will, 2026-08-05, on an "I did day 3" edit;
+// a recurring failure). Section order is a prompt rule, and prompt rules are not
+// guarantees: classify by CONTENT and swap when the split is unambiguously
+// backwards — the log side has zero log-shaped lines while the note side has
+// several. A legitimate focus note may name key lifts, so the swap needs BOTH
+// signals, never just one.
+export const splitQuickLogReply = (text, { normalize = true } = {}) => {
   const t = String(text || "").trim();
   const parts = t.split(QL_SPLIT_RE);
   if (parts.length < 2) return { notes: null, log: t };
-  return { notes: parts[0].trim(), log: parts.slice(1).join("\n").trim() };
+  let notes = parts[0].trim(), log = parts.slice(1).join("\n").trim();
+  if (normalize && log && qlLogLineCount(log) === 0 && qlLogLineCount(notes) >= 2) {
+    const swapped = notes; notes = log; log = swapped;
+  }
+  return { notes, log };
 };
 
 // Streaming view of the same reply. Before the separator arrives, everything so
 // far IS the focus note (the prompt orders it first), so it renders into the note
 // box and the log stays empty. A partial separator mid-stream ("==" at the tail)
 // is trimmed off the displayed note rather than flickering as content.
+// normalize:false — a half-streamed log section legitimately has zero log lines
+// for a moment, and flapping the boxes mid-stream would be worse than the final
+// parse (which the non-streaming call sites normalize) landing right.
 export const streamQuickLogReply = (accumulated) => {
-  const { notes, log } = splitQuickLogReply(accumulated);
+  const { notes, log } = splitQuickLogReply(accumulated, { normalize: false });
   if (notes !== null) return { notes, log, complete: true };
   return { notes: log.replace(/\n?\s*={1,}\s*$/, "").trim(), log: "", complete: false };
 };

@@ -170,6 +170,14 @@ const ATHLETE_COL_ALLOW = {
       // self-service settings + app-maintained state
       "weight_lbs", "weight_unit", "height_finalized", "ask_weight",
       "program_text", "temp_program_text", "first_chat_complete", "resolved_pain",
+      // Program position: the athlete's own "I'm on week 2 day 3" claim and their
+      // answer to "does this block end?". Added 2026-08-05 (T32e): these columns
+      // shipped with the 07-27 position feature AFTER this allowlist existed, so
+      // every claim write was silently rejected here for 8 days — the parse
+      // succeeded, in-memory state updated, and the next session forgot. When a
+      // new athlete-writable column ships, it MUST be added here or the write
+      // dies silently behind the client's catch.
+      "program_position_override", "program_block_span",
       "proof_enabled", "proof_schedule_dow", "proof_schedule_hour", "proof_timezone",
       // gamification counters the app maintains as the athlete logs sessions
       "total_sessions_logged", "certified_badge_earned_at",

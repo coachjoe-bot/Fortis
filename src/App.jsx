@@ -35,7 +35,7 @@ import CHAT_BG from "./assets/chat-bg.jpg";
 // Quick Log draft persistence — the rules that let an athlete close the sheet mid-workout
 // and pick it back up (expiry window, staleness check, clear-on-send).
 import {
-  qlLoad, qlSave, qlClear, splitQuickLogReply, streamQuickLogReply,
+  qlLoad, qlSave, qlClear, qlPositionConflict, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
   findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
   markSupersededPrograms, parseRequestedDate,
@@ -5815,7 +5815,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const res = await generateQuickLogDraft({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
         if(res.rest || !res.draft.trim()) return;
         if(qlLoad(athlete.id, workoutHistory)) return;   // they opened the sheet while we were drafting
-        qlSave(athlete.id, workoutHistory, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true});
+        qlSave(athlete.id, workoutHistory, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)});
       }catch(_){ /* silent: the sheet just drafts on open, exactly as before */ }
     }, 8000);
     return ()=>clearTimeout(t);
@@ -6016,7 +6016,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               });
               openerSave(openerAthlete.id, opener);
               // Prime the Quick Log sheet with the same session so it opens instantly.
-              try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true}); }catch(_){}
+              try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
             } else {
               // Rest day or nothing to prescribe — fall back to the normal greeting.
@@ -7151,7 +7151,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           updatedAthlete.program_position_override = override;
           setAthlete(prev=>({...prev, program_position_override: override}));
         }
-      } catch(_){}
+      } catch(e){
+        // NOT silent: a rejected write here is exactly how "I'm on day 3" failed
+        // to stick for 8 days (the gateway column allowlist didn't carry this
+        // column and nothing ever surfaced the rejection). The athlete's claim
+        // still holds in memory for this session either way.
+        reportError("data", e, { component:"position_claim_write" });
+      }
 
       // ── "does this block end?" — the athlete's answer, recorded ───────────
       // Gates the Proof Feed's week-ahead section. Until this is known that section is
@@ -7171,7 +7177,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             endsAt: s.end_date || null,
             answeredAt: new Date().toISOString(),
           };
-          await sbUpdate("athletes",athlete.id,{program_block_span:span});
+          await sbUpdate("athletes",athlete.id,{program_block_span:span}).catch(e=>{ reportError("data", e, { component:"block_span_write" }); throw e; });
           updatedAthlete.program_block_span = span;
           setAthlete(prev=>({...prev, program_block_span: span}));
         }
@@ -8753,6 +8759,7 @@ No markdown, no commentary outside the two sections.`;
 const QL_EDIT_SYS = `You revise a prefilled workout-log draft per an athlete's instruction. You get their program, recent sessions, 1RMs, coaching context (goals/context/injury/form reviews), Joe's focus note (reference only), the CURRENT draft, and the instruction.
 
 Rules:
+- SECTION ORDER IS FIXED and never reverses: when you output two sections, section 1 (above the "===") is ALWAYS the short prose focus note and section 2 (below it) is ALWAYS the log — the day-label line and the exercise lines. The log NEVER goes above the separator. The athlete can only edit section 2, so putting the workout in section 1 locks them out of their own numbers.
 - Apply the instruction; keep everything else in the draft unchanged.
 - If the instruction names a DIFFERENT program day ("I did day 2"), rebuild BOTH sections for that day and output them in the draft format: the SHORT focus note (day + intent, key-lift structure in one line, up to 2 relevant coaching notes drawn only from the provided goals/context/injury/form reviews, NO per-exercise sourcing math, NO percentages arithmetic), then a line containing only "===", then the log, using the weight hierarchy (a SET working weight in the program FIRST with no tag; else a percentage resolved off a BASE in this order — a training number/TM/reference max the program itself states for that lift, else the lift's "(actual 1RM)" cheat-sheet entry, else its "(est.)" entry — rounded to the nearest 5 lbs and tagged "(75%)"; else RPE resolved and tagged "(RPE 8)"; else last time tagged "(last time)"; else a "___" fill-in blank; resolved pounds ALWAYS first, never derive off an estimate when a program training number or actual 1RM exists, and never guess). This is the ONLY case where you output a focus note.
 - A weight the athlete CHANGED in the draft is what they did, not a new percentage base: keep the prescription's tag as-is and never re-derive other lines from an edited weight.
@@ -8839,7 +8846,11 @@ async function generateFullProgram({athlete, workoutHistory, messages, goals, co
   return t;
 }
 
-async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, contextNotes, onProgress, targetDate}) {
+// The full Quick Log context, including the resolved program position — shared by
+// draft generation AND the sheet's boot path, which compares a parked draft's
+// stored position against the CURRENT one before resuming. One builder, one
+// answer: the boot comparison can never drift from what generation would say.
+async function quickLogBuildCtx({athlete, workoutHistory, messages, goals, contextNotes}) {
   // program_history.applied_at is the authoritative "this program became active on"
   // — the week number counts Sunday turnovers from it. The athletes column is the
   // fallback for anyone whose history predates that table being written reliably;
@@ -8849,7 +8860,19 @@ async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, 
     sbRead("program_history",`?athlete_id=eq.${athlete.id}&select=applied_at&order=applied_at.desc&limit=1`).catch(()=>[]),
   ]);
   const programStartedOn = (Array.isArray(histRows)&&histRows[0]?.applied_at) || null;
-  const ctx = buildQuickLogContext(athlete, workoutHistory, manualRMs||[], messages, goals, contextNotes, programStartedOn);
+  return buildQuickLogContext(athlete, workoutHistory, manualRMs||[], messages, goals, contextNotes, programStartedOn);
+}
+
+// The {week, day} a draft is FOR, from a built ctx — week only when the resolver
+// actually knows it (an unknown must never later read as a conflict).
+const quickLogPosOf = (ctx) => {
+  const p = ctx?.position;
+  if(!p) return null;
+  return { week: p.weekKnown ? (p.week ?? null) : null, day: p.day ?? null };
+};
+
+async function generateQuickLogDraft({athlete, workoutHistory, messages, goals, contextNotes, onProgress, targetDate}) {
+  const ctx = await quickLogBuildCtx({athlete, workoutHistory, messages, goals, contextNotes});
   // targetDate (T19 #4): the athlete asked to log a PAST day ("log yesterday's
   // workout"). Draft the session that belongs to THAT day instead of today's, or
   // the prefill is simply the wrong workout and they retype the whole thing.
@@ -8909,6 +8932,9 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Rides parsed_data.warmup_done/cooldown_done on the workout row via onSend.
   const [prep,setPrep] = useState({warmup:false,cooldown:false});
   const ctxRef = useRef(null);
+  // The resolved {week, day} the CURRENT draft is for — stamped into every park
+  // (qlSave) so the next boot can tell a wrong-day draft from a resumable one.
+  const draftPosRef = useRef(null);
 
   const todayStr = qlTodayStr;
   const ctxBlock = qlCtxBlock;
@@ -8928,6 +8954,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         },
       });
       ctxRef.current = res.ctx;
+      draftPosRef.current = quickLogPosOf(res.ctx);
       if(res.rest){ setNotes(""); setDraft(""); setPhase("rest"); }
       else { setNotes(res.notes); setDraft(res.draft); setPhase("ready"); }
     }catch(e){ setPhase("error"); }
@@ -8942,7 +8969,26 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
     if(demo || !hasProgram || booted.current || !historyLoaded) return;
     booted.current = true;
     const parked = qlLoad(athlete.id, workoutHistory);
-    if(parked){
+    if(!parked){ generate(); return; }
+    (async ()=>{
+      // Before resuming, ask the resolver where the athlete is NOW and compare
+      // against the position the draft was built for. This is how "I'm on day 3"
+      // said in chat reaches a draft that was parked/prebuilt while the app still
+      // thought day 2 (Will's gym morning, 2026-08-05): the chat claim updates
+      // the override, the resolver moves, the stale draft conflicts, and we
+      // rebuild for the real day instead of silently opening the wrong workout.
+      // An unknown on either side is never a conflict (qlPositionConflict), so
+      // this can't turn into a regenerate-every-boot loop. On any failure we
+      // resume as before — losing parked work to a network blip is worse.
+      let conflict = false;
+      try{
+        const ctx = await quickLogBuildCtx({athlete, workoutHistory, messages, goals, contextNotes});
+        ctxRef.current = ctx;  // bonus: a resumed draft's first edit no longer refetches context
+        const cur = quickLogPosOf(ctx);
+        conflict = qlPositionConflict(parked.position, cur);
+        draftPosRef.current = conflict ? cur : (parked.position || cur);
+      }catch(_){ draftPosRef.current = parked.position || null; }
+      if(conflict){ generate(); return; }
       // A draft built for a PAST day is not today's log and must never be resumed
       // as one (nor the reverse). The sheet always opens on today, so anything
       // carrying a targetDate is for a different day: adopt that day rather than
@@ -8954,7 +9000,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
       // banner. A background pre-build just opens, instantly, with no explanation
       // owed — claiming they left off would be a lie about their own session.
       setResumed(!parked.prebuilt); setPhase("ready");
-    } else generate();
+    })();
   },[historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Throw the parked draft away and redraft today from the program. The escape hatch for
@@ -8970,7 +9016,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Never in demo mode: parking the tour's sample would overwrite real parked work.
   useEffect(()=>{
     if(demo||phase!=="ready") return;
-    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate});
+    const flush = () => qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate,position:draftPosRef.current});
     const t = setTimeout(flush, 400); // debounced: this runs per keystroke in the textarea
     // Backgrounding the PWA (music, camera, screen lock between sets) can kill it outright,
     // and iOS won't run the pending timer first — flush on the way out.
@@ -8982,7 +9028,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   // Closing is a save point, so flush synchronously — the debounce above may not have
   // fired yet and unmounting kills its timer.
   const closeSheet = () => {
-    if(!demo && phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate});
+    if(!demo && phase==="ready") qlSave(athlete.id, workoutHistory, {draft,notes,undoStack,prep,targetDate:logDate,position:draftPosRef.current});
     onClose();
   };
 

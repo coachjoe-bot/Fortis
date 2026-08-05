@@ -15,7 +15,8 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 
-const { qlKey, qlStamp, qlLoad, qlSave, qlClear, QL_RESUME_MS, openerLoad, openerSave,
+const { qlKey, qlStamp, qlLoad, qlSave, qlClear, qlPositionConflict, QL_RESUME_MS,
+        openerLoad, openerSave,
         looksLikeProgramText, findChatProgram, programSaveOfferAllowed, markProgramSaveOffered,
         QL_PROGRAM_OFFER_MAX, markSupersededPrograms, QL_SUPERSEDED,
         parseRequestedDate, QL_MAX_BACKDATE_DAYS } = await import("../src/quicklog.js");
@@ -56,16 +57,30 @@ reset(); writeAged(30*60*1000);
 check("30 min old still resumes (came back between sets)", qlLoad(ATH, HIST) !== null);
 reset(); writeAged(QL_RESUME_MS - 60*1000);
 check("just inside the window resumes", qlLoad(ATH, HIST) !== null);
-reset(); writeAged(QL_RESUME_MS + 60*1000);
-check("just past the window is gone", qlLoad(ATH, HIST) === null);
+// Past the rolling window, an athlete's OWN draft additionally survives its local
+// calendar day (Will edited a workout at the gym and lost it an hour later — an
+// edited draft persists until sent, discarded, or genuinely a different day). A
+// PREBUILT draft gets no same-day grace: nothing is lost by regenerating it.
+reset(); store.set(qlKey(ATH), JSON.stringify({...DRAFT, savedAt: new Date().setHours(0,5,0,0), stamp: qlStamp(HIST)}));
+check("an edited draft from early this morning resumes all day", qlLoad(ATH, HIST) !== null);
+reset(); store.set(qlKey(ATH), JSON.stringify({...DRAFT, prebuilt:true, savedAt: Date.now()-(QL_RESUME_MS+60*1000), stamp: qlStamp(HIST)}));
+check("a prebuilt draft just past the window is gone", qlLoad(ATH, HIST) === null);
 reset(); writeAged(26*60*60*1000);
 check("yesterday's draft never comes back", qlLoad(ATH, HIST) === null);
 
-// Staleness — they logged through chat while the draft sat parked. THE double-log guard.
+// Staleness — they logged a REAL session through chat while the draft sat parked.
+// THE double-log guard. Only rows that are real training count: the workouts
+// table holds a row for EVERY chat message, and fingerprinting the raw list let a
+// plain conversation with Joe destroy a fully-edited draft (Will, 2026-08-05).
+const REAL = {id:"w10", parsed_data:{exercises:[{name:"Bench Press", sets:3, reps:5, weight:185}]}};
 reset(); qlSave(ATH, HIST, DRAFT);
-check("a new session logged since → draft dropped", qlLoad(ATH, [{id:"w10"},...HIST]) === null);
+check("a new session logged since → draft dropped", qlLoad(ATH, [REAL,...HIST]) === null);
 reset(); qlSave(ATH, [], DRAFT);
-check("first-ever log lands while parked → draft dropped", qlLoad(ATH, [{id:"w1"}]) === null);
+check("first-ever log lands while parked → draft dropped", qlLoad(ATH, [REAL]) === null);
+reset(); qlSave(ATH, HIST, DRAFT);
+check("chat Q&A rows while parked do NOT drop the draft", qlLoad(ATH, [{id:"chat1", parsed_data:{exercises:[], pr_attempts:[]}}, ...HIST]) !== null);
+reset(); qlSave(ATH, HIST, DRAFT);
+check("a position claim in chat does NOT drop the draft", qlLoad(ATH, [{id:"chat2", parsed_data:{exercises:[], program_position_claim:{week:2,day:3}}}, ...HIST]) !== null);
 
 // ...but an in-place correction (same rows, edited parsed_data) must NOT nuke their work.
 reset(); qlSave(ATH, HIST, DRAFT);
@@ -99,7 +114,27 @@ check("a storage failure is swallowed, not thrown", threw === false);
 // ─── stamp ───────────────────────────────────────────────────────────────────
 check("empty history has a stable stamp", qlStamp([]) === qlStamp([]));
 check("undefined history doesn't crash the stamp", typeof qlStamp(undefined) === "string");
-check("history without ids still fingerprints", qlStamp([{created_at:"2026-07-21"}]) !== qlStamp([]));
+check("a real session without an id still fingerprints", qlStamp([{created_at:"2026-07-21", parsed_data:{exercises:[{name:"Squat"}]}}]) !== qlStamp([]));
+check("chat-only history stamps the same as empty", qlStamp([{id:"c1", parsed_data:{exercises:[]}}]) === qlStamp([]));
+check("a run counts as a real session for the stamp", qlStamp([{id:"r1", parsed_data:{run_data:{run_type:"easy"}}}]) !== qlStamp([]));
+
+// ─── position stamp + conflict (the "I'm on day 3" fix) ──────────────────────
+// A draft carries the {week, day} it was built for; the boot path regenerates on
+// a definite conflict with the current resolved position. Unknown on either side
+// is NEVER a conflict — that's what stops a regenerate-every-boot loop.
+reset(); qlSave(ATH, HIST, {...DRAFT, position:{week:2, day:2}});
+const posGot = qlLoad(ATH, HIST);
+check("position round-trips through park/resume", posGot && posGot.position && posGot.position.week===2 && posGot.position.day===2);
+reset(); qlSave(ATH, HIST, DRAFT);
+check("a draft saved without a position loads with position null", qlLoad(ATH, HIST).position === null);
+check("day mismatch is a conflict", qlPositionConflict({week:2, day:2}, {week:2, day:3}) === true);
+check("week mismatch is a conflict", qlPositionConflict({week:1, day:3}, {week:2, day:3}) === true);
+check("same position is not a conflict", qlPositionConflict({week:2, day:3}, {week:2, day:3}) === false);
+check("unknown saved position is never a conflict", qlPositionConflict(null, {week:2, day:3}) === false);
+check("unknown current position is never a conflict", qlPositionConflict({week:2, day:3}, null) === false);
+check("unknown week on one side doesn't conflict on week", qlPositionConflict({week:null, day:3}, {week:2, day:3}) === false);
+check("day agrees, week unknown one side → resume", qlPositionConflict({week:2, day:3}, {week:null, day:3}) === false);
+
 
 // ─── background pre-build: the cost gate ─────────────────────────────────────
 // Every case here is money. A pre-build the athlete never opens is a wasted Sonnet
@@ -161,6 +196,28 @@ check("mid-note stream shows note, empty log", (()=>{const r=streamQuickLogReply
 check("a partial separator is trimmed off the note", streamQuickLogReply("Heavy bench day.\n==").notes === "Heavy bench day.");
 check("stream after the separator fills the log", (()=>{const r=streamQuickLogReply(TWO);return r.complete&&r.log==="Upper A\nBench 5x5 225";})());
 check("empty stream is safe", streamQuickLogReply("").notes === "");
+
+// Content beats order. The model is TOLD the focus note goes above the separator
+// and the log below; when it reverses them anyway, the whole workout lands in the
+// read-only box and the athlete can't edit their own numbers (Will, 2026-08-05).
+// The splitter classifies by content and swaps an unambiguously backwards reply.
+{
+  const NOTE = "Week 2, Day 3: Oly + Legs. Heavy singles, keep bar speed honest.\nTies into your knee rehab focus.";
+  const LOG = "Day 3 – OLY + Legs\n\nSnatch 3x1 @ 225 (90%)\nClean & Jerk 3x1 @ 250 (88%)\nFront Squat 3x2 @ 265 (90%)";
+  const ok1 = splitQuickLogReply(`${NOTE}\n===\n${LOG}`);
+  check("correct order passes through untouched", ok1.notes===NOTE && ok1.log===LOG);
+  const ok2 = splitQuickLogReply(`${LOG}\n===\n${NOTE}`);
+  check("reversed sections swap: log side gets the workout", ok2.log===LOG && ok2.notes===NOTE);
+  // A legit focus note may NAME key lifts with loads — that alone must never swap
+  // a real log out of the log box.
+  const LIFTY_NOTE = "Snatch 3x1 @ 225 (90%)\nClean & Jerk 3x1 @ 250 (88%)\nKeep bar speed honest today.";
+  const ok3 = splitQuickLogReply(`${LIFTY_NOTE}\n===\n${LOG}`);
+  check("a lift-naming focus note doesn't trigger a swap", ok3.log===LOG && ok3.notes===LIFTY_NOTE);
+  const ok4 = splitQuickLogReply("just prose\n===\nmore prose, no numbers");
+  check("prose both sides never swaps", ok4.notes==="just prose" && ok4.log==="more prose, no numbers");
+  const sw = streamQuickLogReply(`${LOG}\n===\npartial pro`);
+  check("streaming never swaps mid-flight", sw.log==="partial pro");
+}
 
 // ─── app-open opener cache (day-stamped) ─────────────────────────────────────
 // At stake: showing YESTERDAY's session as today's opener. The day stamp is the
