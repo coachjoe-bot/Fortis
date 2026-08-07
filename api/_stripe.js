@@ -204,6 +204,57 @@ export async function sbAthletePatch(id, patch) {
   return Array.isArray(json) && json.length ? json[0] : json;
 }
 
+// Find-or-create the athlete's Stripe customer, persisting the id immediately so
+// a retried call never creates a duplicate. Extracted from create-subscription so
+// checkout-intent (SetupIntent-first flow) and the legacy eager-create path share
+// ONE copy — the metadata mirror (signup_source + ad identity) must never drift
+// between them.
+export async function ensureStripeCustomer(stripe, athlete, extraMeta = {}) {
+  if (athlete.stripe_customer_id) return athlete.stripe_customer_id;
+  const customer = await stripe.customers.create({
+    email: athlete.email || undefined,
+    name: athlete.name || undefined,
+    metadata: {
+      athlete_id: String(athlete.id),
+      // Mirror the attribution already stored on the athlete row (event key or
+      // free-form UTM/referrer source) so Stripe and Supabase never disagree.
+      ...(athlete.signup_source ? { signup_source: String(athlete.signup_source) } : {}),
+      ...extraMeta,
+    },
+  });
+  await sbAthletePatch(athlete.id, { stripe_customer_id: customer.id });
+  return customer.id;
+}
+
+// Meta click identifiers for server-side Purchase attribution. Validated to
+// their documented shapes so a crafted body can't stuff arbitrary text into
+// Stripe metadata. fbc: fb.<n>.<ms>.<fbclid>  fbp: fb.<n>.<ms>.<rand>
+// (Moved here from create-subscription so checkout-intent applies the identical
+// validation when it stamps the customer.)
+export function adIdentityMeta(ad) {
+  const adMeta = {};
+  if (ad && typeof ad === "object") {
+    if (ad.optout === true) {
+      // Global Privacy Control opt-out — flag it so the webhook skips the Meta
+      // Purchase entirely and never forwards any identifier. (Privacy Policy §13.2.)
+      adMeta.ad_optout = "1";
+    } else {
+      if (typeof ad.fbc === "string" && /^fb\.\d\.\d{10,}\.[\w.-]{1,255}$/.test(ad.fbc)) adMeta.fbc = ad.fbc;
+      if (typeof ad.fbp === "string" && /^fb\.\d\.\d{10,}\.\d{1,20}$/.test(ad.fbp)) adMeta.fbp = ad.fbp;
+    }
+  }
+  return adMeta;
+}
+
+// List athletes matching a raw PostgREST query string (service key — reconcile
+// cron + internal reads only, never client-reachable directly).
+export async function sbAthletesWhere(queryString) {
+  const r = await fetch(`${SB_URL}/rest/v1/athletes?${queryString}`, { headers: sbHeaders() });
+  const rows = await r.json();
+  if (!r.ok) throw new Error(rows?.message || rows?.error || `Supabase query failed (${r.status})`);
+  return Array.isArray(rows) ? rows : [];
+}
+
 // ── Auth: verify a money-endpoint caller ─────────────────────────────────────
 // Token FIRST, PIN as fallback. These three billing endpoints were the last
 // gateways still demanding the plaintext PIN on every call — data/claude/push all

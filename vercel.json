@@ -59,6 +59,10 @@
     {
       "path": "/api/notify-program-changes",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/reconcile-billing",
+      "schedule": "15 7 * * *"
     }
   ]
 }

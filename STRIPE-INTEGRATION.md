@@ -1,5 +1,31 @@
 # Stripe Integration — Status & Runbook
 
+**T37 checkout re-order (2026-08-07, `checkout-reorder-0807`): card-first.** The
+payment screen used to call `create-subscription` on MOUNT, minting a live
+`trialing` subscription before any card existed — every abandoned checkout left
+an orphan sub (10 of the first 19 subs ever created), and Stripe/Supabase
+permanently disagreed about who was trialing. New invariant: **a subscription
+never exists without a payment method.** Flow now: mount → `api/checkout-intent`
+(SetupIntent only, plan-agnostic, inert if abandoned) → athlete confirms the card
+→ `create-subscription` with `paymentMethodId` → sub is born with
+`default_payment_method` set → tier granted in the SAME request (webhook stays
+authoritative for renewals/cancels). A real first charge (discounted annual)
+returns `needsAction` + a PaymentIntent secret for one `confirmCardPayment`
+(3DS-safe). Side effects: plan/gift changes no longer touch Stripe (duplicate-sub
+bug gone), and a compatible prior attempt gets the card ATTACHED rather than
+cancel+recreate (capped promo slots preserved). The legacy eager-create branch in
+`create-subscription` (no `paymentMethodId` in the body) remains for stale cached
+bundles — delete it once the service-worker fleet has rolled past 2026-08.
+Nightly `api/reconcile-billing` cron (07:15 UTC) diffs Stripe against Supabase
+into `error_events`; pure logic pinned by `scripts/test-checkout-lifecycle.mjs`.
+
+**Test-mode runbook addition (T37):** with `STRIPE_MODE=test`, walk signup to the
+card form and (1) abandon it → assert NO subscription exists in test Stripe, only
+an unconsumed SetupIntent; (2) complete it with 4242… → assert the sub is created
+already carrying `default_payment_method` and the athlete row flips to the paid
+tier without waiting for the webhook; (3) apply a gift code then switch plans →
+assert no new Stripe objects appear until the final submit.
+
 **T18 iOS external-checkout branch (2026-07-29, `payments-external-0729`, not yet
 merged):** adds a standalone, unlinked `/upgrade` page on THIS SAME app so the
 Capacitor iOS build never ships the embedded Stripe Elements PaymentStep (App
