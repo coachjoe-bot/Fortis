@@ -495,6 +495,12 @@ export async function logError(e = {}) {
 // Curated allowlist — adding an event is a code change here, never a migration.
 export const EVENT_NAMES = new Set([
   "app_open", "session_start", "login", "signup_start", "signup_complete",
+  // T37 billing funnel — the gap between signup_start and signup_complete used to
+  // be totally dark, which is why one abandoned checkout took a three-system
+  // autopsy to reconstruct. paywall_shown = plan screen; checkout_viewed = card
+  // form mounted; then submitted → (confirm_failed?) → succeeded.
+  "paywall_shown", "paywall_dismissed",
+  "checkout_viewed", "checkout_card_submitted", "checkout_confirm_failed", "checkout_succeeded",
   "workout_logged", "chat_opened", "chat_message_sent", "screen_view",
   "coach_dashboard_view", "event_landing_view",
   "push_enabled", "push_disabled",

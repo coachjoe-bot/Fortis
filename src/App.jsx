@@ -3736,7 +3736,6 @@ function PaymentDisclosures({tier, billing, giftApplied, giftTerms=null, tester=
 // disclosures + an optional gift-code field, then mounts Stripe Elements.
 function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
   const [clientSecret,setClientSecret] = useState(null);
-  const [confirmMode,setConfirmMode] = useState("setup");
   const [initializing,setInitializing] = useState(true);
   const [initError,setInitError] = useState("");
   const [retryKey,setRetryKey] = useState(0);
@@ -3757,28 +3756,65 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
   // with event offers, so the gift field is hidden on the event path.
   const trialDays = eventCtx?.trialDays || 7;
 
-  // Create (or recreate, when the gift changes) the subscription to get a secret.
+  // T37 card-first: mount mints a SetupIntent (card collection only — NO
+  // subscription exists yet, so abandoning this screen leaves nothing behind in
+  // Stripe; the old flow created a live trialing sub right here, which is where
+  // every orphaned "trialing in Stripe / free in Supabase" account came from).
+  // A SetupIntent is plan-agnostic, so plan/billing/gift changes no longer
+  // re-init anything — deps are identity + manual retry only.
   useEffect(()=>{
     let cancelled = false;
     (async()=>{
       setInitializing(true); setInitError(""); setClientSecret(null);
       try {
-        const r = await fetch("/api/create-subscription",{
+        const r = await fetch("/api/checkout-intent",{
           method:"POST",headers:{"Content-Type":"application/json"},
           // Token-first: with a session in hand the plaintext PIN never leaves the
-          // browser for this endpoint, and the server skips a bcrypt compare on
-          // every re-render of checkout (plan change, code applied, retry). `pin`
-          // is sent ONLY as the fallback when there's no token yet.
-          body:JSON.stringify({athleteId,...(CURRENT_AUTH?.token?{auth:CURRENT_AUTH}:{pin}),tier,billing,giftCode:appliedGift||undefined,eventSource:eventCtx?.source||undefined,ad:getAdIdentity()||undefined})
+          // browser for this endpoint. `pin` is sent ONLY as the fallback when
+          // there's no token yet.
+          body:JSON.stringify({athleteId,...(CURRENT_AUTH?.token?{auth:CURRENT_AUTH}:{pin}),ad:getAdIdentity()||undefined})
         });
         const j = await r.json();
         if(cancelled) return;
         if(!r.ok||!j.clientSecret){ setInitError(j.error||"Couldn't start checkout. Try again."); setInitializing(false); return; }
-        setClientSecret(j.clientSecret); setConfirmMode(j.mode||"setup"); setInitializing(false);
+        setClientSecret(j.clientSecret); setInitializing(false);
+        track("checkout_viewed","billing");
       } catch(e){ if(!cancelled){ setInitError("Connection error. Try again."); setInitializing(false); } }
     })();
     return ()=>{ cancelled=true; };
-  },[appliedGift,tier,billing,athleteId,pin,retryKey]);
+  },[athleteId,pin,retryKey]);
+
+  // Card saved (SetupIntent confirmed) → NOW create the subscription, with the
+  // payment method attached from birth. Throws user-readable messages; payform
+  // shows them inline and retries without re-collecting the card. A real first
+  // charge (discounted annual) comes back needsAction — one confirmCardPayment
+  // covers 3DS and the like.
+  const subscribeWithCard = async (pmId) => {
+    track("checkout_card_submitted","billing");
+    let r, j;
+    try {
+      r = await fetch("/api/create-subscription",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({athleteId,...(CURRENT_AUTH?.token?{auth:CURRENT_AUTH}:{pin}),tier,billing,giftCode:appliedGift||undefined,eventSource:eventCtx?.source||undefined,ad:getAdIdentity()||undefined,paymentMethodId:pmId})
+      });
+      j = await r.json();
+    } catch(e){ throw new Error("Connection error. Try again."); }
+    if(!r.ok) throw new Error(j?.error||"Couldn't activate your plan. Try again.");
+    if(j.needsAction && j.clientSecret){
+      if(!stripeObj) throw new Error("Payment couldn't load. Try again.");
+      const result = await stripeObj.confirmCardPayment(j.clientSecret,{payment_method:pmId});
+      if(result.error) throw new Error(result.error.message||"Card confirmation failed. Try again.");
+    }
+    track("checkout_succeeded","billing");
+  };
+
+  // Funnel telemetry from inside the card form (payform.jsx stays App-free).
+  const onPayEvent = (name, detail) => {
+    if(name==="submit") return; // checkout_card_submitted fires in subscribeWithCard
+    if(name==="confirm_failed"||name==="subscribe_failed"){
+      track("checkout_confirm_failed","billing",{stage:name,detail:detail?String(detail).slice(0,120):null});
+    }
+  };
 
   // Load Stripe.js (3 attempts with backoff inside getStripeJs). A total failure
   // shows a visible retry state below — never a silent dead form — and logs a
@@ -3875,7 +3911,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
         <Suspense fallback={<div style={{color:CA.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Loading secure checkout…</div>}>
           <StripePayBlock stripeObj={stripeObj}
             options={{clientSecret, appearance:{theme:"night", variables:{colorPrimary:CA.accent, colorBackground:CA.navy3, colorText:CA.text, borderRadius:"10px"}}}}
-            confirmMode={confirmMode} payLabel={payLabel} onSuccess={onSuccess}
+            payLabel={payLabel} onCardSaved={subscribeWithCard} onSuccess={onSuccess} onEvent={onPayEvent}
             errColor={CA.red} btnBase={btn(CA.accent,"#000",{marginTop:14})}/>
         </Suspense>
       )}
@@ -4018,6 +4054,10 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
   const [extCheckout,setExtCheckout] = useState("idle"); // idle|opening|opened|error|finishing
   const setD = (k,v) => setData(p=>({...p,[k]:v}));
   useEffect(()=>{ track("signup_start","auth"); },[]); // activation-funnel top (pre-login)
+  // T37 funnel telemetry: the plan screen IS the paywall. With checkout_viewed /
+  // checkout_card_submitted / checkout_succeeded this makes "saw plans → saw card
+  // form → typed a card → subscribed" one query instead of a cross-system autopsy.
+  useEffect(()=>{ if(step===14) track("paywall_shown","billing"); },[step]);
 
   const isPaidTier = data.tier==="pro"||data.tier==="elite";
   // Athlete's competitive level (asked on step 1) drives which questions show:
@@ -4273,6 +4313,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
     } else if(step===14){
       // Plan selection
       if(data.tier==="free"){
+        track("paywall_dismissed","billing"); // chose free at the plan screen
         setLoading(true);
         try { await finishOnboarding("free", athleteRow); }
         catch(e){ setErr("Connection error."); setLoading(false); }
@@ -5930,14 +5971,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const freshAthlete = _fa?.athlete ? [_fa.athlete] : [];
         if(freshAthlete.length>0){
           const fa = freshAthlete[0];
-          // Webhook-lag guard. Right after a paid signup the DB tier flip (free→pro)
-          // trails the subscription by a few seconds: Pro is granted server-side only
-          // once the card is confirmed, via the Stripe webhook (see create-subscription's
-          // "don't grant tier before payment" note). This boot refetch — run for the
-          // latest program_text etc. — must not clobber a just-purchased paid tier with
-          // that transient free. If we already hold a paid tier locally and the fresh row
-          // still reads free but already carries a live subscription, keep the paid tier;
-          // the DB catches up by next login. Never elevates without a real live sub, so a
+          // Webhook-lag guard. Since the T37 card-first re-order the tier is granted
+          // in the same create-subscription request, so for CURRENT bundles this gap
+          // no longer exists; it still covers (a) stale pre-T37 bundles mid-rollout
+          // and (b) the needsAction path (real first charge), where the webhook flips
+          // the tier a few seconds after the client confirms. Harmless otherwise:
+          // it never elevates without a live subscription on the fresh row, so a
           // genuine downgrade (canceled/expired sub → free) still applies normally.
           const localPaid = athlete.tier==="pro" || athlete.tier==="elite";
           const serverLagging = fa.tier==="free" && ["trialing","active","past_due"].includes(fa.subscription_status);
