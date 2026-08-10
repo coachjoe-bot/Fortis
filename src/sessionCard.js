@@ -50,53 +50,103 @@ export const buildSessionCard = (draftText, { week } = {}) => {
   const dayLabel = lines[0].replace(/[:\-–—\s]+$/, "");
   const exercises = lines.slice(1).map((l) => l.replace(SOURCE_TAG_RE, ""));
   if (!exercises.length) return null;
-  // "Push A · Week 3" — but never repeat a week the label already states.
+  // "PUSH A · WEEK 3" — never repeat a week the label already states. Uppercase:
+  // the card is a headline on the lock screen, not a sentence.
   const weekTag = week && !/\bw(?:ee)?k\s*\d/i.test(dayLabel) ? ` · Week ${week}` : "";
   return {
-    title: `${dayLabel}${weekTag}`,
+    title: `${dayLabel}${weekTag}`.toUpperCase(),
     body: exercises.slice(0, 12).join("\n"),
   };
 };
 
-// ── platform support / permission ────────────────────────────────────────────
-export const sessionCardSupported = () =>
-  typeof window !== "undefined" && "Notification" in window &&
-  typeof navigator !== "undefined" && "serviceWorker" in navigator;
+// ── explicit removal ─────────────────────────────────────────────────────────
+// The card never expires on its own mid-workout and re-pins itself when buried,
+// so the athlete needs a way OFF: telling Joe. Deterministic — no AI turn.
+export const ASKS_CLEAR_CARD_RE =
+  /\b(?:clear|remove|take|get\s+rid\s+of|kill|delete|dismiss)\b[^.!?\n]{0,50}\b(?:lock\s*-?\s*screen|notification|session\s+card|the\s+card|pin(?:ned)?)\b|\b(?:lock\s*-?\s*screen|pin|card|notification)\b[^.!?\n]{0,30}\b(?:off|away|down|gone)\b/i;
+export const asksClearCard = (msg) => ASKS_CLEAR_CARD_RE.test(String(msg || ""));
 
-// ── show / clear / query ─────────────────────────────────────────────────────
-// Same tag every time, so an update silently REPLACES the pinned card instead
-// of stacking a second one.
+// ── platform support / permission ────────────────────────────────────────────
+// Native Live Activity when the shell provides it (the SessionCard Capacitor
+// plugin, ios/App/WilcoSessionCard) — a truly PINNED lock-screen surface that
+// other notifications can't bury and Clear All can't sweep. Web notification
+// otherwise.
+const nativeSessionCard = () =>
+  (typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() &&
+   window.Capacitor?.Plugins?.SessionCard) || null;
+
+export const sessionCardSupported = () =>
+  !!nativeSessionCard() ||
+  (typeof window !== "undefined" && "Notification" in window &&
+   typeof navigator !== "undefined" && "serviceWorker" in navigator);
+
+// ── show / clear / re-pin ────────────────────────────────────────────────────
+// Web path posts under one tag, so an update silently REPLACES the pinned card
+// instead of stacking a second one.
+const postWebCard = async (title, body) => {
+  const reg = await navigator.serviceWorker.ready;
+  await reg.showNotification(title, {
+    body,
+    tag: SESSION_CARD_TAG,
+    renotify: false,
+    silent: true, // a reference sheet, not an alert — no buzz on show or update
+    // Desktop/Android: keep it on screen until the athlete deals with it.
+    // iOS ignores this — its persistence comes from the re-pin cycle below.
+    requireInteraction: true,
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    data: { url: "/", type: "session_card" },
+  });
+};
+
 export const showSessionCard = async (athleteId, card) => {
   if (!card || !sessionCardSupported()) return false;
-  let perm = Notification.permission;
-  if (perm === "default") {
-    try { perm = await Notification.requestPermission(); } catch (_) { return false; }
-  }
-  if (perm !== "granted") return false;
   try {
-    const reg = await navigator.serviceWorker.ready;
-    await reg.showNotification(card.title, {
-      body: card.body,
-      tag: SESSION_CARD_TAG,
-      renotify: false,
-      silent: true, // a reference sheet, not an alert — no buzz on show or update
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      data: { url: "/", type: "session_card" },
-    });
+    const native = nativeSessionCard();
+    if (native) {
+      await native.show({ title: card.title, body: card.body });
+    } else {
+      let perm = Notification.permission;
+      if (perm === "default") {
+        try { perm = await Notification.requestPermission(); } catch (_) { return false; }
+      }
+      if (perm !== "granted") return false;
+      await postWebCard(card.title, card.body);
+    }
     const existing = readCardState(athleteId);
     writeCardState(athleteId, {
       day: qlLocalDay(),
       // An update keeps the original start time — the card "started" when the
       // athlete first pinned it, not when it last re-rendered.
       startedAt: existing && existing.day === qlLocalDay() ? existing.startedAt : Date.now(),
+      // Content is stored so the re-pin cycle can re-post without a rebuild.
+      title: card.title,
+      body: card.body,
     });
     return true;
   } catch (_) { return false; }
 };
 
+// iOS gives a web app no pinned surface: newer notifications bury the card and
+// "Clear All" sweeps it. So the app re-posts the stored card every time it goes
+// to the background — lock the phone mid-workout and the card rides back to the
+// top of the stack, and a swept card comes back on the next cycle. Removal is
+// deliberate only: log the session, or tell Joe to take it down. (The native
+// Live Activity needs none of this — a started activity just stays.)
+export const repinSessionCard = async (athleteId) => {
+  const d = readCardState(athleteId);
+  if (!sessionCardIsLive(d) || !d.title || !d.body) return;
+  if (nativeSessionCard()) return; // a Live Activity is already pinned
+  if (!sessionCardSupported() || Notification.permission !== "granted") return;
+  try { await postWebCard(d.title, d.body); } catch (_) {}
+};
+
 export const clearSessionCard = async (athleteId) => {
   try { localStorage.removeItem(cardKey(athleteId)); } catch (_) {}
+  try {
+    const native = nativeSessionCard();
+    if (native) { await native.end(); return; }
+  } catch (_) {}
   if (!sessionCardSupported()) return;
   try {
     const reg = await navigator.serviceWorker.ready;

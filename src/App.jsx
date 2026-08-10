@@ -43,8 +43,8 @@ import {
 // Lock-screen session card (T40): today's session pinned as a notification. The
 // card is a projection of the Quick Log draft — never model chat text.
 import {
-  asksTodaysWorkout, buildSessionCard, sessionCardSupported, showSessionCard,
-  clearSessionCard, activeSessionCard, expireSessionCardIfStale,
+  asksTodaysWorkout, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
+  repinSessionCard, clearSessionCard, activeSessionCard, expireSessionCardIfStale,
   sessionCardDeclinedToday, markSessionCardDeclined,
 } from "./sessionCard.js";
 // Where the athlete is in their program — week turns Sunday, day advances per logged
@@ -5253,6 +5253,16 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // T40: yesterday's (or a >3h-stale) pinned card comes down at boot — the web
   // platform has no self-expiring notifications, so expiry is enforced here.
   useEffect(()=>{ expireSessionCardIfStale(athlete.id); },[athlete.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // T40: iOS can't pin a web notification — newer ones bury it and Clear All
+  // sweeps it (Will hit both on day one). So the card re-posts every time the
+  // app backgrounds: locking the phone mid-workout puts it back on top of the
+  // stack, and a swept card comes back on the next cycle. It only stays gone
+  // when the session is logged or the athlete tells Joe to take it down.
+  useEffect(()=>{
+    const onHide = () => { if(document.visibilityState==="hidden") repinSessionCard(athlete.id); };
+    document.addEventListener("visibilitychange", onHide);
+    return ()=>document.removeEventListener("visibilitychange", onHide);
+  },[athlete.id]);
   // Pending coach change-request Joe drafted for a LOCKED program, awaiting the
   // athlete's explicit Send-to-coach tap: {suggestion, lift, source, athleteMsg}.
   // Joe authors the suggestion — the athlete only confirms; nothing is filed
@@ -7072,6 +7082,16 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // Typing over the lock-screen offer = not now (but NOT declined-for-the-day:
     // only an explicit "No thanks" burns the daily offer).
     if(sessionCardPending) setSessionCardPending(false);
+
+    // T40: "take it off my lock screen" — the card's one explicit exit besides
+    // logging the session. Deterministic (no AI turn), and only when a card is
+    // actually up so ordinary sentences can never trip it.
+    if(asksClearCard(msg) && activeSessionCard(athlete.id)){
+      setInput("");
+      setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:"Took it down."}]);
+      clearSessionCard(athlete.id);
+      return;
+    }
     // A7: the clears above just nulled every chip, but this closure's state
     // variables still hold the OLD values — so the offer gate further down must
     // not read them (a message typed over a chip could never get its own
@@ -8199,7 +8219,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
           <button onClick={()=>answerSessionCardOffer(true)}
             style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-            🔒 Put it on my lock screen
+            Put it on my lock screen
           </button>
           <button onClick={()=>answerSessionCardOffer(false)}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>

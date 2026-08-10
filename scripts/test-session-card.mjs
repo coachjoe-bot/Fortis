@@ -5,7 +5,7 @@
 // The card's design rule (Will, 2026-08-10): a PROJECTION of the Quick Log
 // draft, real weights never percentages, no progress state, gone when logged.
 
-import { asksTodaysWorkout, buildSessionCard, sessionCardIsLive, SESSION_CARD_MAX_AGE_MS } from "../src/sessionCard.js";
+import { asksTodaysWorkout, asksClearCard, buildSessionCard, sessionCardIsLive, SESSION_CARD_MAX_AGE_MS } from "../src/sessionCard.js";
 
 let pass = 0, fail = 0;
 const ok = (cond, label) => {
@@ -32,6 +32,25 @@ console.log("asksTodaysWorkout:");
   "I'm on week 3 day 2",
 ].forEach((m) => ok(!asksTodaysWorkout(m), `ignores: "${m}"`));
 
+// ── explicit removal intent ──────────────────────────────────────────────────
+// (Only ever consulted while a card is actually pinned — the caller gates it —
+// so the bar is "never misses a real removal ask", not "never matches else".)
+console.log("asksClearCard:");
+[
+  "take it off my lock screen",
+  "clear the lock screen",
+  "remove the notification",
+  "get rid of the card",
+  "take the pin down",
+  "you can take that lockscreen thing off",
+].forEach((m) => ok(asksClearCard(m), `matches: "${m}"`));
+[
+  "what's my workout today",
+  "Bench Press 5x5 @ 225",
+  "my phone died mid workout",
+  "clear communication is key coach",
+].forEach((m) => ok(!asksClearCard(m), `ignores: "${m}"`));
+
 // ── draft → card projection ──────────────────────────────────────────────────
 console.log("buildSessionCard:");
 {
@@ -46,7 +65,7 @@ console.log("buildSessionCard:");
   ].join("\n");
   const card = buildSessionCard(draft, { week: 3 });
   ok(!!card, "builds a card from a standard draft");
-  ok(card.title === "Day 1 – Push A · Week 3", `title carries the week (got "${card.title}")`);
+  ok(card.title === "DAY 1 – PUSH A · WEEK 3", `title carries the week, uppercased headline-style (got "${card.title}")`);
   ok(/Bench Press 5x5 @ 225$/m.test(card.body), "source tag (75%) stripped — weights, never percentages");
   ok(/Incline DB Press 3x10 @ 80$/m.test(card.body), "(last time) tag stripped");
   ok(/Triceps Rope Pushdown 3x12 @ 70$/m.test(card.body), "(RPE 8) tag stripped");
@@ -54,7 +73,7 @@ console.log("buildSessionCard:");
 }
 {
   const card = buildSessionCard("Week 3 Day 6 - Oly + Legs\n\nSnatch 4x1 @ 185", { week: 3 });
-  ok(card.title === "Week 3 Day 6 - Oly + Legs", "no duplicate week tag when the label states one");
+  ok(card.title === "WEEK 3 DAY 6 - OLY + LEGS", "no duplicate week tag when the label states one");
 }
 {
   const card = buildSessionCard("Upper B\n\nWeighted Dips 3x8 @ ___\nPush-ups 3x20", {});
