@@ -1,3 +1,6 @@
+// nativeFetch must be the FIRST import: it patches window.fetch for the native
+// shell before any module-scope code can issue an API call.
+import './nativeFetch.js'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { inject } from '@vercel/analytics'

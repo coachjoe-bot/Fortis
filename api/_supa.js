@@ -165,6 +165,9 @@ const ALLOWED_ORIGINS = new Set([
   "https://app.trainwilco.com",
   "http://localhost:3000",
   "http://localhost:5173",
+  // The Capacitor iOS shell's WebView origin — its API calls are cross-origin
+  // by construction (client twin: src/nativeFetch.js rewrites relative /api).
+  "capacitor://localhost",
 ]);
 
 export function applyCors(req, res) {
