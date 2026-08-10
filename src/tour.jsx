@@ -21,14 +21,30 @@
 // it only because they're lazy). The handful of palette values are copied.
 import { useEffect, useState } from "react";
 
-const T = {
+// REBRAND 2026-08-07. These MUST be kept in sync by hand with CA in App.jsx — the
+// comment above explains why this file cannot import them. If CA changes, change these.
+// DARK MODE (Will, 08-10): same hand-sync constraint applies to the theme flag — this
+// re-reads the localStorage key App.jsx's IS_DARK reads, values frozen from 6c8737d.
+const TOUR_DARK = (() => { try { return localStorage.getItem("wilco_theme") === "dark"; } catch (_) { return false; } })();
+const T = TOUR_DARK ? {
   navy2:"#0a0f1d", navy3:"#0e1830", border:"#182543",
   text:"#e6ecf6", muted:"#7c8aa3", muted2:"#aeb9cf",
   accent:"#3a7bff", cyan:"#37e6ff",
   btn:"linear-gradient(180deg,#57a0ff,#2a63e6)",
   glow:"rgba(58,123,255,.5)",
+  onAccent:"#04070f",
+} : {
+  navy2:"#FFFFFF", navy3:"#F7F4EF", border:"#D9D2C7",
+  text:"#1F2A37", muted:"#6B7280", muted2:"#4B5563",
+  accent:"#28508B", cyan:"#5B7FB5",
+  btn:"#28508B",            // flat: the brand bans gradients
+  glow:"transparent",       // and glows
+  onAccent:"#F7F4EF",
 };
-const DIM = "rgba(2,5,15,0.82)";
+// Spotlight scrim. Still a DARK dim even though the app is now light — a spotlight has
+// to suppress everything around the cutout, and dimming light-on-light reads as nothing.
+// Dropped 0.82 -> 0.55 and moved off near-black onto the brand ink (dark keeps 0.82).
+const DIM = TOUR_DARK ? "rgba(2,5,15,0.82)" : "rgba(31,42,55,0.55)";
 
 // ── SAMPLE DATA (Quick Log demo) ─────────────────────────────────────────────
 // One believable bench day. Number-first like a real draft; the top single is
@@ -156,13 +172,13 @@ export function TourOffer({ role="athlete", onStart, onDecline }) {
     ? "Want a quick tour? I'll show you where everything lives on your dashboard."
     : "Want a quick tour? I'll show you where everything lives.";
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(3,8,20,0.88)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(31,42,55,0.55)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div className="fade-up" style={{width:"100%",maxWidth:360,background:T.navy2,border:`1px solid ${T.border}`,borderRadius:16,padding:22,textAlign:"center"}}>
         <img src="/icon-192.png" alt="" width={52} height={52} style={{borderRadius:13,marginBottom:10}}/>
-        <div style={{fontFamily:"'Bebas Neue'",fontSize:26,color:T.cyan,letterSpacing:2}}>WELCOME TO WILCO</div>
+        <div style={{...DISP,fontSize:26,color:T.cyan,letterSpacing:2}}>WELCOME TO WILCO</div>
         <div style={{color:T.muted2,fontSize:13.5,lineHeight:1.6,marginTop:6,marginBottom:16}}>{body}</div>
         <button onClick={onStart}
-          style={{width:"100%",background:T.btn,boxShadow:`0 0 12px ${T.glow}`,border:"none",color:"#02040c",borderRadius:10,padding:"13px",cursor:"pointer",fontSize:15,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:2}}>
+          style={{width:"100%",background:T.btn,boxShadow:`0 0 12px ${T.glow}`,border:"none",color:T.onAccent,borderRadius:10,padding:"13px",cursor:"pointer",fontSize:15,fontWeight:700,...DISP,letterSpacing:2}}>
           SHOW ME AROUND
         </button>
         <button onClick={onDecline}
@@ -243,9 +259,9 @@ export function TourSpotlight({ step, part, steps, stepIndex, onTap, onCta, onSk
   const Banner = step.banner ? (
     <div style={{position:"fixed",top:0,left:0,right:0,zIndex:1104,display:"flex",justifyContent:"center",
       paddingTop:"calc(8px + env(safe-area-inset-top, 0px))",paddingBottom:8,pointerEvents:"none",
-      background:"linear-gradient(180deg, rgba(2,5,15,.94) 0%, rgba(2,5,15,.82) 70%, rgba(2,5,15,0) 100%)"}}>
-      <div style={{fontFamily:"'Bebas Neue'",fontSize:13,letterSpacing:3,color:T.cyan,
-        border:`1px solid ${T.cyan}55`,borderRadius:999,padding:"4px 14px",background:"rgba(6,12,26,.9)"}}>
+      background:"linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(31,42,55,0.55) 70%, rgba(247,244,239,0) 100%)"}}>
+      <div style={{...DISP,fontSize:13,letterSpacing:3,color:T.cyan,
+        border:`1px solid ${T.cyan}55`,borderRadius:999,padding:"4px 14px",background:"rgba(31,42,55,0.55)"}}>
         {step.banner}
       </div>
     </div>
@@ -322,12 +338,12 @@ export function TourSpotlight({ step, part, steps, stepIndex, onTap, onCta, onSk
           ...(cardTop!==null ? {top:cardTop} : {bottom:cardBottom}),
           width:"100%",maxWidth:340,background:T.navy2,border:`1px solid ${T.border}`,
           borderRadius:14,padding:"16px 18px",zIndex:1102,cursor:interactive?"default":"pointer",
-          boxShadow:"0 12px 40px rgba(0,0,0,.55)"}}>
-        {step.title && <div style={{fontFamily:"'Bebas Neue'",fontSize:19,color:T.cyan,letterSpacing:2,marginBottom:6}}>{step.title}</div>}
+          boxShadow:"0 12px 40px rgba(31,42,55,0.35)"}}>
+        {step.title && <div style={{...DISP,fontSize:19,color:T.cyan,letterSpacing:2,marginBottom:6}}>{step.title}</div>}
         <div style={{color:T.text,fontSize:13.5,lineHeight:1.65,whiteSpace:"pre-wrap"}}>{text}</div>
         {showCta && (
           <button onClick={(e)=>{e.stopPropagation();onCta();}}
-            style={{width:"100%",marginTop:12,background:T.btn,boxShadow:`0 0 12px ${T.glow}`,border:"none",color:"#02040c",borderRadius:9,padding:"11px",cursor:"pointer",fontSize:13.5,fontWeight:700,fontFamily:"'Bebas Neue'",letterSpacing:1.5}}>
+            style={{width:"100%",marginTop:12,background:T.btn,boxShadow:`0 0 12px ${T.glow}`,border:"none",color:T.onAccent,borderRadius:9,padding:"11px",cursor:"pointer",fontSize:13.5,fontWeight:700,...DISP,letterSpacing:1.5}}>
             {step.cta}
           </button>
         )}
@@ -361,7 +377,7 @@ function SkipBtn({ onSkip }) {
   return (
     <button onClick={onSkip}
       style={{position:"fixed",right:14,bottom:18,zIndex:1103,
-        background:"rgba(10,15,29,.85)",border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,
+        background:"rgba(255,255,255,0.94)",border:`1px solid ${T.border}`,color:T.muted,borderRadius:8,
         padding:"6px 12px",cursor:"pointer",fontSize:11.5}}>
       Skip tour
     </button>

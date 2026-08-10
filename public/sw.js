@@ -1,11 +1,14 @@
-const CACHE = "wilco-v4";
+// v5 (2026-08-07 rebrand): the version MUST bump here or installed clients keep
+// serving the v4 shell and the retired Bebas Neue / DM Sans files from cache, and the
+// new type never appears no matter what ships.
+const CACHE = "wilco-v6";
 const ASSETS = [
   "/", "/index.html", "/manifest.json", "/icon-192.png", "/icon-512.png",
   // Self-hosted fonts (latin subsets only — the ones every screen actually uses;
   // other subsets are cached on demand by the misc handler below). Precaching
   // them means fonts render offline from the very first installed open.
-  "/fonts/bebas-neue-latin.woff2",
-  "/fonts/dm-sans-latin.woff2",
+  // Inter is variable (300-700) and replaced BOTH Bebas Neue and DM Sans.
+  "/fonts/inter-latin.woff2",
   "/fonts/playfair-display-latin.woff2",
   "/fonts/playfair-display-italic-latin.woff2",
 ];
