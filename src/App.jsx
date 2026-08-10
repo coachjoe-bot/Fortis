@@ -89,7 +89,7 @@ import {
   resolveLift, displayForLift, bwLoadLabel, BW_LOADED_IDS,
   TIER_NAMES, TIER_COLORS, TIER_POINTS, TIER_DESC,
   BENCH_THRESHOLDS, tierForRatio, bwTierFactor, ageTierFactor, scaledThresholds, getBenchKey,
-  sessionTonnage, sessionTopSet, goalTargets,
+  sessionTonnage, sessionTopSet, goalTargets, liftSeriesPoints,
 } from "./grit.js";
 export {
   epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
@@ -1623,6 +1623,9 @@ const SIGNUP_GOAL_PHRASES = {
 };
 const JOEBOT_STATIC_SYS = `You are Coach Joe Thomas -- high school strength coach, 20+ years military S&C. Direct, real, no fluff.
 
+DECIDE BEFORE YOU WRITE. Work everything out BEFORE the first word; the athlete only ever sees a finished answer. Never think out loud, never narrate your reasoning, never correct yourself mid-message: no "wait", no "let me clarify", no "actually, scratch that", no walking back something you said two sentences ago. If you notice a mistake while writing, start the sentence over in your head and write only the corrected version. One message must never contradict itself.
+CONTEXT BEATS TRANSCRIPT: the session context below (position, history, 1RMs) is computed fresh by the app for THIS message. When it conflicts with anything earlier in the conversation — including your own previous replies — the context is right and the transcript is stale. Use the fresh answer directly; do not mention, reconcile, or apologize for the discrepancy, and do not ask the athlete to resolve it for you.
+
 BANNED PHRASES:
 - "Atta boy/girl": BANNED except when athlete explicitly hits a NEW PR.
 - Exclamation points: Maximum ONE per response.
@@ -1741,6 +1744,27 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
     pastContext = `\n\nATHLETE WORKOUT HISTORY (most recent first):\n${recent}\nWhen asked what they did on a specific day or recently, reference these exact dates and numbers.`;
   }
 
+  // Deterministic per-lift "last done" index over the FULL history the client
+  // holds — not just the 10 most-recent workouts above. This turns "what did I do
+  // for X last time?" into a code lookup the model merely phrases, instead of a
+  // model-side search that can contradict itself ("you haven't logged Triceps Rope
+  // Pushdown… closest match: Triceps Rope Pushdown", Will, 2026-08-10). Names
+  // group through resolveLift so wording variants land on one entry.
+  let lastDoneContext = "";
+  if(workoutHistory?.length>0){
+    const byLift = new Map();
+    [...workoutHistory].sort((a,b)=>effectiveDate(b)-effectiveDate(a)).forEach(w=>{
+      (w.parsed_data?.exercises||[]).forEach(e=>{
+        if(!e.name) return;
+        const id = resolveLift(e.name).id;
+        if(!byLift.has(id)) byLift.set(id, {name:e.name, date:effectiveDate(w), detail:formatSetDetails(e)});
+      });
+    });
+    const lines = [...byLift.values()].slice(0,40)
+      .map(r=>`${r.name} — last done ${r.date.toLocaleDateString("en-US",{month:"short",day:"numeric"})}: ${r.detail}`);
+    if(lines.length) lastDoneContext = `\n\nLAST TIME PER EXERCISE (resolved by the app from their full log — authoritative):\n${lines.join("\n")}\nWhen they ask what they did for an exercise, answer from THIS list (or the dated history above): state the date and numbers plainly, one sentence. An exercise on this list HAS been logged — never tell them they haven't logged it, and never hedge with "closest match" when it's the same movement worded differently. Only if a movement appears in neither list say they haven't logged it yet.`;
+  }
+
   // 1RM cheat sheet so "what's my workout today" can turn program percentages into
   // real weights (weight hierarchy step 2b/2c). Best e1RM per lift from logged
   // history, grouped through resolveLift so aliases collapse — then OVERLAID with
@@ -1788,8 +1812,13 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
       sessions: chatSessions,
     });
     const posBlock = positionBlock(pos);
-    if(posBlock) positionContext = `\n\nWHERE THE ATHLETE IS IN THEIR PROGRAM (resolved by the app — treat as authoritative):\n${posBlock}\nWhen giving today's session, use THIS position. Do NOT re-derive the day by counting sessions or reading the program's printed dates.`;
-  } catch(_){ /* no resolvable position — chat falls back to reading the program, as before */ }
+    if(posBlock) positionContext = `\n\nWHERE THE ATHLETE IS IN THEIR PROGRAM (resolved by the app — treat as authoritative):\n${posBlock}\nWhen giving today's session, use THIS position. Do NOT re-derive the day by counting sessions or reading the program's printed dates. This block is computed FRESH for this message and SUPERSEDES anything earlier in the conversation — including your own previous replies. If you stated a different week or day earlier, that statement is stale: answer from THIS position without mentioning or explaining the correction. Never ask the athlete where they are in the week when this block is present; the app already knows.`;
+  } catch(_){
+    // The resolver failing must NOT mean the model re-derives position with full
+    // confidence — that's exactly the "very stupid about what day I'm on" failure.
+    // Say plainly that position is unresolved so it asks instead of guessing.
+    positionContext = `\n\nWHERE THE ATHLETE IS IN THEIR PROGRAM: could not be resolved. Do NOT state a week or day as fact. If they ask for today's session, ask ONE plain question ("Which day of the week are you on?") and work from their answer.`;
+  }
 
   let programContext = "";
   if(athlete.temp_program_text){
@@ -1809,7 +1838,7 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
   const sys = `TODAY'S DATE: ${todayStr}, ${timeStr}
 Athlete: ${athlete.name}, Sport: ${athlete.sport}${athlete.level?", Level: "+athlete.level:""}
 GOAL: ${JOEBOT_GOALS[athlete.goal||"strength"] || JOEBOT_GOALS.strength}
-SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastContext}${maxContext}${programContext}${positionContext}`;
+SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
 
   let goalsContext = "";
   if(athleteGoals?.length>0){
@@ -2873,23 +2902,9 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     setMessages(prev=>[...prev,{role:"assistant",content:activeQuestions[0].text}]);
   };
 
-  const liftSeries = (lift) => {
-    const norm = s=>String(s||"").toLowerCase().replace(/[^a-z]/g,"");
-    const target = norm(lift);
-    const pts = [];
-    [...(workoutHistory||[])].sort((a,b)=>effectiveDate(a)-effectiveDate(b)).forEach(w=>{
-      const pd = typeof w.parsed_data==="string"?(()=>{try{return JSON.parse(w.parsed_data);}catch{return {};}})():(w.parsed_data||{});
-      (pd.exercises||[]).forEach(e=>{
-        if(!e.name||!e.weight||e.unit==="bodyweight") return;
-        const n=norm(e.name);
-        if(n!==target && !n.includes(target) && !target.includes(n)) return;
-        const wl=e.unit==="kg"?e.weight*2.205:e.weight;
-        const e1rm=(!e.reps||e.reps<=1)?Math.round(wl):Math.round(wl*(1+Math.min(e.reps,MAX_E1RM_REPS)/30));
-        pts.push({y:e1rm,label:effectiveDate(w).toLocaleDateString("en-US",{month:"numeric",day:"numeric"})});
-      });
-    });
-    return pts.slice(-8);
-  };
+  // Taxonomy-exact series (src/grit.js). The old inline version matched by
+  // substring, so "Snatch" charted Snatch-Grip Deadlifts and pulls too.
+  const liftSeries = (lift) => liftSeriesPoints(workoutHistory, lift, { bwLbs: athlete?.weight_lbs || 0 });
 
 
   const sendMessage = async () => {
@@ -3201,19 +3216,13 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
         <ProofLetter intro={c.intro} sections={sections} flags={c.flags} label={label} crew={c.crew}
           dateStr={digest?.generated_at?new Date(digest.generated_at).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}).toUpperCase():null}/>
 
-        {/* Check-in Q&A. messages[0] is the raw digest text (shown as the page above),
-            so render from index 1 onward. */}
-        {messages.slice(1).map((m,i)=>(
-          <div key={i} className="proof-drop" style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"86%",background:m.role==="user"?CA_BUBBLE:CA.navy2,color:m.role==="user"?"#fff":CA.text,borderRadius:14,padding:"11px 14px",fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap",border:m.role==="user"?"none":`1px solid ${CA.border}`,borderBottomLeftRadius:m.role==="user"?14:4,borderBottomRightRadius:m.role==="user"?4:14}}>
-              {m.content}
-            </div>
-          </div>
-        ))}
-
-        {/* Monthly: embedded est-1RM progress charts (reused LineChart) */}
-        {/* Monthly charts render in EVERY phase (A26) — they used to unmount the
-            moment the check-in started and never came back, including on re-open. */}
+        {/* Monthly: embedded est-1RM progress charts (reused LineChart). Rendered as
+            part of the LETTER — above the check-in Q&A — so the conversation is
+            always the last thing on the page, directly above the input. They used
+            to render below the chat bubbles, which stranded the questions mid-page
+            with the answer box a full scroll away (Will, 2026-08-10). Charts render
+            in EVERY phase (A26) — they used to unmount the moment the check-in
+            started and never came back, including on re-open. */}
         {isMonthly&&Array.isArray(c.charts)&&c.charts.length>0&&(
           <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:4}}>
             {c.charts.map((ch,i)=>{
@@ -3228,6 +3237,16 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             })}
           </div>
         )}
+
+        {/* Check-in Q&A. messages[0] is the raw digest text (shown as the page above),
+            so render from index 1 onward. */}
+        {messages.slice(1).map((m,i)=>(
+          <div key={i} className="proof-drop" style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+            <div style={{maxWidth:"86%",background:m.role==="user"?CA_BUBBLE:CA.navy2,color:m.role==="user"?"#fff":CA.text,borderRadius:14,padding:"11px 14px",fontSize:14,lineHeight:1.6,whiteSpace:"pre-wrap",border:m.role==="user"?"none":`1px solid ${CA.border}`,borderBottomLeftRadius:m.role==="user"?14:4,borderBottomRightRadius:m.role==="user"?4:14}}>
+              {m.content}
+            </div>
+          </div>
+        ))}
 
         {loading&&<div style={{display:"flex",gap:6,padding:"10px 14px"}}>
           {[0,1,2].map(i=><div key={i} style={{width:6,height:6,borderRadius:"50%",background:CA.muted,animation:"pulse 1.2s ease-in-out infinite",animationDelay:`${i*0.2}s`}}/>)}

@@ -279,11 +279,14 @@ export async function askClaudeServer({
 }) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY;
 
-  // Inference params chosen per model, matching api/claude.js modelParams():
-  // Sonnet pins effort low + thinking off (cheap/fast, no quality loss for our
-  // calls). On Sonnet 5, omitting `thinking` turns adaptive thinking ON by
-  // default, so the explicit disable is load-bearing there, not just a cost
-  // tweak. effort is INVALID on Haiku 4.5 — it must receive neither field.
+  // Inference params chosen per model + feature, matching api/claude.js
+  // modelParams() (keep the two in sync — every rule has a twin): extraction
+  // stays effort "low" (cheap/fast, no quality loss), conversational/prose
+  // surfaces get real reasoning effort — pinning chat-grade features at "low"
+  // is where the self-contradicting Coach Joe replies came from (2026-08-10).
+  // On Sonnet 5, omitting `thinking` turns adaptive thinking ON by default, so
+  // the explicit disable is load-bearing there, not just a cost tweak. effort
+  // is INVALID on Haiku 4.5 — it must receive neither field.
   const payload = {
     model,
     max_tokens: maxTokens,
@@ -291,7 +294,9 @@ export async function askClaudeServer({
     messages: [{ role: "user", content: user }],
   };
   if (model === "claude-sonnet-5" || model === "claude-sonnet-4-6") {
-    payload.output_config = { effort: "low" };
+    const effort = ["joebot_chat", "coach_checkin"].includes(feature) ? "high"
+      : ["proof_weekly", "proof_monthly", "proof_coach"].includes(feature) ? "medium" : "low";
+    payload.output_config = { effort };
     payload.thinking = { type: "disabled" };
   }
 

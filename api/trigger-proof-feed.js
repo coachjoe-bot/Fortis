@@ -53,6 +53,7 @@ import {
   groupIntoSessions, aggregateInjuries, buildOneRMs, buildBrief,
   parseProgramIfNeeded, compareProgramVsActual, computeRankMovement, painTrend,
   generateWeekly, generateMonthly, generateCoach, blendAdherenceScore, trueImprovementPRs,
+  buildLiftHistory, totalSetVolume,
 } from "./_proof.js";
 import { computeGritSnapshot } from "./_grit.js";
 import { sendToAthlete, pushPayload, ensureVapid, sendTo } from "./_push.js";
@@ -275,9 +276,41 @@ const briefFor = (athlete, batch, windowType, fullWorkouts, fullManual, previous
     catch (e) { console.error("[proof-feed] rank movement failed:", e.message); }
   }
 
+  const brief = buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthSessions, prs, goals, adherence: null, injuries, windowType, rank, painTrendData });
+
+  // Month-vs-month facts, computed in CODE from the unwindowed history (monthly
+  // digests only). The month layer used to be PROMPTED for "this month vs last
+  // month" off a brief that carried only this-week/last-week numbers — it had
+  // nothing real to compare, so the monthly read like a weekly with charts
+  // stapled on (Will, 2026-08-10). Now the comparison is computed here and the
+  // model only writes it up.
+  if (windowType === "monthly" && (fullWorkouts || []).length) {
+    try {
+      const m1 = Date.now() - 28 * 864e5, m2 = Date.now() - 56 * 864e5;
+      const ts = (w) => new Date(w.created_at).getTime();
+      const thisM = groupIntoSessions(fullWorkouts.filter((w) => ts(w) >= m1));
+      const prevM = groupIntoSessions(fullWorkouts.filter((w) => ts(w) >= m2 && ts(w) < m1));
+      const bestByLift = (sessions) => {
+        const out = {};
+        for (const [lift, entries] of Object.entries(buildLiftHistory(sessions)))
+          out[lift] = Math.round(Math.max(...entries.map((e) => e.e1rm)));
+        return out;
+      };
+      const tb = bestByLift(thisM), pb = bestByLift(prevM);
+      const lifts = Object.keys(tb).filter((k) => pb[k])
+        .map((k) => ({ lift: k, thisMonthBest: tb[k], lastMonthBest: pb[k], delta: tb[k] - pb[k] }))
+        .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 6);
+      brief.monthCompare = {
+        sessions: { thisMonth: thisM.length, lastMonth: prevM.length },
+        sets: { thisMonth: totalSetVolume(thisM), lastMonth: totalSetVolume(prevM) },
+        lifts,
+      };
+    } catch (e) { console.error("[proof-feed] monthCompare failed:", e.message); }
+  }
+
   return {
     thisWeekSessions, lastWeekSessions, monthSessions, prs, oneRMs,
-    brief: buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthSessions, prs, goals, adherence: null, injuries, windowType, rank, painTrendData }),
+    brief,
   };
 };
 
