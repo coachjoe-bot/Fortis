@@ -38,8 +38,15 @@ import {
   qlLoad, qlSave, qlClear, qlPositionConflict, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
   findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
-  markSupersededPrograms, parseRequestedDate,
+  markSupersededPrograms, parseRequestedDate, qlLocalDay,
 } from "./quicklog.js";
+// Lock-screen session card (T40): today's session pinned as a notification. The
+// card is a projection of the Quick Log draft — never model chat text.
+import {
+  asksTodaysWorkout, buildSessionCard, sessionCardSupported, showSessionCard,
+  clearSessionCard, activeSessionCard, expireSessionCardIfStale,
+  sessionCardDeclinedToday, markSessionCardDeclined,
+} from "./sessionCard.js";
 // Where the athlete is in their program — week turns Sunday, day advances per logged
 // session, athlete's word wins. Replaces the calendar heuristic that kept drifting.
 import { currentPosition, positionBlock, parseBlockSpan } from "./programPosition.js";
@@ -5240,6 +5247,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Pending AI log-correction plan awaiting the athlete's confirm tap:
   // {plan:<resolveLogCorrection result>, targetId:<workouts row id>}
   const [correctionPending,setCorrectionPending] = useState(null);
+  // Lock-screen session card offer chips (T40): true while "Put it on my lock
+  // screen?" is waiting for the athlete's yes/no. One offer per day max.
+  const [sessionCardPending,setSessionCardPending] = useState(false);
+  // T40: yesterday's (or a >3h-stale) pinned card comes down at boot — the web
+  // platform has no self-expiring notifications, so expiry is enforced here.
+  useEffect(()=>{ expireSessionCardIfStale(athlete.id); },[athlete.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Pending coach change-request Joe drafted for a LOCKED program, awaiting the
   // athlete's explicit Send-to-coach tap: {suggestion, lift, source, athleteMsg}.
   // Joe authors the suggestion — the athlete only confirms; nothing is filed
@@ -6137,6 +6150,16 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         parsedFinal = {...parsedFinal, warmup_done: !!quickLogPrep.current.warmup, cooldown_done: !!quickLogPrep.current.cooldown};
         quickLogPrep.current = null;
       }
+      // T40: a logged session takes the lock-screen card down — any tier (free
+      // returns before the insert below, and their card must still clear). Only a
+      // REAL log for TODAY counts: a backdated log is not today's session done.
+      try{
+        const isRealLog = (parsedFinal.exercises?.length>0) || parsedFinal.run_data || parsedFinal.practice_data;
+        const ld = parsedFinal.log_date;
+        const isToday = !ld || !/^\d{4}-\d{2}-\d{2}$/.test(ld) || qlLocalDay(new Date(ld+"T12:00:00")) === qlLocalDay();
+        if(isRealLog && isToday && activeSessionCard(updatedAthlete.id)) clearSessionCard(updatedAthlete.id);
+      }catch(_){}
+
       // Free tier: no memory — don't persist workouts or PRs
       if(tier==="free"){
         if(addReply) setMessages(prev=>[...prev,{role:"assistant",content:reply}]);
@@ -6624,6 +6647,62 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     return out;
   };
 
+  // ── Lock-screen session card (T40) ──────────────────────────────────────────
+  // The card mirrors the Quick Log draft: accepting the offer reuses a parked
+  // draft when one is fresh (same freshness rules as the sheet), else generates
+  // one with the sheet's own machinery and PARKS it — so the sheet and the lock
+  // screen can never show two different sessions.
+  const pinSessionCard = async (a, msgs) => {
+    let draftText = null, week = null;
+    const parked = qlLoad(a.id, workoutHistory);
+    if(parked && !parked.targetDate){
+      draftText = parked.draft;
+      week = parked.position?.week ?? null;
+    } else {
+      const gen = await generateQuickLogDraft({athlete:a, workoutHistory, messages: msgs||messages, goals:athleteGoals, contextNotes:athleteContext});
+      if(gen.rest) return {rest:true};
+      draftText = gen.draft;
+      week = gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null;
+      qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+    }
+    const card = buildSessionCard(draftText, {week});
+    if(!card) return {shown:false};
+    return {shown: await showSessionCard(a.id, card)};
+  };
+
+  const answerSessionCardOffer = async (yes) => {
+    setSessionCardPending(false);
+    if(!yes){ markSessionCardDeclined(athlete.id); return; }
+    setLoading(true);
+    try{
+      const res = await pinSessionCard(athlete);
+      setMessages(prev=>[...prev,{role:"assistant",content:
+        res.rest ? "Today reads as a rest day on your program, nothing to pin. Enjoy it."
+        : res.shown ? "On your lock screen. It clears itself when you log the session."
+        : "Couldn't pin it, your device is blocking WILCO notifications. Turn them on in your phone's settings and ask me again."}]);
+    }catch(_){
+      setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't pin it just now, ask me again in a minute."}]);
+    }
+    setLoading(false);
+  };
+
+  // A position correction ("I'm actually on day 7") or an in-chat swap ("subbed
+  // dips for pushdowns") changes what today IS, so a pinned card must follow.
+  // Regenerate the draft — the conversation carries the correction, and the
+  // generator is told conversation overrides inference — then silently replace
+  // the card (same tag, no buzz). On any failure the card keeps its last
+  // content: stale beats gone mid-workout.
+  const refreshSessionCard = async (a, msgs) => {
+    try{
+      if(!activeSessionCard(a.id)) return;
+      const gen = await generateQuickLogDraft({athlete:a, workoutHistory, messages: msgs||messages, goals:athleteGoals, contextNotes:athleteContext});
+      if(gen.rest || !gen.draft){ await clearSessionCard(a.id); return; }
+      qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+      const card = buildSessionCard(gen.draft, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
+      if(card) await showSessionCard(a.id, card);
+    }catch(_){ /* keep the last pinned content */ }
+  };
+
   // Apply (or discard) a confirmed correction plan. Rewrites the target row's
   // parsed_data in place — the same mechanics as the manual EditWorkoutModal —
   // then recomputes maxes and, if a PR propagation already pushed the bad number
@@ -6990,6 +7069,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // a chip cancels whatever phase it was in.
     if(selfChangePending) setSelfChangePending(null);
     if(retryPending) setRetryPending(null);
+    // Typing over the lock-screen offer = not now (but NOT declined-for-the-day:
+    // only an explicit "No thanks" burns the daily offer).
+    if(sessionCardPending) setSessionCardPending(false);
     // A7: the clears above just nulled every chip, but this closure's state
     // variables still hold the OLD values — so the offer gate further down must
     // not read them (a message typed over a chip could never get its own
@@ -7208,6 +7290,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           await sbUpdate("athletes",athlete.id,{program_position_override:override});
           updatedAthlete.program_position_override = override;
           setAthlete(prev=>({...prev, program_position_override: override}));
+          // T40: the athlete just moved where "today" is — a pinned lock-screen
+          // card must follow or it's showing the wrong workout. Fire-and-forget;
+          // the reply is already on screen.
+          refreshSessionCard(updatedAthlete, newMsgs);
         }
       } catch(e){
         // NOT silent: a rejected write here is exactly how "I'm on day 3" failed
@@ -7412,6 +7498,25 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             : `If the gear keeps being a problem, the program should stop asking for it. Here's what I'd change:\n\n"${draft.suggestion}"\n\nWant me to make that change?`;
           followUp(offerCopy);
         } catch(e){}
+      }
+
+      // ── T40: lock-screen session card — offer + follow ────────────────────
+      // The offer rides the deterministic intent match (sessionCard.js), never
+      // the model's reply — nothing for the model to get wrong. One offer per
+      // day, never stacked on another pending chip, only when there's a program
+      // to card.
+      if(asksTodaysWorkout(msg) && !chipSetThisSend && sessionCardSupported()
+         && hasProgram && !activeSessionCard(updatedAthlete.id)
+         && !sessionCardDeclinedToday(updatedAthlete.id)){
+        setSessionCardPending(true); chipSetThisSend = true;
+        followUp("Want today's session on your lock screen while you train? It clears itself when you log.");
+      }
+      // An in-chat swap while a card is pinned re-renders it — "subbed dips for
+      // pushdowns" must reach the lock screen in real time. The position-claim
+      // hook above covers day corrections; this covers exercise changes.
+      else if(activeSessionCard(updatedAthlete.id)
+         && /\bsub(?:bed|bing|stitut\w*)?\b|\bswap(?:ped|ping)?\b|\binstead of\b|\breplac(?:e|ed|ing)\b/i.test(msg)){
+        refreshSessionCard(updatedAthlete, newMsgs);
       }
 
       // Temporary adapted program — conditions described, extract program from Joe-bot's reply.
@@ -8087,6 +8192,18 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <button onClick={()=>confirmChangeRequest(false)}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Don't send
+          </button>
+        </div>
+      ):sessionCardPending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={()=>answerSessionCardOffer(true)}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            🔒 Put it on my lock screen
+          </button>
+          <button onClick={()=>answerSessionCardOffer(false)}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            No thanks
           </button>
         </div>
       ):correctionPending?(
@@ -9082,6 +9199,20 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
     document.addEventListener("visibilitychange", onHide);
     return ()=>{ clearTimeout(t); document.removeEventListener("visibilitychange", onHide); };
   },[draft,notes,undoStack,prep,phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // T40: a pinned lock-screen card mirrors the draft — edits here (a swapped
+  // exercise, a changed weight, an "I did day 2" rebuild) replace the card
+  // silently. Deterministic: the new draft text renders straight to the same
+  // notification tag, no AI involved.
+  useEffect(()=>{
+    if(demo||phase!=="ready"||logDate) return; // a backdated draft never touches today's card
+    if(!activeSessionCard(athlete.id)) return;
+    const t = setTimeout(()=>{
+      const card = buildSessionCard(draft, {week: draftPosRef.current?.week ?? null});
+      if(card) showSessionCard(athlete.id, card);
+    }, 900); // debounced past the parking flush so a keystroke burst renders once
+    return ()=>clearTimeout(t);
+  },[draft,phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Closing is a save point, so flush synchronously — the debounce above may not have
   // fired yet and unmounting kills its timer.
