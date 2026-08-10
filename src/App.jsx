@@ -541,6 +541,32 @@ const crewWriteMoments = async (athlete, moments) => {
 export const snapshotProgram = (athleteId, text, source, opts = {}) => {
   snapshotProgramHistory({ athleteId, text, source, ...opts }, { sbRead, sbInsert, sbUpdateWhere, askClaude })
     .catch((e) => console.error("[program-history] snapshot failed:", e?.message || e));
+  // RECENT CHANGES audit trail (Will, 08-10): every user-visible program save also
+  // drops a one-line program_modifications row, so the Program tab's strip shows
+  // ALL edits, not just the automated ones. pr_propagation and correction_reversal
+  // write their own richer rows at the call site; backfill/next_block are
+  // bookkeeping, not edits — both stay out of PROGRAM_MOD_DESC on purpose.
+  const desc = PROGRAM_MOD_DESC[source];
+  if (desc) {
+    sbInsert("program_modifications", {
+      athlete_id: athleteId,
+      modification_type: source,
+      description: desc,
+      new_value: String(text || "").slice(0, 500) || null,
+    }).catch((e) => console.error("[program-mods] log failed:", e?.message || e));
+  }
+};
+const PROGRAM_MOD_DESC = {
+  manual_edit: "You edited your program",
+  chat_save: "Program saved from chat",
+  chat_replace: "Program replaced from chat",
+  chat_append: "Days added from chat",
+  chat_create: "Joe wrote you a new program in chat",
+  self_change: "You applied Joe's change",
+  checkin_change: "Changed at check-in with Joe",
+  builder: "New program from the Builder",
+  coach_save: "Your coach updated your program",
+  goal_change: "Program updated for your new goal",
 };
 
 // Authenticated identity/login calls go through our server (api/identity.js),
@@ -10189,6 +10215,7 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
   const [err,setErr] = useState("");
   const [editingName,setEditingName] = useState(null); // phase id being renamed
   const [nameInput,setNameInput] = useState("");
+  const [delArm,setDelArm] = useState(null);         // past-phase id armed for delete
   const backfilledRef = useRef(false);
 
   const load = () => {
@@ -10254,6 +10281,18 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       await sbUpdateWhere("program_history",`?id=eq.${b.id}`,{block_name:n});
       setBlocks(prev=>prev.map(x=>x.id===b.id?{...x,block_name:n}:x));
     } catch(e){ setErr("Couldn't save the name, try again."); }
+  };
+
+  // Delete is offered on PAST phases only — the current (open) phase is what the
+  // position engine resolves against, so removing it would orphan week/day tracking.
+  const deleteBlock = async (b) => {
+    if(busy||!b.completed_at) return;
+    setBusy(true); setErr(""); setDelArm(null);
+    try {
+      await sbDelete("program_history",`?id=eq.${b.id}&athlete_id=eq.${athlete.id}`);
+      setBlocks(prev=>prev.filter(x=>x.id!==b.id));
+    } catch(e){ setErr("Couldn't delete that phase, try again in a sec."); }
+    setBusy(false);
   };
 
   const advancePhase = async () => {
@@ -10325,6 +10364,21 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       {isCurrent&&nextArm&&(
         <div style={{color:CA.muted,fontSize:11.5,lineHeight:1.6,marginTop:8}}>
           This closes the current phase: Joe writes its recap from your logs (what moved, where the goal stands) and a fresh phase starts on the same program. Do this when you're moving on, like phase 1 → phase 2 of a bigger plan.
+        </div>
+      )}
+      {!isCurrent&&b.completed_at&&(
+        <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8,flexWrap:"wrap"}}>
+          {delArm===b.id?(
+            <>
+              <button onClick={()=>deleteBlock(b)} disabled={busy} style={miniBtn(true,CA.red)}>{busy?"Deleting…":"Really delete"}</button>
+              <button onClick={()=>setDelArm(null)} style={miniBtn(false)}>Keep</button>
+              <span style={{color:CA.muted,fontSize:10.5}}>Removes this phase from your history. Logged workouts stay.</span>
+            </>
+          ):(
+            <button onClick={()=>setDelArm(b.id)}
+              title="Wrong or duplicate phase? Remove it from your history."
+              style={{background:"none",border:"none",color:CA.faint,fontSize:10.5,cursor:"pointer",padding:0,fontFamily:"'Inter'"}}>Delete</button>
+          )}
         </div>
       )}
     </div>
