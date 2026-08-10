@@ -1983,9 +1983,33 @@ export const propagateForPRs = async (programText, prs) => {
 // string case, and their letterSpacing was hand-tuned for caps. Inter honours the source
 // case, so without this the whole app silently drops to Title Case with tracking meant
 // for capitals. Keeping caps preserves the design AND matches the all-caps wordmark.
-export const DISP = { fontFamily:"'Inter',system-ui,-apple-system,sans-serif", fontWeight:800, textTransform:"uppercase" };
+// ─── DARK MODE (Will, 08-10) ─────────────────────────────────────────────────
+// The pre-rebrand "night gym" aesthetic, frozen exactly as it shipped (values from
+// 6c8737d), behind a Settings toggle. The theme is chosen ONCE at module eval —
+// GS/GSA and dozens of style constants bake CA values in at import time, so a live
+// swap can't work; the toggle writes the flag and reloads instead. Device-local by
+// design (same trust level as the rank-up claim state). Dark is a FREEZE, not a
+// maintained theme: new features style against the light tokens and inherit dark
+// through them.
+export const THEME_KEY = "wilco_theme";
+export const IS_DARK = (() => { try { return localStorage.getItem(THEME_KEY) === "dark"; } catch (_) { return false; } })();
+export const setDarkTheme = (on) => { try { localStorage.setItem(THEME_KEY, on ? "dark" : "light"); } catch (_) {} location.reload(); };
 
-export const CA = {
+export const DISP = IS_DARK
+  ? { fontFamily:"'Bebas Neue','Inter',system-ui,-apple-system,sans-serif", fontWeight:400, textTransform:"uppercase" }
+  : { fontFamily:"'Inter',system-ui,-apple-system,sans-serif", fontWeight:800, textTransform:"uppercase" };
+
+const CA_DARK = {
+  navy:"#04060c", navy2:"#0a0f1d", navy3:"#0e1830", border:"#182543",
+  line2:"#25375d", gold:"#3a7bff",
+  green:"#10b981", red:"#ef4444",
+  text:"#e6ecf6", muted:"#7c8aa3", muted2:"#aeb9cf", blue:"#6aa0ff",
+  accent:"#3a7bff", cyan:"#37e6ff", led:"#eaf3ff", steel:"#7a8798", faint:"#55637d",
+  amber:"#f5a623",
+  onAccent:"#04070f",                   // the old hardcoded near-black ink on the BRIGHT blue fill
+};
+
+const CA_LIGHT = {
   navy:"#EFEFEF",                       // base ground (body)      ← was #04060c
   navy2:"#FFFFFF",                      // card / panel surface    ← was #0a0f1d
   navy3:"#F7F4EF",                      // raised cream surface    ← was #0e1830
@@ -2009,16 +2033,18 @@ export const CA = {
                                          // its primary button was BRIGHT blue; on the navy
                                          // fill that is unreadable. Cream is 7.33:1 = AAA.
 };
-// Primary-button skin. FLAT, not a gradient — the brand bans gradients outright.
-// Kept as a string so all 37 call sites that pass it to `background` still work.
-export const CA_BTN = CA.accent;
-// Was a blue glow behind buttons. The brand bans drop shadows and glows, and a glow on
-// a light ground reads as muddy blur rather than depth. Neutralised centrally so the
-// ~30 `boxShadow: "0 4px 16px " + CA_GLOW` call sites go flat without being touched.
-export const CA_GLOW = "transparent";
-// Chat bubble / avatar fills — flattened from gradients for the same reason.
-export const CA_BUBBLE = CA.accent;   // user message bubble
-export const CA_AVATAR = CA.accent;   // assistant avatar circle
+export const CA = IS_DARK ? CA_DARK : CA_LIGHT;
+// Primary-button skin. FLAT on the light brand (gradients are banned there); the dark
+// freeze keeps its original gradient. Kept as strings so all 37 `background` call
+// sites work either way.
+export const CA_BTN = IS_DARK ? "linear-gradient(180deg,#57a0ff,#2a63e6)" : CA.accent;
+// Was a blue glow behind buttons. The light brand bans glows, so it's transparent
+// there and the ~30 `boxShadow: "0 4px 16px " + CA_GLOW` call sites go flat without
+// being touched; the dark freeze restores the bloom the same way.
+export const CA_GLOW = IS_DARK ? "rgba(58,123,255,.5)" : "transparent";
+// Chat bubble / avatar fills — flat on light, original gradients on dark.
+export const CA_BUBBLE = IS_DARK ? "linear-gradient(180deg,#3f7bff,#2258e0)" : CA.accent;   // user message bubble
+export const CA_AVATAR = IS_DARK ? "linear-gradient(135deg,#3f7bff,#123a9e)" : CA.accent;   // assistant avatar circle
 // Fonts (Inter, variable 300-700) load from index.html — an @import
 // here would sit unread until the whole JS bundle parses, delaying first text paint.
 export const GS = `
@@ -3628,8 +3654,14 @@ function WilcoRoot() {
               exact fidelity to the real logo (no font-substitution risk, no FOUT),
               and zero font-licensing exposure — outlined artwork embeds no font,
               so this ships today without waiting on the Sifonn Pro licence. */}
-          <img src={WORDMARK} alt="WILCO" width={193} height={45}
+          {IS_DARK ? (
+            /* Dark freeze: the navy wordmark ink is invisible on near-black, so the
+               masthead reverts to the old typeset treatment (Bebas + LED + glow). */
+            <div style={{...DISP,fontSize:46,color:CA.led,letterSpacing:6,textShadow:`0 0 24px ${CA_GLOW}`}}>WILCO</div>
+          ) : (
+            <img src={WORDMARK} alt="WILCO" width={193} height={45}
                style={{display:"block",margin:"0 auto",height:45,width:"auto"}}/>
+          )}
           <div style={{color:PW.muted,fontSize:12,fontWeight:400,letterSpacing:4,marginTop:12}}>COACH JOE-BOT</div>
         </div>
         {view==="home"      && <HomeScreen setView={setView} setAthlete={setAthlete} setCoach={setCoach}/>}
@@ -12192,6 +12224,17 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
 
         {/* Proof Feed schedule (Phase 6) */}
         <div style={{marginBottom:16}}>
+          <div className="setgrp" style={{marginBottom:8}}>APPEARANCE</div>
+          <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:"13px 16px",display:"flex",alignItems:"center",gap:14,marginBottom:26}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13.5,color:CA.text}}>Dark mode</div>
+              <div style={{color:CA.muted,fontSize:12,marginTop:2}}>The original WILCO look. Flips the whole app on this device.</div>
+            </div>
+            <button onClick={()=>setDarkTheme(!IS_DARK)}
+              style={{background:IS_DARK?CA_BTN:"transparent",color:IS_DARK?CA.onAccent:CA.muted,border:`1px solid ${IS_DARK?CA.accent:CA.border}`,boxShadow:IS_DARK?`0 4px 16px ${CA_GLOW}`:"none",borderRadius:9,padding:"8px 16px",fontWeight:700,fontSize:12.5,cursor:"pointer",fontFamily:"'Inter'"}}>
+              {IS_DARK?"On":"Off"}
+            </button>
+          </div>
           <div className="setgrp" style={{marginBottom:8}}>PROOF FEED</div>
           <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"12px 14px"}}>
             <label style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer",marginBottom:proofEnabled?12:0}}>

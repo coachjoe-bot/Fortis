@@ -23,7 +23,17 @@ import { useEffect, useState } from "react";
 
 // REBRAND 2026-08-07. These MUST be kept in sync by hand with CA in App.jsx — the
 // comment above explains why this file cannot import them. If CA changes, change these.
-const T = {
+// DARK MODE (Will, 08-10): same hand-sync constraint applies to the theme flag — this
+// re-reads the localStorage key App.jsx's IS_DARK reads, values frozen from 6c8737d.
+const TOUR_DARK = (() => { try { return localStorage.getItem("wilco_theme") === "dark"; } catch (_) { return false; } })();
+const T = TOUR_DARK ? {
+  navy2:"#0a0f1d", navy3:"#0e1830", border:"#182543",
+  text:"#e6ecf6", muted:"#7c8aa3", muted2:"#aeb9cf",
+  accent:"#3a7bff", cyan:"#37e6ff",
+  btn:"linear-gradient(180deg,#57a0ff,#2a63e6)",
+  glow:"rgba(58,123,255,.5)",
+  onAccent:"#04070f",
+} : {
   navy2:"#FFFFFF", navy3:"#F7F4EF", border:"#D9D2C7",
   text:"#1F2A37", muted:"#6B7280", muted2:"#4B5563",
   accent:"#28508B", cyan:"#5B7FB5",
@@ -33,8 +43,8 @@ const T = {
 };
 // Spotlight scrim. Still a DARK dim even though the app is now light — a spotlight has
 // to suppress everything around the cutout, and dimming light-on-light reads as nothing.
-// Dropped 0.82 -> 0.55 and moved off near-black onto the brand ink.
-const DIM = "rgba(31,42,55,0.55)";
+// Dropped 0.82 -> 0.55 and moved off near-black onto the brand ink (dark keeps 0.82).
+const DIM = TOUR_DARK ? "rgba(2,5,15,0.82)" : "rgba(31,42,55,0.55)";
 
 // ── SAMPLE DATA (Quick Log demo) ─────────────────────────────────────────────
 // One believable bench day. Number-first like a real draft; the top single is

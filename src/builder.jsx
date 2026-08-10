@@ -19,7 +19,7 @@
 //   after the pane unmounts and parks the finished draft straight to the DB, so
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { CA, CA_BTN, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
+import { CA, CA_BTN, IS_DARK, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs } from "./grit.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
@@ -706,8 +706,9 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
 // import list above to keep the mirrored-file diff tight — same value).
 // REBRAND 2026-08-07: was "rgba(58,123,255,.5)" (the old electric-blue glow). This is a
 // hand-copy of App.jsx's CA_GLOW, so it does NOT track the export and has to be updated
-// alongside it. Glows are banned by the brand, so it is now inert like its twin.
-const CA_GLOW_SAFE = "transparent";
+// alongside it. Glows are banned by the light brand (inert there); the dark-mode
+// freeze (Will, 08-10) restores the original bloom, same as its twin.
+const CA_GLOW_SAFE = IS_DARK ? "rgba(58,123,255,.5)" : "transparent";
 
 // ─── EDIT A PROGRAM (Builder sub-mode, Will 07-30) ───────────────────────────
 // The other half of the Builder tab: you already HAVE a program, you just want

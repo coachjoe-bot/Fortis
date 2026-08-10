@@ -5,7 +5,7 @@
 // the dynamic import means the cycle App→coach→App is resolved at load time.
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import {
-  CA, CA_BTN, CA_GLOW, GS, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
+  CA, CA_BTN, CA_GLOW, GS, IS_DARK, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
 } from "./App.jsx";
 // Program Builder (Phase C) — lazy so the doctrine text + Builder UI download
 // only when a coach actually opens the Builder subtab.
@@ -1515,6 +1515,20 @@ function CoachDashboard({coach,onLogout}) {
                     </div>
                   </div>
                   <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>Turn Crew off and it disappears from every athlete you coach. Turn it back on and it returns with everything still there.</div>
+
+                  <div style={{display:"flex",alignItems:"center",gap:12,margin:"26px 2px 12px"}}>
+                    <span style={{fontSize:10.5,letterSpacing:1.4,textTransform:"uppercase",color:CA.accent,fontWeight:700}}>Appearance</span>
+                    <span style={{height:1,background:CA.border,flex:1}}/>
+                  </div>
+                  <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:14,padding:"13px 16px"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:700,fontSize:13.5,color:CA.text}}>Dark mode</div>
+                        <div style={{color:CA.muted,fontSize:12,marginTop:2,lineHeight:1.5}}>The original WILCO look. Flips the whole app on this device.</div>
+                      </div>
+                      <Toggle on={IS_DARK} onClick={()=>setDarkTheme(!IS_DARK)}/>
+                    </div>
+                  </div>
                 </div>
               );
             })()}
