@@ -147,13 +147,13 @@ const PRIVACY_URL = "https://trainwilco.com/privacy";
 const SCHOOL_PRICE_ID = "price_1TbNnkRlrDCVlwEBUiO5txAx"; // School plan — billed via invoice, no in-app charge
 // Display-only price labels (the server is the source of truth for actual price IDs).
 const PRICE_LABEL = {
-  pro:   { monthly: "$14.99/month", annual: "$150.00/year" },
+  pro:   { monthly: "$14.99/month", annual: "$99.00/year" },
   elite: { monthly: "$99.99/month", annual: "$1,000.00/year" },
 };
 // Same prices in cents — the payment disclosure does real math against a discount
 // (a code's amount_off, say) instead of hardcoding one offer's arithmetic.
 const PRICE_CENTS = {
-  pro:   { monthly: 1499, annual: 15000 },
+  pro:   { monthly: 1499, annual: 9900 },
   elite: { monthly: 9999, annual: 100000 },
 };
 const usd = (cents) => `$${(cents / 100).toFixed(2)}`;
@@ -163,7 +163,7 @@ const SPORTS = ["Football","Basketball","Volleyball","Soccer","Baseball","Archer
 // ─── TIERS ────────────────────────────────────────────────────────────────────
 const TIERS = {
   free:  { label:"FREE",  color:"#6b7280", price:"Free",        priceNote:"No credit card needed",            badge:"FREE"  },
-  pro:   { label:"PRO",   color:"#d4a017", price:"$14.99/mo",   priceNote:"or $150/yr · Cancel anytime",      badge:"PRO"   },
+  pro:   { label:"PRO",   color:"#d4a017", price:"$14.99/mo",   priceNote:"or $99/yr · Cancel anytime",       badge:"PRO"   },
   elite: { label:"ELITE", color:"#3b82f6", price:"$99.99/mo",   priceNote:"or $1,000/yr · Cancel anytime",    badge:"ELITE" },
 };
 
@@ -4494,7 +4494,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
     const annual = data.billing==="annual";
     const pricing = {
       free:  {monthly:"Free",        annual:"Free",       monthlyNote:"No credit card needed", annualNote:"No credit card needed"},
-      pro:   {monthly:"$14.99/mo",   annual:"$150/yr",    monthlyNote:"Billed monthly",        annualNote:"~$12.50/mo · Save $30"},
+      pro:   {monthly:"$14.99/mo",   annual:"$99/yr",     monthlyNote:"Billed monthly",        annualNote:"~$8.25/mo · Save $81"},
       elite: {monthly:"$99.99/mo",   annual:"$1,000/yr",  monthlyNote:"Billed monthly",        annualNote:"~$83/mo · Save ~$200"},
     };
     const p = pricing[tierKey];
@@ -12421,7 +12421,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
               const isSelected = selectedTier===key;
               const pricing = {
                 free:{monthly:"Free",annual:"Free"},
-                pro:{monthly:"$14.99/mo",annual:"$150/yr"},
+                pro:{monthly:"$14.99/mo",annual:"$99/yr"},
                 elite:{monthly:"$99.99/mo",annual:"$1,000/yr"},
               };
               const tierFeatures = {

@@ -51,7 +51,7 @@ async function ensurePrice(product, nickname, unit_amount, interval) {
   const schoolProd = await ensureProduct("School (TEST)");
 
   const proM   = await ensurePrice(proProd,   "Pro Monthly",   1499,   "month");
-  const proA   = await ensurePrice(proProd,   "Pro Annual",    15000,  "year");
+  const proA   = await ensurePrice(proProd,   "Pro Annual",    9900,   "year");
   const eliteM = await ensurePrice(eliteProd, "Elite Monthly", 9999,   "month");
   const eliteA = await ensurePrice(eliteProd, "Elite Annual",  100000, "year");
   const school = await ensurePrice(schoolProd,"School",        0,      "month");
