@@ -312,7 +312,7 @@ export const isMinorBirthday = (birthday) => {
 const localBtn = (bg, color, extra = {}) => ({
   background: bg, color, border: "none", borderRadius: 12, padding: "14px",
   fontWeight: 700, fontSize: 16, cursor: "pointer", width: "100%",
-  fontFamily: "'Bebas Neue'", letterSpacing: 2, ...extra,
+  ...DISP, letterSpacing: 2, ...extra,
 });
 
 // Render a document: title lines as gold headers, "N." / "N.N" lines as section
@@ -327,7 +327,7 @@ function LegalDocBody({ C, text }) {
         const isTitle = /^(WILCO TRAINING LLC|Terms of Service and Liability Waiver|Privacy Policy)$/.test(t);
         const isEffective = /^Effective Date:/.test(t);
         const isSection = /^\d+(\.\d+)*\.?\s+\S/.test(t);
-        if (isTitle) return <div key={i} style={{ color: C.gold, fontFamily: "'Bebas Neue'", fontSize: 20, letterSpacing: 1, marginTop: i ? 16 : 0, marginBottom: 4 }}>{t}</div>;
+        if (isTitle) return <div key={i} style={{ color: C.gold, ...DISP, fontSize: 20, letterSpacing: 1, marginTop: i ? 16 : 0, marginBottom: 4 }}>{t}</div>;
         if (isEffective) return <div key={i} style={{ color: C.muted2, fontSize: 12, marginBottom: 10 }}>{t}</div>;
         if (isSection) return <div key={i} style={{ color: C.text, fontWeight: 700, fontSize: 14, marginTop: 14, marginBottom: 4 }}>{t}</div>;
         return <p key={i} style={{ color: C.muted2, fontSize: 13, lineHeight: 1.7, marginBottom: 8 }}>{t}</p>;
@@ -362,7 +362,7 @@ export function LegalModal({ C, kicker, title, text, parental, checkboxLabel, pr
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: C.navy, display: "flex", flexDirection: "column", maxWidth: 600, margin: "0 auto" }}>
       <div style={{ padding: "calc(16px + env(safe-area-inset-top,0px)) 20px 12px", borderBottom: `1px solid ${C.border}` }}>
-        {kicker && <div style={{ color: C.gold, fontFamily: "'Bebas Neue'", fontSize: 13, letterSpacing: 2, marginBottom: 4 }}>{kicker}</div>}
+        {kicker && <div style={{ color: C.gold, ...DISP, fontSize: 13, letterSpacing: 2, marginBottom: 4 }}>{kicker}</div>}
         <div style={{ color: C.text, fontSize: 18, fontWeight: 700 }}>{title}</div>
       </div>
       <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "16px 20px" }}>

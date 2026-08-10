@@ -46,13 +46,12 @@ const doctrineFor = (topic) => DOC_CORE + (topic && TOPICS[topic] ? `\n\n${TOPIC
 // injection on the athlete side is a no-op). bscan = the drafting screen's
 // indeterminate charge sweep.
 const BUILDER_CSS = `
-.htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:linear-gradient(180deg,#070d18,#05080f);}
+.htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:${CA.navy3};}
 .htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
-.hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 62%,#000),var(--tc));box-shadow:0 0 calc(8px + var(--tb,0)*22px) var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
-.hfill::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 13px,transparent 13px 16px);opacity:.45;}
+.hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:var(--tc);transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
 .hcell.go .hfill{transform:scaleX(var(--pct,0));}
 @keyframes bscan{0%{transform:translateX(-105%);}100%{transform:translateX(305%);}}
-.bscan{position:absolute;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,${CA.accent},transparent);box-shadow:0 0 18px ${CA.accent};animation:bscan 1.5s ease-in-out infinite;}
+.bscan{position:absolute;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,${CA.accent},transparent);opacity:.5;animation:bscan 1.5s ease-in-out infinite;}
 @keyframes bfade{0%{opacity:0;transform:translateY(3px);}12%{opacity:1;transform:none;}88%{opacity:1;}100%{opacity:0;}}
 .bline{animation:bfade 2.6s ease-in-out both;}
 @media (prefers-reduced-motion: reduce){.hcell.go .hfill{transform:scaleX(var(--pct,0))!important;transition:none!important;}.bscan{animation:none;left:33%;}.bline{animation:none;}}
@@ -488,8 +487,8 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   // ── UI atoms ───────────────────────────────────────────────────────────────
   const mono = { fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace" };
   const subhead = { ...mono, fontSize: 9, letterSpacing: 2, color: CA.muted, textTransform: "uppercase" };
-  const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "'DM Sans'" });
-  const priBtn = { background: CA_BTN, color: "#02040c", border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "'Bebas Neue'", letterSpacing: 1 };
+  const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily:"'Inter'" });
+  const priBtn = { background: CA_BTN, color:CA.onAccent, border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, ...DISP, letterSpacing: 1 };
   const cellTube = (charged, pending) => (
     <div className={`hcell${go ? " go" : ""}`}>
       <div className="htube" style={{ height: 10 }}>
@@ -511,9 +510,9 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       <style>{BUILDER_CSS}</style>
 
       {/* ── Blueprint console: master cell + sub-cells ── */}
-      <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: 13, background: "rgba(5,10,24,.55)", flexShrink: 0 }}>
+      <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: 13, background: "rgba(31,42,55,0.45)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 7 }}>
-          <span style={{ fontFamily: "'Bebas Neue'", fontSize: 15, letterSpacing: 1.5, color: CA.text }}>BLUEPRINT</span>
+          <span style={{ ...DISP, fontSize: 15, letterSpacing: 1.5, color: CA.text }}>BLUEPRINT</span>
           <span title="The Builder is brand new — double-check what Joe writes and tell us if something feels off."
             style={{ ...mono, fontSize: 7.5, letterSpacing: 1, color: CA.amber, border: `1px solid ${CA.amber}88`, borderRadius: 4, padding: "1px 4px" }}>BETA</span>
           <span style={{ ...mono, fontSize: 11, color: pct === 100 ? CA.led : CA.accent }}>{pct}%</span>
@@ -586,8 +585,8 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
 
       {/* ── Drafting: Joe writes in the background — leaving is safe ── */}
       {phase === "drafting" && (
-        <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: "22px 18px", background: "rgba(5,10,24,.55)", display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ fontFamily: "'Bebas Neue'", fontSize: 17, letterSpacing: 2, color: CA.text }}>⚡ JOE'S WRITING YOUR BLOCK</div>
+        <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: "22px 18px", background: "rgba(31,42,55,0.45)", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ ...DISP, fontSize: 17, letterSpacing: 2, color: CA.text }}>⚡ JOE'S WRITING YOUR BLOCK</div>
           <div className="htube" style={{ height: 14 }}>
             <div className="bscan" />
           </div>
@@ -604,7 +603,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
           {confirmSave ? (
             <div style={{ overflowY: "auto" }}>
               <div style={subhead}>Review — replaces the current program</div>
-              <div style={{ border: `1px solid ${CA.border}`, borderRadius: 10, background: "rgba(5,10,24,.5)", padding: "10px 12px", maxHeight: 260, overflowY: "auto", margin: "8px 0 10px" }}>
+              <div style={{ border: `1px solid ${CA.border}`, borderRadius: 10, background: "rgba(31,42,55,0.4)", padding: "10px 12px", maxHeight: 260, overflowY: "auto", margin: "8px 0 10px" }}>
                 {confirmSave.map((d, i) => (
                   <div key={i} style={{ ...mono, fontSize: 11.5, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: d.type === "add" ? CA.green : d.type === "del" ? CA.red : CA.muted, opacity: d.type === "same" ? 0.55 : 1 }}>
                     {d.type === "add" ? "+ " : d.type === "del" ? "− " : "  "}{d.text || " "}
@@ -612,7 +611,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
                 ))}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={saveToProgram} disabled={busy} style={{ ...priBtn, background: busy ? CA.navy3 : CA_BTN, color: busy ? CA.muted : "#02040c", cursor: busy ? "wait" : "pointer" }}>{busy ? "SAVING…" : "REPLACE PROGRAM"}</button>
+                <button onClick={saveToProgram} disabled={busy} style={{ ...priBtn, background: busy ? CA.navy3 : CA_BTN, color:busy ? CA.muted : CA.onAccent, cursor: busy ? "wait" : "pointer" }}>{busy ? "SAVING…" : "REPLACE PROGRAM"}</button>
                 <button onClick={() => setConfirmSave(null)} style={miniBtn(false)}>Back to draft</button>
               </div>
             </div>
@@ -624,7 +623,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
               <div style={{ display: "flex", gap: 6 }}>
                 <input value={editReq} onChange={e => setEditReq(e.target.value)} onKeyDown={e => { if (e.key === "Enter") tellJoe(); }}
                   placeholder='Tell Joe what to change — "swap day 2 to dumbbells"'
-                  style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily: "'DM Sans'" }} />
+                  style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily:"'Inter'" }} />
                 <button onClick={tellJoe} disabled={busy || !editReq.trim()} style={miniBtn(!!editReq.trim())}>{busy ? "…" : "Apply"}</button>
               </div>
               {err && <div style={{ color: CA.red, fontSize: 11.5 }}>{err}</div>}
@@ -678,7 +677,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
             <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") send(); }} disabled={busy || phase === "boot"}
               placeholder="Answer Joe…"
-              style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 13, outline: "none", fontFamily: "'DM Sans'" }} />
+              style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 13, outline: "none", fontFamily:"'Inter'" }} />
             <button onClick={() => send()} disabled={busy || !input.trim()} style={{ ...miniBtn(!!input.trim()), padding: "8px 14px" }}>Send</button>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
@@ -705,7 +704,10 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
 
 // Glow color for the DRAFT IT button (CA_GLOW lives in App.jsx but isn't in the
 // import list above to keep the mirrored-file diff tight — same value).
-const CA_GLOW_SAFE = "rgba(58,123,255,.5)";
+// REBRAND 2026-08-07: was "rgba(58,123,255,.5)" (the old electric-blue glow). This is a
+// hand-copy of App.jsx's CA_GLOW, so it does NOT track the export and has to be updated
+// alongside it. Glows are banned by the brand, so it is now inert like its twin.
+const CA_GLOW_SAFE = "transparent";
 
 // ─── EDIT A PROGRAM (Builder sub-mode, Will 07-30) ───────────────────────────
 // The other half of the Builder tab: you already HAVE a program, you just want
@@ -737,8 +739,8 @@ export function ProgramEditPane({ athlete, viewer = "athlete", onSaveToProgram }
 
   const mono = { fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace" };
   const subhead = { ...mono, fontSize: 9, letterSpacing: 2, color: CA.muted, textTransform: "uppercase" };
-  const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: active ? "pointer" : "not-allowed", fontSize: 11.5, fontWeight: 600, fontFamily: "'DM Sans'" });
-  const priBtn = { background: CA_BTN, color: "#02040c", border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "'Bebas Neue'", letterSpacing: 1 };
+  const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: active ? "pointer" : "not-allowed", fontSize: 11.5, fontWeight: 600, fontFamily:"'Inter'" });
+  const priBtn = { background: CA_BTN, color:CA.onAccent, border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, ...DISP, letterSpacing: 1 };
 
   const start = () => {
     const t = paste.trim();
@@ -866,7 +868,7 @@ QUESTION: <one short question>`;
             <div style={{ ...mono, fontSize: 9, letterSpacing: 2, color: CA.accent, textTransform: "uppercase" }}>
               Proposed change · {proposal.stats.added} added, {proposal.stats.removed} removed
             </div>
-            <div style={{ maxHeight: 220, overflowY: "auto", background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "8px 10px" }}>
+            <div style={{ maxHeight: 220, overflowY: "auto", background: "rgba(31,42,55,0.18)", borderRadius: 8, padding: "8px 10px" }}>
               {proposal.diff.filter(d => d.type !== "same").length === 0
                 ? <div style={{ color: CA.muted, fontSize: 11 }}>No line-level differences.</div>
                 : proposal.diff.map((d, i) => d.type === "same" ? null : (
@@ -885,7 +887,7 @@ QUESTION: <one short question>`;
         <div style={{ display: "flex", gap: 6 }}>
           <input value={ask} onChange={e => setAsk(e.target.value)} onKeyDown={e => { if (e.key === "Enter") propose(); }}
             placeholder={'e.g. "swap day 2 to dumbbells"'}
-            style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily: "'DM Sans'" }} />
+            style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily:"'Inter'" }} />
           <button onClick={propose} disabled={busy || !ask.trim()} style={miniBtn(!busy && !!ask.trim())}>{busy ? "…" : "Ask"}</button>
         </div>
         {err && <div style={{ color: CA.red, fontSize: 12 }}>{err}</div>}
