@@ -7,7 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1B1DD1C97AEDF3A3F0234E71 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B1FD75663CEF6A34B4FE3EE2 /* Foundation.framework */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		33503DD033294BAE4D2E0ED3 /* SessionCardWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B36D11220DF95BC2FE5AF4BB /* SessionCardWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		405F9FCD9A002AA67369337D /* SessionCardAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F28601D29D8FF76C8DBC20A /* SessionCardAttributes.swift */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -15,9 +18,40 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		5A954D08D88EB1255319279F /* SessionCardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 192C414D768DE27DA9995BB0 /* SessionCardViewController.swift */; };
+		BFA089EAAC14CCBEF279160B /* SessionCardAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F28601D29D8FF76C8DBC20A /* SessionCardAttributes.swift */; };
+		DC6329B01227B670CFCB85C4 /* SessionCardLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01F4FB91C3D938EE7F42B779 /* SessionCardLiveActivity.swift */; };
+		F1DA16A5BAEF68EE8522CCE0 /* SessionCardPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA19DC55181E81D515C3399 /* SessionCardPlugin.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		32EAC9694237F30C8047C9CA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B7E415A5C4F91D33573A8AAE;
+			remoteInfo = SessionCardWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E06FF7DCA547A6ED5D6E1A35 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				33503DD033294BAE4D2E0ED3 /* SessionCardWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		01F4FB91C3D938EE7F42B779 /* SessionCardLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardLiveActivity.swift; sourceTree = "<group>"; };
+		0AA19DC55181E81D515C3399 /* SessionCardPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardPlugin.swift; sourceTree = "<group>"; };
+		192C414D768DE27DA9995BB0 /* SessionCardViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardViewController.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -27,10 +61,22 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		5F28601D29D8FF76C8DBC20A /* SessionCardAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardAttributes.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		B1FD75663CEF6A34B4FE3EE2 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		B36D11220DF95BC2FE5AF4BB /* SessionCardWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SessionCardWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ED5A498C87EC1FEE1D455088 /* Widget-Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = "Widget-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		1FFC1B7BF2F1AB2703E72913 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1B1DD1C97AEDF3A3F0234E71 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3011FED79650016851F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -42,12 +88,27 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		06CFC3FC90843896249BD1D4 /* WilcoSessionCard */ = {
+			isa = PBXGroup;
+			children = (
+				01F4FB91C3D938EE7F42B779 /* SessionCardLiveActivity.swift */,
+				5F28601D29D8FF76C8DBC20A /* SessionCardAttributes.swift */,
+				0AA19DC55181E81D515C3399 /* SessionCardPlugin.swift */,
+				192C414D768DE27DA9995BB0 /* SessionCardViewController.swift */,
+				ED5A498C87EC1FEE1D455088 /* Widget-Info.plist */,
+			);
+			name = WilcoSessionCard;
+			path = WilcoSessionCard;
+			sourceTree = "<group>";
+		};
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
+				D7F56FBAE7CA25E812D12C29 /* Frameworks */,
+				06CFC3FC90843896249BD1D4 /* WilcoSessionCard */,
 			);
 			sourceTree = "<group>";
 		};
@@ -55,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				B36D11220DF95BC2FE5AF4BB /* SessionCardWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -74,6 +136,22 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		B3146BE239720B90E2C1180F /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				B1FD75663CEF6A34B4FE3EE2 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		D7F56FBAE7CA25E812D12C29 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B3146BE239720B90E2C1180F /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -84,10 +162,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				E06FF7DCA547A6ED5D6E1A35 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AB629940D79F14325177B502 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -96,6 +176,23 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B7E415A5C4F91D33573A8AAE /* SessionCardWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 200C5B4845EE5612409CFCE0 /* Build configuration list for PBXNativeTarget "SessionCardWidget" */;
+			buildPhases = (
+				4F692B0F56B98132921CAA3E /* Sources */,
+				1FFC1B7BF2F1AB2703E72913 /* Frameworks */,
+				7AC85C7BD7BF9A364C812BFC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SessionCardWidget;
+			productName = SessionCardWidget;
+			productReference = B36D11220DF95BC2FE5AF4BB /* SessionCardWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -130,6 +227,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				B7E415A5C4F91D33573A8AAE /* SessionCardWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -148,18 +246,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7AC85C7BD7BF9A364C812BFC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		4F692B0F56B98132921CAA3E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DC6329B01227B670CFCB85C4 /* SessionCardLiveActivity.swift in Sources */,
+				405F9FCD9A002AA67369337D /* SessionCardAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				F1DA16A5BAEF68EE8522CCE0 /* SessionCardPlugin.swift in Sources */,
+				5A954D08D88EB1255319279F /* SessionCardViewController.swift in Sources */,
+				BFA089EAAC14CCBEF279160B /* SessionCardAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB629940D79F14325177B502 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = SessionCardWidget;
+			target = B7E415A5C4F91D33573A8AAE /* SessionCardWidget */;
+			targetProxy = 32EAC9694237F30C8047C9CA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -311,7 +437,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -334,13 +460,75 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		959EAC3971024AAA777B7E0F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 57CPJ36JHX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "WilcoSessionCard/Widget-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "WILCO Session Card";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trainwilco.wilco.SessionCardWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AC11F44F6E4F433EC37025F4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 57CPJ36JHX;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "WilcoSessionCard/Widget-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "WILCO Session Card";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.trainwilco.wilco.SessionCardWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		200C5B4845EE5612409CFCE0 /* Build configuration list for PBXNativeTarget "SessionCardWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC11F44F6E4F433EC37025F4 /* Release */,
+				959EAC3971024AAA777B7E0F /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		504EC2FF1FED79650016851F /* Build configuration list for PBXProject "App" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
