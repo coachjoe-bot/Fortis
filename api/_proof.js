@@ -319,14 +319,15 @@ export async function generateMonthly(athlete, brief, deps) {
   const system = `${COACH_VOICE}
 This is the MONTHLY layer that rides on top of the athlete's weekly digest (already written, do NOT restate it). Window = this month + last month. Return ONLY JSON:
 {"mom":..,"multiweek_patterns":..,"goal_pacing":..}
-- mom: this month vs last month, the comparison the weekly can't make. null if not enough data.
+- mom: this month vs last month — write it FROM the MONTH VS LAST MONTH (COMPUTED) numbers when they're present: name the real session counts, set totals, and the 1-2 biggest lift moves with their numbers. Those numbers are computed by the app and are correct; never invent or adjust them, and never substitute week-scale numbers here. null ONLY if no computed comparison was provided.
 - multiweek_patterns: volume-adherence and injury patterns ACROSS the block (not the single week).
 - goal_pacing: pace toward targets across the whole month/block.
 Keep each to 1-3 punchy sentences. New information only.
 
 ${LOAD_TOLERANCE}`;
 
-  const user = `BRIEF (JSON):\n${JSON.stringify(brief)}\n\nWEEKLY ALREADY COVERS (do not repeat): ${weekly.contentJson.sections.map((s) => s.label).join(", ")}`;
+  const monthFacts = brief.monthCompare ? `\n\nMONTH VS LAST MONTH (COMPUTED — authoritative, write "mom" from these):\n${JSON.stringify(brief.monthCompare)}` : "";
+  const user = `BRIEF (JSON):\n${JSON.stringify(brief)}${monthFacts}\n\nWEEKLY ALREADY COVERS (do not repeat): ${weekly.contentJson.sections.map((s) => s.label).join(", ")}`;
 
   const raw = await deps.askClaudeServer({ system, user, maxTokens: 900, feature: "proof_monthly", attribution: deps.attribution });
   const obj = parseJsonLoose(raw) || {};
@@ -344,7 +345,10 @@ ${LOAD_TOLERANCE}`;
     label: `MONTHLY RECAP: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`,
     contentJson: {
       intro: `${brief.identity.name.split(" ")[0]}, let's zoom out on the month.`,
-      sections: [...weekly.contentJson.sections, ...monthSections],
+      // Month layer FIRST: a monthly edition's identity is the month-over-month
+      // read. With the weekly sections leading, the monthly opened as a rerun of
+      // the weekly and the month content sat below the fold (Will, 2026-08-10).
+      sections: [...monthSections, ...weekly.contentJson.sections],
       // Reuse the weekly bank (already carries the injury focus/change) + month extras.
       questions: [...weekly.contentJson.questions, ...monthlyExtraQuestions(brief)],
       charts: charts.length ? charts : null,

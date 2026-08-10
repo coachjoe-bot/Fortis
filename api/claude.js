@@ -51,9 +51,21 @@ const ALLOWED_MODELS = new Set([
 //   NOTE (Sonnet 5): omitting `thinking` on Sonnet 5 turns adaptive thinking ON
 //   by default — thinking tokens would then eat into max_tokens and could truncate
 //   parse JSON. Keep thinking explicitly disabled on every Sonnet model.
-function modelParams(model) {
+//
+// Effort is PER FEATURE, not per model (2026-08-10). "low" was pinned globally to
+// keep the mechanical extraction calls at the 4.5-equivalent fast/cheap profile —
+// correct for parsing, but it also ran the coach-facing CHAT at minimum reasoning,
+// which is where every "Joe contradicts himself / can't tell what day I'm on /
+// says I never logged a lift while quoting the log" report came from. The
+// conversational surfaces get full effort; extraction stays cheap. Thinking stays
+// explicitly disabled everywhere (streaming + JSON parsing depend on it).
+const HIGH_EFFORT_FEATURES = new Set(["joebot_chat", "coach_checkin"]);
+const MEDIUM_EFFORT_FEATURES = new Set(["proof_weekly", "proof_monthly", "proof_coach"]);
+function modelParams(model, feature) {
   if (model === "claude-sonnet-5" || model === "claude-sonnet-4-6") {
-    return { output_config: { effort: "low" }, thinking: { type: "disabled" } };
+    const effort = HIGH_EFFORT_FEATURES.has(feature) ? "high"
+      : MEDIUM_EFFORT_FEATURES.has(feature) ? "medium" : "low";
+    return { output_config: { effort }, thinking: { type: "disabled" } };
   }
   return {};
 }
@@ -211,7 +223,7 @@ export default async function handler(req, res) {
 
     // 4) Forward ONLY the fields we build here — strip anything else the client
     //    sent. Inference params (effort/thinking) are server-chosen per model.
-    const payload = { model, max_tokens, messages: body.messages, ...modelParams(model) };
+    const payload = { model, max_tokens, messages: body.messages, ...modelParams(model, feature) };
     // Prompt caching: `system_cached` is a STATIC system prefix (identical across
     // calls — e.g. the workout-parse rulebook) marked ephemeral so Anthropic caches
     // it (~90% input discount on hits, 5-min TTL); `system` stays the per-call

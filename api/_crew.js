@@ -389,7 +389,26 @@ export async function buildCrewBlip(athlete, sbSelect = realSbSelect) {
     nameById = Object.fromEntries(nameRows.map((a) => [a.id, (a.name || "").trim().split(" ")[0] || null]));
   } catch { /* names are cosmetic — fall back to "A teammate" per line */ }
 
-  const lines = top.map((m) => templateMomentLine(m, nameById[m.athlete_id]));
-  if (!lines.length) return null;
-  return { text: `Your crew had a week. ${lines.join(". ")}.` };
+  // One sentence per PERSON, not per moment — two top moments from the same
+  // teammate used to print as two robotic back-to-back sentences ("Joe ranked up
+  // on Deadlift at 315lbs. Joe went 6 for 6."), and the canned "Your crew had a
+  // week." opener said nothing. Merge same-person moments with "and", drop the
+  // opener (Will, 2026-08-10).
+  const byPerson = new Map();
+  for (const m of top) {
+    const key = m.athlete_id;
+    if (!byPerson.has(key)) byPerson.set(key, []);
+    byPerson.get(key).push(m);
+  }
+  const sentences = [...byPerson.entries()].map(([id, moments]) => {
+    const name = nameById[id] || "A teammate";
+    const first = templateMomentLine(moments[0], name);
+    if (moments.length === 1) return first;
+    // Second clause without repeating the name: strip the leading "<Name> ".
+    const t = templateMomentLine(moments[1], name);
+    const second = t.startsWith(`${name} `) ? t.slice(name.length + 1) : t;
+    return `${first} and ${second}`;
+  });
+  if (!sentences.length) return null;
+  return { text: `${sentences.join(". ")}.` };
 }

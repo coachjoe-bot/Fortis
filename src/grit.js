@@ -467,6 +467,38 @@ export const getBenchKey = (normalized) => {
 const RESOLVE_CACHE = new Map();
 const RESOLVE_CACHE_MAX = 2000;
 
+// ── chart series for ONE lift: taxonomy-exact, one point per day ─────────────
+// Replaces the check-in chart's substring match ("snatch" absorbed Snatch-Grip
+// Deadlift, Snatch Pull and Power Snatch), which graphed several different
+// movements as one lift and printed impossible est-1RMs (Will, 2026-08-10).
+// Matching goes through resolveLift so only entries resolving to the same lift id
+// plot, and bestE1RMForExercise supplies the value (working sets only, rep-capped —
+// the same number every other progress surface shows). One point per calendar day
+// (the day's max), so two same-day entries can't duplicate an x-axis label.
+export const liftSeriesPoints = (rows, liftName, { limit = 8, bwLbs = 0 } = {}) => {
+  const targetId = resolveLift(liftName).id;
+  const byDay = new Map();
+  for (const w of rows || []) {
+    const pd = typeof w?.parsed_data === "string"
+      ? (() => { try { return JSON.parse(w.parsed_data); } catch { return {}; } })()
+      : (w?.parsed_data || {});
+    for (const ex of pd.exercises || []) {
+      if (!ex.name) continue;
+      if (resolveLift(ex.name).id !== targetId) continue;
+      const e1 = bestE1RMForExercise(ex, bwLbs);
+      if (!e1) continue;
+      const day = new Date(effectiveDate(w));
+      day.setHours(0, 0, 0, 0);
+      const k = day.getTime();
+      if (!byDay.has(k) || e1 > byDay.get(k)) byDay.set(k, e1);
+    }
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .slice(-limit)
+    .map(([ts, y]) => ({ y: Math.round(y), label: new Date(ts).toLocaleDateString("en-US", { month: "numeric", day: "numeric" }) }));
+};
+
 export const resolveLift = (rawName, observedName) => {
   if (observedName === undefined) {
     const hit = RESOLVE_CACHE.get(rawName);
