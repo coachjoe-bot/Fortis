@@ -1,7 +1,7 @@
 // v5 (2026-08-07 rebrand): the version MUST bump here or installed clients keep
 // serving the v4 shell and the retired Bebas Neue / DM Sans files from cache, and the
 // new type never appears no matter what ships.
-const CACHE = "wilco-v10";
+const CACHE = "wilco-v11";
 const ASSETS = [
   "/", "/index.html", "/manifest.json", "/icon-192.png", "/icon-512.png",
   // Self-hosted fonts (latin subsets only — the ones every screen actually uses;
