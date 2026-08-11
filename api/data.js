@@ -233,6 +233,19 @@ const ATHLETE_COL_ALLOW = {
   },
 };
 
+// PIN hashes must never ride back out of this gateway. Writes to `athletes` /
+// `coaches` use PostgREST's return=representation, so the PATCH/POST response
+// carried the caller's own bcrypt hash to the browser. It is only ever their own
+// row (ownFilter scopes every write), but a bcrypt hash of a FOUR-DIGIT pin is a
+// 10,000-candidate offline crack, so it does not belong in a response body,
+// a devtools tab, or anything that logs one. identity.js has always stripped it
+// (stripPin); this is the same rule on the write path.
+export const stripPins = (json) => {
+  if (Array.isArray(json)) return json.map(stripPins);
+  if (json && typeof json === "object" && "pin" in json) { const { pin, ...rest } = json; return rest; }
+  return json;
+};
+
 // Vercel Pro: cap this function's execution time. Was implicitly the Hobby 10s
 // wall; 20s gives external Stripe/email/DB calls room without paying for idle time.
 export const maxDuration = 20;
@@ -335,7 +348,7 @@ export default async function handler(req, res) {
       const rawSelect = (/[?&]select=([^&]*)/i.exec(query) || [])[1] || "";
       if (/[()]|%28|%29/i.test(rawSelect)) throw httpErr(400, "Embedded selects are not allowed");
       const json = await sbSelect(rtable, query + scope);
-      return res.status(200).json(json);
+      return res.status(200).json(stripPins(json));
     }
 
     const table = String(body.table || "");
@@ -489,7 +502,7 @@ export default async function handler(req, res) {
         try { await notifyCoachLazy(coachAlert.coachId, coachAlert.prefKey, coachAlert.msg); }
         catch (e) { console.error("[data] coach alert send failed:", e.message); }
       }
-      return res.status(200).json(json);
+      return res.status(200).json(stripPins(json));
     }
 
     if (body.op === "update") {
@@ -518,7 +531,7 @@ export default async function handler(req, res) {
         } catch (e) { console.error("[data] program_change_events enqueue failed:", e.message); } // best-effort, never blocks the save
       }
 
-      return res.status(200).json(json);
+      return res.status(200).json(stripPins(json));
     }
 
     if (body.op === "upsert") {
@@ -556,7 +569,7 @@ export default async function handler(req, res) {
         body: body.data,
         prefer: "resolution=merge-duplicates,return=representation",
       });
-      return res.status(200).json(json);
+      return res.status(200).json(stripPins(json));
     }
 
     if (body.op === "delete") {

@@ -85,6 +85,17 @@ check("the pin column is removed", stripPin({ id: "a1", name: "Marcus", pin: "$2
 check("a row without a pin is unchanged", stripPin({ id: "a1", name: "Marcus" }), { id: "a1", name: "Marcus" });
 check("null passes through", stripPin(null), null);
 
+// T46: the same rule on the GATEWAY's write path. PostgREST returns
+// return=representation, so a plain self-update on `athletes` handed the caller
+// their own bcrypt PIN hash. It is only ever their own row, but a bcrypt hash of
+// a four-digit pin is a 10,000-candidate offline crack and must not leave the
+// server. Confirmed against prod 2026-08-11 before the fix.
+const { stripPins } = await import("../api/data.js");
+check("gateway strips the pin from a single returned row", stripPins({ id: "a1", name: "Marcus", pin: "$2a$10$x" }), { id: "a1", name: "Marcus" });
+check("gateway strips the pin from EVERY row of an array", stripPins([{ id: "a1", pin: "$2a$10$x" }, { id: "a2", pin: "$2a$10$y" }]), [{ id: "a1" }, { id: "a2" }]);
+check("gateway passes a pin-free payload through untouched", stripPins([{ id: "a1", goal: "strength" }]), [{ id: "a1", goal: "strength" }]);
+check("gateway tolerates null/minimal bodies", stripPins(null), null);
+
 // ── billing-endpoint token authorization ────────────────────────────────────
 // tokenAthleteId IS the authorization rule for the three money endpoints now that
 // they accept a session token instead of demanding the plaintext PIN. Every case
