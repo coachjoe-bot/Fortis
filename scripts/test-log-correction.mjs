@@ -72,6 +72,11 @@ const PARSE_CASES = [
   { msg: "Bench 5x5 225, felt good", correction: false, expectExercises: true },
   { msg: "strict press 3x5 @ 95/115/155, felt solid", correction: false, expectExercises: true },
   { msg: "here's my new program: Monday bench 5x5 80%, Wednesday squat 5x3 85%, Friday deadlift 3x3 90%", correction: false },
+  // T46: a number revised INSIDE the same message has never been logged, so it is
+  // not a correction — it used to flag is_mistake_fix, the resolver then found no
+  // matching past row, and the athlete's set was silently dropped.
+  { msg: "I hit 225x5 on bench. wait no, that was 215.", correction: false, expectExercises: true },
+  { msg: "squat 3x5 at 315 today. actually no, 305.", correction: false, expectExercises: true },
 ];
 
 // ── RESOLVE: fixture history mirroring Will's real 07-20 session ─────────────
