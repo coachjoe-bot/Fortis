@@ -3676,7 +3676,21 @@ function WilcoRoot() {
             <img src={WORDMARK} alt="WILCO" width={193} height={45}
                style={{display:"block",margin:"0 auto",height:45,width:"auto"}}/>
           )}
-          <div style={{color:PW.muted,fontSize:12,fontWeight:400,letterSpacing:4,marginTop:12}}>COACH JOE-BOT</div>
+          {IS_DARK ? (
+            <div style={{color:PW.muted,fontSize:12,fontWeight:400,letterSpacing:4,marginTop:12}}>COACH JOE-BOT</div>
+          ) : (
+            /* The dictionary definition from the website hero (Will's Draft-2 call). */
+            <div style={{textAlign:"left",maxWidth:248,margin:"16px auto 0",padding:"12px 2px",borderTop:`1px solid ${PW.line2}`,borderBottom:`1px solid ${PW.line2}`}}>
+              <div style={{display:"flex",gap:8,alignItems:"baseline"}}>
+                <span style={{fontWeight:800,fontSize:20,color:PW.text}}>wil·co</span>
+                <span style={{fontSize:12,color:PW.muted}}>/ˈwil·kō/</span>
+              </div>
+              <div style={{fontStyle:"italic",fontSize:11,color:PW.muted,margin:"2px 0 6px"}}>mil. slang</div>
+              {["Will comply.","Message received.","Getting to work."].map((s,i)=>(
+                <div key={i} style={{fontSize:13,lineHeight:1.65,color:PW.muted2}}><b style={{color:PW.accent,marginRight:7}}>{i+1}</b>{s}</div>
+              ))}
+            </div>
+          )}
         </div>
         {view==="home"      && <HomeScreen setView={setView} setAthlete={setAthlete} setCoach={setCoach}/>}
         {view==="event"     && <EventLanding event={eventCtx} onStart={()=>{ try { window.history.replaceState({}, "", "/"); } catch {} setView("eventSignup"); }} onLogin={()=>{ try { window.history.replaceState({}, "", "/"); } catch {} setView("login"); }}/>}
@@ -8044,7 +8058,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       <div style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:IS_DARK?"1px solid rgba(120,150,210,.16)":`1px solid ${CA.border}`,paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
         {/* Row 1: identity */}
         <div style={{display:"flex",alignItems:"baseline",gap:10,minWidth:0}}>
-          <div style={{...DISP,fontSize:17,color:CA.cyan,letterSpacing:1,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>COACH JOE-BOT</div>
+          <div style={{...DISP,fontSize:15,color:CA.cyan,letterSpacing:0.5,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>COACH JOE-BOT</div>
           {(historyLoaded||warm)&&(
           <div style={{display:"flex",alignItems:"baseline",gap:4,flexShrink:0}} title="Workouts logged">
             <span style={{color:CA.muted,fontSize:9,letterSpacing:1,fontWeight:600}}>WORKOUTS:</span>
@@ -8052,7 +8066,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 here only sees the capped workoutHistory window, so it can only ever push the
                 shown number UP (e.g. a brand-new athlete before the first server sync) —
                 never below the stored count, which would look like sessions vanishing. */}
-            <span style={{...DISP,fontSize:18,color:CA.accent,lineHeight:1}}>{headerSessionCount}</span>
+            <span style={{...DISP,fontSize:16,color:CA.accent,lineHeight:1}}>{headerSessionCount}</span>
           </div>
           )}
           <div style={{flex:1,minWidth:0,color:CA.muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{athlete.name}</div>
@@ -8065,7 +8079,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             trained days lit + glowing (electric blue), rest cooled steel. Today is
             marked by a brighter letter. Static on mount — no light-up animation. */}
         {(historyLoaded||warm)&&(
-          <div style={{display:"flex",alignItems:"center",gap:3,padding:"2px 0 4px"}} title="Your training this week">
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:3,padding:"2px 0 4px"}} title="Your training this week">
             <span style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8,letterSpacing:1,color:CA.faint,textTransform:"uppercase",marginRight:4}}>WK</span>
             {[0,1,2,3,4,5,6].map(i=>{const on=trainedThisWeek.has(i);return <div key={i} className={`streaklnk${on?" on":""}`}/>;})}
             <span style={{...DISP,fontSize:12,color:CA.cyan,marginLeft:5}}>{trainedThisWeek.size}</span>
@@ -8078,8 +8092,8 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:8}}>
         {(athlete.tier||"free")!=="free"&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
-            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
-            {quickLogParked?"⚡ RESUME LOG":"⚡ QUICK LOG"}
+            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
+            {quickLogParked?"⚡ RESUME":"⚡ QUICK LOG"}
           </button>
         )}
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -11037,10 +11051,9 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                     )}
                     <span style={{marginLeft:"auto",...DISP,fontSize:16,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{Math.round(b.e1rm)}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small></span>
                   </div>
+                  {IS_DARK ? (
                   <div className="htube">
                     <div className="hfill" style={{"--tc":TIER_COLORS[tierIdx],"--tb":tierIdx/(TIER_NAMES.length-1),"--pct":fillPct}}/>
-                    {/* Crewmates who have mutually opted into comparison. Tier and
-                        position only — the server never sends their weights. */}
                     {compareRows.map(c=>{
                       const l = c.lifts&&c.lifts[b.benchKey];
                       if(!l) return null;
@@ -11048,6 +11061,24 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                         style={{"--sc":TIER_COLORS[l.tierIdx],left:`${Math.round(l.pct*100)}%`}}/>;
                     })}
                   </div>
+                  ) : (
+                  /* STRENGTH LEDGER (Draft-2): 8 segments for 8 tiers — filled through the
+                     displayed tier in its ramp colour, the current segment charging to --pct.
+                     Crew ticks ride the full rule at (tier+pct)/8. Dark keeps the battery tube. */
+                  <div style={{display:"flex",gap:3,position:"relative",height:5,margin:"3px 0 2px"}}>
+                    {TIER_NAMES.map((_,s)=>(
+                      <span key={s} style={{flex:1,borderRadius:2,background:s<tierIdx?TIER_COLORS[tierIdx]:CA.border,position:"relative",overflow:"hidden"}}>
+                        {s===tierIdx&&<span className="hfill" style={{borderRadius:2,"--tc":TIER_COLORS[tierIdx],"--tb":0,"--pct":fillPct}}/>}
+                      </span>
+                    ))}
+                    {compareRows.map(c=>{
+                      const l = c.lifts&&c.lifts[b.benchKey];
+                      if(!l) return null;
+                      return <div key={c.id} title={`${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`}
+                        style={{position:"absolute",top:-3,bottom:-3,width:2,borderRadius:1,background:CA.cyan,left:`${Math.round(((l.tierIdx+Math.min(l.pct,0.99))/8)*100)}%`}}/>;
+                    })}
+                  </div>
+                  )}
                   <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:pending?CA.cyan:CA.faint,marginTop:5,letterSpacing:0.3}}>
                     {pending
                       ? <>TAP RANK UP TO CLAIM {TIER_NAMES[computedTier]}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>
@@ -11739,14 +11770,14 @@ function CrewTab({athlete, demo=false}){
                 return (
                   <div key={c.id} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:10}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9}}>
-                      <span style={{...DISP,fontSize:15,letterSpacing:0.8,color:CA.cyan}}>YOU</span>
+                      <span style={{...DISP,fontSize:15,letterSpacing:0.8,color:IS_DARK?CA.cyan:CA.accent}}>YOU</span>
                       <span style={{...DISP,fontSize:17,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{mine==null?"--":Math.round(mine)}</span>
                       <span style={{marginLeft:"auto",...DISP,fontSize:17,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{theirs==null?"--":Math.round(theirs)}</span>
                       <span style={{...DISP,fontSize:15,letterSpacing:0.8,color:CA.text}}>{c.name.split(" ")[0].toUpperCase()}</span>
                     </div>
-                    <div style={{display:"flex",height:7,borderRadius:4,overflow:"hidden",background:CA.border}}>
-                      <div style={{width:`${Math.max(4,Math.min(96,minePct*100))}%`,background:`linear-gradient(90deg,${CA.accent},${CA.cyan})`}}/>
-                      <div style={{flex:1,background:c.topTierIdx!=null?TIER_COLORS[c.topTierIdx]:CA.steel,opacity:0.75}}/>
+                    <div style={{display:"flex",height:7,borderRadius:4,overflow:"hidden",background:CA.border,gap:IS_DARK?0:2}}>
+                      <div style={{width:`${Math.max(4,Math.min(96,minePct*100))}%`,background:IS_DARK?`linear-gradient(90deg,${CA.accent},${CA.cyan})`:CA.accent,borderRadius:IS_DARK?0:4}}/>
+                      <div style={{flex:1,background:IS_DARK?(c.topTierIdx!=null?TIER_COLORS[c.topTierIdx]:CA.steel):CA.cyan,opacity:IS_DARK?0.75:1,borderRadius:IS_DARK?0:4}}/>
                     </div>
                     <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:CA.faint,marginTop:6,letterSpacing:0.3}}>STRENGTH SCORE</div>
                   </div>

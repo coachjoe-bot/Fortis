@@ -88,5 +88,20 @@ await tap(/BUILDER/i);
 await page.waitForTimeout(3000);
 await shot("09-builder");
 
+// 10 — coach dashboard Overview, desktop viewport (the website's B2B frame;
+// not part of the 9-shot store set).
+const coach = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+try {
+  await coach.goto(URL);
+  await coach.getByText(/^Coach Login$/i).click();
+  await coach.locator("input").first().fill("Coach Reed");
+  await coach.locator('input[type="password"]').fill("4477");
+  await coach.getByRole("button").filter({ hasText: /dashboard|log in|work/i }).first().click();
+  await coach.getByText(/Overview/i).first().waitFor({ timeout: 45_000 });
+  await coach.waitForTimeout(3500);
+  await coach.screenshot({ path: `${OUT}/10-coach-overview.png` });
+  console.log("✓ 10-coach-overview");
+} catch (e) { console.log("coach shot failed:", e.message?.slice(0, 80)); }
+
 await browser.close();
 console.log(`Done → ${OUT}`);

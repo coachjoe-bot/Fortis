@@ -1707,13 +1707,18 @@ function CoachDashboard({coach,onLogout}) {
                   {pastEditions.length>0&&(
                     <div style={{marginBottom:16}}>
                       <div style={{color:CA.muted,fontSize:10,letterSpacing:2,fontWeight:700,marginBottom:6}}>PAST EDITIONS</div>
-                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        {pastEditions.map(pe=>{
+                      {/* One scrollable line, deduped by label — the wrapped pile of near-identical
+                          pills read as clutter (Will, 08-10). */}
+                      <div className="no-sb" style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2}}>
+                        {pastEditions.filter((pe,i,arr)=>{
+                          const lab=(p)=>`${p.content_json?.edition_no||p.digest_type}·${new Date(p.generated_at||p.created_at).toDateString()}`;
+                          return arr.findIndex(x=>lab(x)===lab(pe))===i;
+                        }).map(pe=>{
                           const no = Number(pe.content_json?.edition_no);
                           const when = (pe.generated_at||pe.created_at) ? new Date(pe.generated_at||pe.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
                           return (
                             <button key={pe.id} onClick={()=>setSelectedDigest(pe)}
-                              style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:CA.muted2,fontSize:11.5}}>
+                              style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",color:CA.muted2,fontSize:11.5,whiteSpace:"nowrap",flexShrink:0}}>
                               {no?`No. ${no}`:pe.digest_type==="monthly_coach"?"Monthly":"Weekly"}{when?` · ${when}`:""}
                             </button>
                           );
