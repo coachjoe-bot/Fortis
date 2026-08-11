@@ -14,7 +14,7 @@
 
 import {
   couponTerms, describeCoupon, codeIsAnnualSafe, tierForPrice, priceFor,
-  randomGiftCode, GIFT_COUPON_IDS, TESTER_COUPONS, EVENT_SOURCES,
+  randomGiftCode, GIFT_COUPON_IDS, FOUNDING_COUPON_IDS, TESTER_COUPONS, EVENT_SOURCES,
 } from "../api/_stripe.js";
 
 let pass = 0, fail = 0;
@@ -78,15 +78,59 @@ ok(codeIsAnnualSafe(FREE_ONE_MONTH), "once is annual safe");
 ok(codeIsAnnualSafe(HALF_OFF_FOREVER), "a forever percent is annual safe");
 ok(codeIsAnnualSafe(null), "no coupon is trivially annual safe");
 
+// T44: the founding cohort is a MONTHLY offer and its discount is an absolute
+// dollar amount sized against the $14.99 monthly price. `duration:"forever"` sails
+// straight through the repeating check above, so without the id-based gate a
+// founding athlete could put $10-off onto the $99 annual price and pay $89/yr.
+for (const id of FOUNDING_COUPON_IDS) {
+  ok(!codeIsAnnualSafe({ id, amount_off: 1000, duration: "forever" }),
+    `${id} is NOT annual safe (dollar discount sized for the monthly price)`);
+}
+ok(!codeIsAnnualSafe({ id: "WILCO_FOUNDING_499_FOREVER", percent_off: 100, duration: "forever" }),
+  "a founding id is blocked on annual regardless of the coupon's own shape");
+ok(codeIsAnnualSafe({ id: "WILCO_GIFT_PRO_MONTH", amount_off: 1499, duration: "once" }),
+  "a non-founding one-off code is still annual safe (unchanged behaviour)");
+
+// Every founding coupon must also be redeemable at all — i.e. present in the
+// allowlist. A founding id missing from GIFT_COUPON_IDS is rejected in-app as
+// "That isn't a WILCO code" no matter how valid Stripe thinks it is.
+for (const id of FOUNDING_COUPON_IDS) {
+  ok(GIFT_COUPON_IDS.has(id), `${id} is in the gift/discount allowlist`);
+}
+
+// The founding discount only lands on $4.99 while the monthly list price is
+// $14.99. If the list price ever moves, this is the check that says so before an
+// athlete gets billed the wrong amount (or $0.00 — see the 08-10 trap).
+const PRO_MONTHLY_CENTS = 1499, FOUNDING_TARGET = 499, FOUNDING_AMOUNT_OFF = 1000;
+eq(PRO_MONTHLY_CENTS - FOUNDING_AMOUNT_OFF, FOUNDING_TARGET,
+  "founding $10.00-off still yields exactly $4.99/mo against the $14.99 list price");
+
 console.log("priceFor / tierForPrice:");
 for (const tier of ["pro", "elite", "school"]) {
   for (const billing of ["monthly", "annual"]) {
     const id = priceFor(tier, billing);
-    ok(!!id, `${tier}/${billing} resolves to a price id`);
+    ok(!!id, tier === "pro" && billing === "annual"
+      ? "pro/annual resolves to a price id — SHIP GATE for T44: the $99/yr Stripe price " +
+        "does not exist yet. Run:  STRIPE_SECRET_KEY=sk_live_... node scripts/stripe-t44-pricing.mjs --apply"
+      : `${tier}/${billing} resolves to a price id`);
+    if (!id) continue;
     const back = tierForPrice(id);
     eq(back.tier, tier, `${tier}/${billing} round trips to the right tier`);
   }
 }
+// An annual ask must never silently fall back to the monthly price: the athlete was
+// quoted $99/yr, so selling them $14.99/mo instead is a support ticket at best.
+{
+  const annual = priceFor("pro", "annual"), monthly = priceFor("pro", "monthly");
+  ok(annual !== monthly, "pro/annual never falls back to the monthly price id");
+}
+// Retired prices must still resolve. Athletes on the old $150/yr keep it forever
+// (Stripe never re-prices a live sub), and every renewal webhook carries that id —
+// if it maps to no tier, a paying annual subscriber is silently demoted to free.
+eq(tierForPrice("price_1TdXoJRlrDCVlwEBrBG40L0C").tier, "pro",
+  "the retired $150/yr price still maps to Pro (legacy subscribers keep their tier)");
+eq(tierForPrice("price_1TdXoJRlrDCVlwEBrBG40L0C").billing, "annual",
+  "the retired $150/yr price still reports annual billing");
 eq(priceFor("free", "monthly"), null, "free has no price id");
 eq(priceFor("nonsense", "monthly"), null, "an unknown tier has no price id");
 eq(tierForPrice("price_does_not_exist").tier, null, "an unknown price maps to no tier");

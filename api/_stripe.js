@@ -23,10 +23,34 @@ export function getStripe() {
 // Live IDs are hardcoded (provided by Will, verified live). Test IDs come from env
 // so the test-mode mirrors can be swapped in without touching code. Select with
 // STRIPE_MODE=test for local/sandbox testing.
+// T44 (08-10): Pro annual cut $150/yr → $99/yr. Stripe prices are immutable on
+// amount, so this is a NEW price object, not an edit. `scripts/stripe-t44-pricing.mjs`
+// creates it against the live key and writes the id in below.
+//
+// Deliberately NOT defaulted to the old $150 id: if this is unset, the UI would
+// advertise $99 while Stripe charged $150, which is the one failure mode that
+// costs a refund conversation instead of a bug report. Unset = annual checkout
+// refuses (see priceFor), which is loud and free.
+const PRO_ANNUAL_99 = process.env.STRIPE_PRICE_PRO_ANNUAL || "price_1U34g7RlrDCVlwEBiHa8hsb5";
+
+// Pro's monthly list price in cents. Mirrors PRICE_CENTS.pro.monthly in src/App.jsx
+// (display) and the live Stripe price (billing). Used here to turn a founding
+// coupon's dollar discount back into the price the athlete actually pays.
+export const PRO_MONTHLY_CENTS = 1499;
+
 const PRICES_LIVE = {
-  pro:    { monthly: "price_1TdXoIRlrDCVlwEBt7EyYqvO", annual: "price_1TdXoJRlrDCVlwEBrBG40L0C" },
+  pro:    { monthly: "price_1TdXoIRlrDCVlwEBt7EyYqvO", annual: PRO_ANNUAL_99 },
   elite:  { monthly: "price_1TdXoKRlrDCVlwEBMhpQgJyf", annual: "price_1TbNnhRlrDCVlwEBpCooElqY" },
   school: { monthly: "price_1TbNnkRlrDCVlwEBUiO5txAx", annual: "price_1TbNnkRlrDCVlwEBUiO5txAx" },
+};
+
+// Retired prices. Nothing new can be sold at these, but athletes who bought at the
+// old price keep it forever (Stripe never re-prices an existing subscription), and
+// their renewal webhooks still carry the old price id. Without this map
+// tierForPrice() would return {tier:null} on every legacy renewal and quietly
+// demote a paying annual subscriber to free.
+const PRICES_LEGACY = {
+  pro: { annual: "price_1TdXoJRlrDCVlwEBrBG40L0C" }, // $150/yr, retired 08-10 (T44)
 };
 const PRICES_TEST = {
   pro:    { monthly: process.env.STRIPE_TEST_PRICE_PRO_MONTHLY,   annual: process.env.STRIPE_TEST_PRICE_PRO_ANNUAL },
@@ -41,9 +65,13 @@ export function getPriceMap() {
 }
 
 // Resolve a price ID for a tier+billing. Falls back to monthly if billing missing.
+// EXCEPT for an explicit annual ask: if the annual price isn't configured we return
+// null so checkout fails, rather than silently selling a monthly plan to someone who
+// picked (and was quoted) a year.
 export function priceFor(tier, billing) {
   const t = getPriceMap()[tier];
   if (!t) return null;
+  if (billing === "annual") return t.annual || null;
   return t[billing] || t.monthly || null;
 }
 
@@ -56,7 +84,7 @@ export function tierForPrice(priceId) {
   // PRO — a webhook event that arrived without a price would silently grant a
   // paid tier. Same for a falsy entry inside a map.
   if (!priceId) return { tier: null, billing: null };
-  for (const map of [PRICES_LIVE, PRICES_TEST]) {
+  for (const map of [PRICES_LIVE, PRICES_TEST, PRICES_LEGACY]) {
     for (const [tier, b] of Object.entries(map)) {
       if (!b) continue;
       if (b.monthly && b.monthly === priceId) return { tier, billing: "monthly" };
@@ -75,12 +103,32 @@ export const GIFT_COUPON_ID = process.env.STRIPE_GIFT_COUPON_ID || "WILCO_GIFT_P
 // coupon here whenever one is minted in Stripe, or the code is rejected in-app as
 // "That isn't a WILCO code" no matter how valid Stripe thinks it is.
 //   grip-test champ — event prize, 100% off for 3 months, capped at 2 redemptions
-//   founding free / $5 — founding cohort, forever discounts, capped in Stripe
+//   founding free / $5 / $4.99 — founding cohort, forever discounts, capped in Stripe
 export const GIFT_COUPON_IDS = new Set([
   GIFT_COUPON_ID,
   process.env.STRIPE_GRIP_TEST_COUPON_ID || "WILCO_GRIP_TEST_CHAMP_3MO",
   process.env.STRIPE_FOUNDING_FREE_COUPON_ID || "WILCO_FOUNDING_FREE_FOREVER",
   process.env.STRIPE_FOUNDING_5_COUPON_ID || "WILCO_FOUNDING_5_FOREVER",
+  process.env.STRIPE_FOUNDING_499_COUPON_ID || "WILCO_FOUNDING_499_FOREVER",
+]);
+
+// Founding-cohort coupons are MONTHLY-ONLY, and this set is what enforces it.
+//
+// They are `amount_off` in dollars, not a percentage, so their discount is only
+// meaningful against the monthly list price: WILCO_FOUNDING_499_FOREVER takes
+// $10.00 off, which is the intended $4.99/mo against a $14.99 list — but applied
+// to the $99 ANNUAL price the very same coupon reads as $89/yr, an offer nobody
+// designed and roughly 1.5x what the founding athlete was promised for a year.
+// codeIsAnnualSafe() can't catch it: these are `duration:"forever"`, not
+// `repeating`, so that gate passes them. Stripe-side `applies_to` can't catch it
+// either — monthly and annual Pro are two prices on ONE product.
+//
+// If a founding tier should ever be sellable annually, it needs its own PRICE
+// (e.g. $59.88/yr), not a coupon. Do not "fix" this by widening the gate.
+export const FOUNDING_COUPON_IDS = new Set([
+  process.env.STRIPE_FOUNDING_FREE_COUPON_ID || "WILCO_FOUNDING_FREE_FOREVER",
+  process.env.STRIPE_FOUNDING_5_COUPON_ID || "WILCO_FOUNDING_5_FOREVER",
+  process.env.STRIPE_FOUNDING_499_COUPON_ID || "WILCO_FOUNDING_499_FOREVER",
 ]);
 
 // Tester coupons — 100%-off-FOREVER, product-scoped, capped (25 redemptions each).
@@ -399,6 +447,12 @@ export function describeCoupon(coupon, tierLabel = "Pro") {
     : t.repeating && coupon.duration_in_months > 1 ? `for ${coupon.duration_in_months} months`
     : "your first month";
   if (t.freeForever) return `${tierLabel} free, always`;
+  // Founding cohort: say the price they'll actually pay, not the size of the
+  // discount. "$10.00 off every month" is true but makes the reader do arithmetic
+  // to find out this is the $4.99 offer they clicked on.
+  if (FOUNDING_COUPON_IDS.has(coupon.id) && t.amountOff && coupon.duration === "forever") {
+    return `${tierLabel} for $${((PRO_MONTHLY_CENTS - t.amountOff) / 100).toFixed(2)}/month, for life`;
+  }
   if (t.freeMonths > 1) return `First ${t.freeMonths} months of ${tierLabel} free`;
   if (t.freeMonths === 1) return `First month of ${tierLabel} free`;
   if (t.percentOff) return `${t.percentOff}% off ${span}`;
@@ -409,7 +463,14 @@ export function describeCoupon(coupon, tierLabel = "Pro") {
 // A month-scoped discount on the ANNUAL price is a trap: Stripe applies a
 // "repeating, 3 months" coupon to the whole yearly invoice, so a 3-months-free
 // prize would silently hand over a free YEAR. Month-scoped codes are monthly-only.
-export const codeIsAnnualSafe = (coupon) => !couponTerms(coupon).repeating;
+// Is this code safe to apply to the ANNUAL price? Two independent traps:
+//   • `repeating` — "3 months free" against a yearly invoice discounts the whole
+//     year, i.e. hands over a free year.
+//   • founding — see FOUNDING_COUPON_IDS: dollar-amount discounts sized for the
+//     $14.99 monthly price are meaningless against $99/yr, and `duration:"forever"`
+//     sails straight through the repeating check.
+export const codeIsAnnualSafe = (coupon) =>
+  !couponTerms(coupon).repeating && !FOUNDING_COUPON_IDS.has(coupon?.id);
 
 // Flip the matching entry on the GIFTER's profile to "redeemed" once a friend uses
 // their code. The gifter is found via the promotion code's metadata.
