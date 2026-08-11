@@ -2122,7 +2122,13 @@ export const GSA = `
 .hcell.revealup .hfill{animation:rankCharge 1.15s cubic-bezier(.3,.85,.3,1) both;}
 /* RADAR empty state ("awaiting signal") */
 .radar{width:92px;height:92px;border-radius:50%;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
+${IS_DARK?`
 .radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,transparent 0deg,rgba(91,127,181,.30) 42deg,transparent 62deg);animation:spin 2.4s linear infinite;}
+`:`
+/* Light brand (Draft-2): the conic glow sweep reads as haze on a light ground —
+   the radar survives as a thin navy NEEDLE, same 2.4s rotation. */
+.radar::before{content:"";position:absolute;left:50%;top:50%;width:46%;height:2px;background:${CA.accent};transform-origin:left center;animation:spin 2.4s linear infinite;}
+`}
 .radar::after{content:"";position:absolute;inset:16px;border-radius:50%;border:1px solid ${CA.line2};}
 @keyframes spin{to{transform:rotate(360deg);}}
 /* LOADERS — charge bar / grid scan / hex matrix */
@@ -2877,7 +2883,7 @@ function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
             </div>
           )}
           {hero.score!=null&&<div style={{fontSize:10,letterSpacing:2,color:CA.muted2,marginBottom:hero.tier?2:0}}>STRENGTH SCORE</div>}
-          <div style={{fontSize:12.5,lineHeight:1.6,color:"#c7d2e0",marginTop:10,whiteSpace:"pre-wrap"}}>{rankSec.body}</div>
+          <div style={{fontSize:12.5,lineHeight:1.6,color:IS_DARK?"#c7d2e0":CA.muted2,marginTop:10,whiteSpace:"pre-wrap"}}>{rankSec.body}</div>
         </div>
       )}
 
@@ -2885,16 +2891,16 @@ function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
       {prSec&&(
         <div className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, ${CA.accent}1f, ${CA.navy2} 70%)`,border:`1px solid ${CA.accent}52`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
           <div style={{fontSize:9,letterSpacing:2,color:CA.accent,fontWeight:700,marginBottom:8}}>🏅 {prSec.label}</div>
-          <div style={{fontSize:12.5,lineHeight:1.6,color:"#c7d2e0",whiteSpace:"pre-wrap"}}>{prSec.body}</div>
+          <div style={{fontSize:12.5,lineHeight:1.6,color:IS_DARK?"#c7d2e0":CA.muted2,whiteSpace:"pre-wrap"}}>{prSec.body}</div>
         </div>
       )}
 
       {/* Routine sections — receded, except a flag:"warn" section (e.g. a volume gap),
           which the generator marks as the week's real story, so it stays elevated (amber). */}
       {routine.map((s,i)=> s.flag==="warn" ? (
-        <div key={i} className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, #f59e0b1f, ${CA.navy2} 70%)`,border:"1px solid #f59e0b66",borderRadius:12,padding:"13px 14px",marginBottom:10}}>
-          <div style={{fontSize:9,letterSpacing:2,color:"#f59e0b",fontWeight:700,marginBottom:7}}>⚠ {s.label}</div>
-          <div style={{fontSize:12.5,lineHeight:1.6,color:"#e0d3bf",whiteSpace:"pre-wrap"}}>{s.body}</div>
+        <div key={i} className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, ${CA.amber}1f, ${CA.navy2} 70%)`,border:`1px solid ${CA.amber}66`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
+          <div style={{fontSize:9,letterSpacing:2,color:CA.amber,fontWeight:700,marginBottom:7}}>⚠ {s.label}</div>
+          <div style={{fontSize:12.5,lineHeight:1.6,color:IS_DARK?"#e0d3bf":CA.muted2,whiteSpace:"pre-wrap"}}>{s.body}</div>
         </div>
       ) : (
         <div key={i} className="proof-drop" style={{...delay(),background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
@@ -2910,7 +2916,7 @@ function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
             <div style={{fontSize:9,letterSpacing:2,color:CA.red,fontWeight:700}}>⚠ {injurySec.label}</div>
             {trend&&<div style={{fontSize:8,letterSpacing:1,padding:"3px 8px",borderRadius:12,background:`${trend.color}24`,border:`1px solid ${trend.color}66`,color:trend.color,fontWeight:700}}>{trend.color===CA.green?"▲":"▼"} {trend.txt}</div>}
           </div>
-          <div style={{fontSize:12,lineHeight:1.6,color:"#d9c2c4",whiteSpace:"pre-wrap"}}>{injurySec.body}</div>
+          <div style={{fontSize:12,lineHeight:1.6,color:IS_DARK?"#d9c2c4":CA.muted2,whiteSpace:"pre-wrap"}}>{injurySec.body}</div>
         </div>
       )}
 
@@ -3405,7 +3411,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             ) : (
               <>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>applyProgramChange(true)} style={{flex:1,background:CA.accent,color:"#000",border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",...DISP,letterSpacing:1,fontSize:14}}>Yes, Apply</button>
+                  <button onClick={()=>applyProgramChange(true)} style={{flex:1,background:CA.accent,color:CA.onAccent,border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",...DISP,letterSpacing:1,fontSize:14}}>Yes, Apply</button>
                   <button onClick={()=>applyProgramChange(false)} style={{flex:1,background:"transparent",color:CA.muted,border:`1px solid ${CA.border}`,borderRadius:8,padding:"10px",cursor:"pointer",fontSize:13}}>Skip</button>
                 </div>
                 <button onClick={()=>setEditingProgram(true)} style={{width:"100%",marginTop:8,background:"transparent",color:CA.muted2,border:`1px solid ${CA.border}`,borderRadius:8,padding:"9px",cursor:"pointer",fontSize:12}}>✏️ Edit or ask a question</button>
@@ -3423,7 +3429,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
                 <div style={{fontSize:10,color:CA.muted}}>{isMonthly?"Monthly":"Weekly"} check-in · ~2 min</div>
               </div>
             </div>
-            <div style={{fontSize:13,lineHeight:1.5,color:"#c7d2e0",marginBottom:12}}>{activeQuestions[0].text}</div>
+            <div style={{fontSize:13,lineHeight:1.5,color:IS_DARK?"#c7d2e0":CA.muted2,marginBottom:12}}>{activeQuestions[0].text}</div>
             <button onClick={startDialogue} style={{width:"100%",padding:12,borderRadius:10,border:"none",cursor:"pointer",background:CA.accent,color:CA.onAccent,...DISP,fontSize:15,letterSpacing:2,textAlign:"center"}}>
               START CHECK-IN →
             </button>
@@ -3432,7 +3438,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
 
         {phase==="deeper-offer"&&!loading&&(
           <div style={{display:"flex",gap:8,marginTop:4}}>
-            <button onClick={goDeeper} style={{flex:1,background:CA.accent,color:"#000",border:"none",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Go deeper →</button>
+            <button onClick={goDeeper} style={{flex:1,background:CA.accent,color:CA.onAccent,border:"none",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Go deeper →</button>
             <button onClick={()=>finish(answers)} style={{flex:1,background:"transparent",color:CA.muted,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px",cursor:"pointer",fontSize:13}}>Wrap it here</button>
           </div>
         )}
@@ -3445,7 +3451,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             </div>
           ) : (
             <div style={{display:"flex",gap:8,marginTop:4}}>
-              <button onClick={()=>resolveCoachOffer(true)} style={{flex:1,background:CA.accent,color:"#000",border:"none",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Send to coach</button>
+              <button onClick={()=>resolveCoachOffer(true)} style={{flex:1,background:CA.accent,color:CA.onAccent,border:"none",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Send to coach</button>
               <button onClick={()=>resolveCoachOffer(false)} style={{flex:1,background:"transparent",color:CA.muted,border:`1px solid ${CA.border}`,borderRadius:10,padding:"11px",cursor:"pointer",fontSize:13}}>No thanks</button>
             </div>
           )
@@ -3467,7 +3473,7 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
             placeholder="Type your answer..." rows={2}
             style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 14px",color:CA.text,fontSize:15,outline:"none",resize:"none",lineHeight:1.5}}
           />
-          <button onClick={sendMessage} disabled={loading||!input.trim()} style={{background:input.trim()&&!loading?CA.accent:CA.navy3,color:input.trim()&&!loading?"#000":CA.muted,border:"none",borderRadius:10,padding:"10px 16px",cursor:input.trim()&&!loading?"pointer":"not-allowed",fontWeight:700,fontSize:18,transition:"background 0.15s"}}>→</button>
+          <button onClick={sendMessage} disabled={loading||!input.trim()} style={{background:input.trim()&&!loading?CA.accent:CA.navy3,color:input.trim()&&!loading?CA.onAccent:CA.muted,border:"none",borderRadius:10,padding:"10px 16px",cursor:input.trim()&&!loading?"pointer":"not-allowed",fontWeight:700,fontSize:18,transition:"background 0.15s"}}>→</button>
         </div>
       )}
     </div>
@@ -4132,7 +4138,7 @@ function CheckoutHandoff({ token, tier, billing }) {
     m.name = "robots"; m.content = "noindex, nofollow";
     document.head.appendChild(m);
     const prevTitle = document.title;
-    document.title = "Secure Checkout — WILCO";
+    document.title = "Secure Checkout · WILCO";
     return () => { document.head.removeChild(m); document.title = prevTitle; };
   }, []);
 
@@ -4195,7 +4201,7 @@ function CheckoutHandoff({ token, tier, billing }) {
         {phase==="done" && (
           <div style={{textAlign:"center",padding:"30px 0"}}>
             <div style={{color:CA.green,fontSize:17,fontWeight:700,marginBottom:12}}>You're all set.</div>
-            <div style={{color:CA.muted2,fontSize:13,lineHeight:1.7}}>Your WILCO plan is active. Head back to the WILCO app — it'll pick up your new plan the next time it syncs.</div>
+            <div style={{color:CA.muted2,fontSize:13,lineHeight:1.7}}>Your WILCO plan is active. Head back to the WILCO app. It'll pick up your new plan the next time it syncs.</div>
           </div>
         )}
       </div>
@@ -4531,22 +4537,25 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
       pro:   ["Everything in Free","Workout history saved","Progress tracking & PRs","Training program stored","Workout log viewable","Weekly coach progress reports"],
       elite: ["Everything in Pro","Assigned WILCO Certified Coach","Guaranteed weekly check-in","Initial onboarding Zoom call"],
     };
+    // Light brand (Draft-2 plan phone): Pro carries the single NAVY emphasis,
+    // Free/Elite sit in plain ink — the gold/blue tier colors stay dark-mode only.
+    const tc = IS_DARK ? t.color : (tierKey==="pro" ? CA.accent : CA.text);
     return (
-      <div onClick={()=>setD("tier",tierKey)} style={{background:selected?`${t.color}18`:CA.navy3,border:`2px solid ${selected?t.color:CA.border}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
+      <div onClick={()=>setD("tier",tierKey)} style={{background:selected?(IS_DARK?`${t.color}18`:`${CA.accent}0d`):CA.navy3,border:`2px solid ${selected?(IS_DARK?t.color:CA.accent):CA.border}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:"pointer",transition:"all 0.15s"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{...DISP,fontSize:18,color:t.color,letterSpacing:2}}>{t.label}</div>
-            {tierKey==="pro"&&<div style={{background:`${t.color}33`,color:t.color,fontSize:10,fontWeight:700,letterSpacing:1,padding:"2px 8px",borderRadius:4}}>POPULAR</div>}
+            <div style={{...DISP,fontSize:18,color:tc,letterSpacing:2}}>{t.label}</div>
+            {tierKey==="pro"&&<div style={{background:IS_DARK?`${t.color}33`:`${CA.accent}18`,color:IS_DARK?t.color:CA.accent,fontSize:10,fontWeight:700,letterSpacing:1,padding:"2px 8px",borderRadius:4}}>POPULAR</div>}
           </div>
           <div style={{textAlign:"right"}}>
-            <div style={{color:t.color,fontWeight:700,fontSize:15}}>{annual?p.annual:p.monthly}</div>
+            <div style={{color:IS_DARK?t.color:CA.led,fontWeight:700,fontSize:15}}>{annual?p.annual:p.monthly}</div>
             <div style={{color:CA.muted,fontSize:10}}>{annual?p.annualNote:p.monthlyNote}</div>
           </div>
         </div>
         <ul style={{listStyle:"none",padding:0,margin:0}}>
           {features[tierKey].map((f,i)=>(
             <li key={i} style={{color:selected?CA.text:CA.muted2,fontSize:12,lineHeight:1.8,display:"flex",alignItems:"center",gap:6}}>
-              <span style={{color:t.color,fontSize:10}}>✓</span>{f}
+              <span style={{color:IS_DARK?t.color:CA.green,fontSize:10}}>✓</span>{f}
             </li>
           ))}
         </ul>
@@ -4594,7 +4603,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             <div key={o.k} onClick={()=>setD("level",o.k)}
               style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:8,padding:"12px 14px",background:data.level===o.k?`${CA.accent}18`:CA.navy3,borderRadius:10,border:`2px solid ${data.level===o.k?CA.accent:CA.border}`,transition:"all 0.15s"}}>
               <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${data.level===o.k?CA.accent:CA.muted}`,background:data.level===o.k?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                {data.level===o.k&&<span style={{color:"#000",fontSize:10,fontWeight:700}}>✓</span>}
+                {data.level===o.k&&<span style={{color:CA.onAccent,fontSize:10,fontWeight:700}}>✓</span>}
               </div>
               <div>
                 <div style={{color:CA.text,fontWeight:600,fontSize:14}}>{o.l}</div>
@@ -4668,7 +4677,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
               <div key={g} onClick={()=>setD("gender",g)}
                 style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:9,cursor:"pointer",padding:"13px 10px",background:data.gender===g?`${CA.accent}18`:CA.navy3,borderRadius:10,border:`2px solid ${data.gender===g?CA.accent:CA.border}`,transition:"all 0.15s"}}>
                 <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${data.gender===g?CA.accent:CA.muted}`,background:data.gender===g?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  {data.gender===g&&<span style={{color:"#000",fontSize:9,fontWeight:700}}>✓</span>}
+                  {data.gender===g&&<span style={{color:CA.onAccent,fontSize:9,fontWeight:700}}>✓</span>}
                 </div>
                 <div style={{color:CA.text,fontWeight:600,fontSize:14}}>{g}</div>
               </div>
@@ -4690,7 +4699,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
           <div key={g.key} onClick={()=>setD("goal",g.key)}
             style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:8,padding:"12px 14px",background:data.goal===g.key?`${CA.accent}18`:CA.navy3,borderRadius:10,border:`2px solid ${data.goal===g.key?CA.accent:CA.border}`,transition:"all 0.15s"}}>
             <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${data.goal===g.key?CA.accent:CA.muted}`,background:data.goal===g.key?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              {data.goal===g.key&&<span style={{color:"#000",fontSize:10,fontWeight:700}}>✓</span>}
+              {data.goal===g.key&&<span style={{color:CA.onAccent,fontSize:10,fontWeight:700}}>✓</span>}
             </div>
             <div>
               <div style={{color:CA.text,fontWeight:600,fontSize:14}}>{g.label}</div>
@@ -4715,7 +4724,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             <div key={eq} onClick={()=>setD("equipment",selected?data.equipment.filter(e=>e!==eq):[...data.equipment,eq])}
               style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",marginBottom:8,padding:"12px 16px",background:selected?`${CA.accent}18`:CA.navy3,borderRadius:10,border:`2px solid ${selected?CA.accent:CA.border}`,transition:"all 0.15s"}}>
               <div style={{width:20,height:20,borderRadius:4,border:`2px solid ${selected?CA.accent:CA.muted}`,background:selected?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                {selected&&<span style={{color:"#000",fontSize:10,fontWeight:700}}>✓</span>}
+                {selected&&<span style={{color:CA.onAccent,fontSize:10,fontWeight:700}}>✓</span>}
               </div>
               <div style={{color:CA.text,fontWeight:600,fontSize:14}}>{eq}</div>
             </div>
@@ -4786,7 +4795,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
             <button key={b} onClick={()=>setD("billing",b)}
               style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,letterSpacing:1,...DISP,
                 background:data.billing===b?CA.accent:"transparent",
-                color:data.billing===b?"#000":CA.muted,transition:"all 0.15s"}}>
+                color:data.billing===b?CA.onAccent:CA.muted,transition:"all 0.15s"}}>
               {b==="monthly"?"MONTHLY":"ANNUAL · SAVE ~17%"}
             </button>
           ))}
@@ -4822,7 +4831,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
       {step===16&&(
         <div className="fade-up">
           <div style={{color:CA.muted2,fontSize:13,marginBottom:16,lineHeight:1.6}}>
-            To finish setting up your {data.tier==="elite"?"Elite":"Pro"} plan, we'll take you to our secure checkout at trainwilco.com. Your account is already created — you'll come right back to WILCO after.
+            To finish setting up your {data.tier==="elite"?"Elite":"Pro"} plan, we'll take you to our secure checkout at trainwilco.com. Your account is already created, and you'll come right back to WILCO after.
           </div>
           {(extCheckout==="idle"||extCheckout==="error"||extCheckout==="opening") && (
             <button onClick={startExternalCheckout} disabled={extCheckout==="opening"}
@@ -4837,7 +4846,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
               </div>
               <button onClick={finishAfterExternalCheckout} disabled={extCheckout==="finishing"}
                 style={btn(CA.accent,CA.onAccent,{opacity:extCheckout==="finishing"?0.7:1})}>
-                {extCheckout==="finishing" ? "Checking…" : "I've finished — Continue to WILCO →"}
+                {extCheckout==="finishing" ? "Checking…" : "I've finished. Continue to WILCO →"}
               </button>
               <button onClick={startExternalCheckout} style={{width:"100%",background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer",marginTop:12}}>
                 Didn't open? Tap to try again
@@ -8069,7 +8078,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             <span style={{...DISP,fontSize:16,color:CA.accent,lineHeight:1}}>{headerSessionCount}</span>
           </div>
           )}
-          <div style={{flex:1,minWidth:0,color:CA.muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{athlete.name}</div>
+          {/* Never crop a word (Will, T38): a long full name drops to first name
+              instead of ellipsizing mid-word on narrow phones. Ellipsis stays as
+              the last-resort guard for one very long single name. */}
+          <div style={{flex:1,minWidth:0,color:CA.muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(athlete.name||"").length>13?String(athlete.name||"").trim().split(/\s+/)[0]:athlete.name}</div>
           {/* Tier badge — athlete world holds the accent electric-blue (TIERS.color stays
               gold for the coach side / pricing; we repoint just this render). */}
           {(()=>{const t=TIERS[athlete.tier||"free"]||{badge:athlete.tier==="school"?"ORG":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
@@ -8138,7 +8150,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         <div style={{background:`${CA.accent}15`,borderBottom:`1px solid ${CA.accent}40`,padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexShrink:0}}>
           <div style={{color:CA.accent,fontSize:12}}>Help us personalize your program, takes 60 seconds.</div>
           <div style={{display:"flex",gap:6,flexShrink:0}}>
-            <button onClick={()=>setShowProfileCompletion(true)} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>Complete Profile</button>
+            <button onClick={()=>setShowProfileCompletion(true)} style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>Complete Profile</button>
             <button onClick={()=>{setProfileBannerDismissed(true);try{localStorage.setItem(`wilco_profile_banner_${athlete.id}`,"1");}catch(_){}}} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11}}>Later</button>
           </div>
         </div>
@@ -8154,7 +8166,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               try{localStorage.setItem(PUSH_PROMPT_KEY,"1");}catch(_){}
               setShowPushPrompt(false);
               try{ await enablePush(); }catch(_){}
-            }} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>Turn On</button>
+            }} style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700}}>Turn On</button>
             <button onClick={()=>{
               try{localStorage.setItem(PUSH_PROMPT_KEY,"1");}catch(_){}
               setShowPushPrompt(false);
@@ -8528,7 +8540,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 Cancel
               </button>
               <button onClick={()=>{ setMovementPrompt(false); videoInputRef.current?.click(); }}
-                style={{flex:2,background:CA.accent,border:"none",color:"#000",borderRadius:10,padding:"11px",cursor:"pointer",fontSize:14,fontWeight:700,...DISP,letterSpacing:1}}>
+                style={{flex:2,background:CA.accent,border:"none",color:CA.onAccent,borderRadius:10,padding:"11px",cursor:"pointer",fontSize:14,fontWeight:700,...DISP,letterSpacing:1}}>
                 Choose Video →
               </button>
             </div>
@@ -8642,12 +8654,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.amber,textTransform:"uppercase",display:"flex",gap:7,alignItems:"center"}}>
                     <span style={{width:6,height:6,borderRadius:"50%",background:CA.amber,boxShadow:`0 0 8px ${CA.amber}`}}/>AWAY OPS · TEMPORARY PROGRAM
                   </div>
-                  <div style={{...DISP,fontSize:26,letterSpacing:1,color:"#fff",margin:"9px 0 4px"}}>FIELD MODE</div>
-                  <div style={{fontSize:11.5,color:"#c9b98f"}}>No rack, no problem. Joe rebuilt today around what you've got.</div>
+                  <div style={{...DISP,fontSize:26,letterSpacing:1,color:IS_DARK?"#fff":CA.text,margin:"9px 0 4px"}}>FIELD MODE</div>
+                  <div style={{fontSize:11.5,color:IS_DARK?"#c9b98f":CA.muted2}}>No rack, no problem. Joe rebuilt today around what you've got.</div>
                 </div>
                 <div style={{border:`1px solid ${CA.amber}4d`,borderRadius:9,padding:12,background:"rgba(176,125,58,0.10)"}}>
                   <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:CA.amber,textTransform:"uppercase",marginBottom:8}}>Today, Adapted</div>
-                  <pre style={{color:"#eee",fontSize:12.5,lineHeight:1.8,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0}}>{athlete.temp_program_text}</pre>
+                  <pre style={{color:IS_DARK?"#eee":CA.text,fontSize:12.5,lineHeight:1.8,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0}}>{athlete.temp_program_text}</pre>
                 </div>
                 {athlete.program_text&&(
                   <div style={{border:`1px solid ${CA.border}`,borderRadius:9,padding:12,background:CA.navy3}}>
@@ -9456,7 +9468,10 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           <div style={{background:`${CA.amber}22`,border:`1px solid ${CA.amber}`,borderRadius:4,padding:"2px 8px",color:CA.amber,fontSize:10,fontWeight:700,letterSpacing:1,whiteSpace:"nowrap",flexShrink:0}}>SAMPLE</div>
         )}
         {phase==="ready"&&dayLabel&&dayLabel.length<=36&&(
-          <div style={{background:`${CA.blue}22`,border:`1px solid ${CA.blue}`,borderRadius:4,padding:"2px 8px",color:CA.blue,fontSize:10,fontWeight:700,letterSpacing:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dayLabel.toUpperCase()}</div>
+          /* Chip shows the SHORT day name only ("DAY 2", "PUSH A") — the full label
+             lives in Today's Focus right below. The old full label squeezed to a
+             cropped "DA..." chip on 390px phones (Will: never crop a word). */
+          <div style={{background:`${CA.blue}22`,border:`1px solid ${CA.blue}`,borderRadius:4,padding:"2px 8px",color:CA.blue,fontSize:10,fontWeight:700,letterSpacing:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{dayLabel.split(/\s*(?:[–—:·•]|-\s)\s*/)[0].trim().toUpperCase()}</div>
         )}
         <div style={{flex:1}}/>
         {/* "Save & Close" is doing teaching work, not decoration: it's the one place the
@@ -9472,7 +9487,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
               the athlete opened themselves. It's not a nudge attached to something
               else they were doing, so it can say the real reason without nagging. */}
           <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>Training to a plan is what turns workouts into progress you can measure, and it makes every log after this one tap. Or just ask me in chat for today's session and I'll build the log off that.</div>
-          <button onClick={onAddProgram} style={{background:CA.accent,color:"#000",border:"none",borderRadius:10,padding:"12px 28px",fontWeight:700,...DISP,letterSpacing:2,fontSize:15,cursor:"pointer"}}>Add My Program →</button>
+          <button onClick={onAddProgram} style={{background:CA.accent,color:CA.onAccent,border:"none",borderRadius:10,padding:"12px 28px",fontWeight:700,...DISP,letterSpacing:2,fontSize:15,cursor:"pointer"}}>Add My Program →</button>
         </div>
       ):phase==="loading"?(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
@@ -9595,7 +9610,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
           {/* The focus note goes WITH the log — it's the record of why this session
               mattered, and it's already paid for. See parsed_data.focus_note. */}
           <button data-tour="ql-send" onClick={()=>{if(!demo) qlClear(athlete.id);onSend(draft.replace(/\s*[@+]\s*_{2,}/g,"").trim(), notes||null, prep, logDate);}} disabled={!canSend}
-            style={{background:canSend?CA.accent:CA.navy3,color:canSend?"#000":CA.muted,border:`1px solid ${canSend?CA.accent:CA.border}`,borderRadius:12,padding:"14px",fontWeight:700,...DISP,letterSpacing:2,fontSize:16,cursor:canSend?"pointer":"not-allowed"}}>
+            style={{background:canSend?CA.accent:CA.navy3,color:canSend?CA.onAccent:CA.muted,border:`1px solid ${canSend?CA.accent:CA.border}`,borderRadius:12,padding:"14px",fontWeight:700,...DISP,letterSpacing:2,fontSize:16,cursor:canSend?"pointer":"not-allowed"}}>
             SEND TO CHAT →
           </button>
         </div>
@@ -9910,7 +9925,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                         <div style={{display:"flex",flexWrap:"wrap",gap:5,marginTop:6}}>
                           {allPainFlags.filter(p=>!resolvedPain.includes(p.area.toLowerCase())).map((p,pi)=>(
                             <div key={pi} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,padding:"3px 8px"}}>
-                              <span style={{color:"#ef4444",fontSize:11}}>⚠ {p.area}</span>
+                              <span style={{color:CA.red,fontSize:11}}>⚠ {p.area}</span>
                               <button onClick={()=>resolvePain(p.area)} title="Mark resolved: hides from active view" style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✓ resolved</button>
                             </div>
                           ))}
@@ -10189,7 +10204,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
             <div key={idx} style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"12px 14px",marginBottom:10}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{color:CA.text,fontWeight:700,fontSize:13}}>{r.name}</div>
-                <button onClick={()=>removeRow(idx)} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>Remove</button>
+                <button onClick={()=>removeRow(idx)} style={{background:"none",border:"none",color:CA.red,cursor:"pointer",fontSize:11}}>Remove</button>
               </div>
               {r.setDetails?(
                 /* A3: one editable line per actual set (warm-up badge preserved) —
@@ -10241,7 +10256,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
               )}
             </div>
           ))}
-          {err&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{err}</div>}
+          {err&&<div style={{color:CA.red,fontSize:12,marginBottom:10}}>{err}</div>}
         </div>
         {/* ⚠️ Flat paddingBottom — never env(safe-area-inset-bottom) (47941e6). */}
         <div style={{padding:"12px 20px",paddingBottom:"12px",borderTop:`1px solid ${CA.border}`,display:"flex",gap:10,flexShrink:0}}>
@@ -11182,9 +11197,9 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                       <button onClick={()=>{setEditingKey(null);setEditVal("");setManualMsg("");}} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:13}}>Cancel</button>
                     </div>
                     {row.manual&&(
-                      <button onClick={()=>removeManual(row)} style={{marginTop:8,background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,padding:0}}>Remove actual 1RM, go back to the estimate</button>
+                      <button onClick={()=>removeManual(row)} style={{marginTop:8,background:"none",border:"none",color:CA.red,cursor:"pointer",fontSize:11,padding:0}}>Remove actual 1RM, go back to the estimate</button>
                     )}
-                    {manualMsg&&<div style={{color:"#ef4444",fontSize:11,marginTop:6}}>{manualMsg}</div>}
+                    {manualMsg&&<div style={{color:CA.red,fontSize:11,marginTop:6}}>{manualMsg}</div>}
                   </div>
                 ):(
                   <button onClick={()=>{setEditingKey(row.key);setEditVal(row.manual?String(row.manual.weight):"");setManualMsg("");}} style={{marginTop:10,background:"none",border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>
@@ -11219,9 +11234,9 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
               ))}
             </div>
             <div style={{background:`${CA.accent}12`,border:`1px solid ${CA.accent}40`,borderRadius:10,padding:"9px 12px",color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:14}}>
-              Hit <span style={{color:"#a855f7",fontWeight:700}}>LEGENDARY</span>? Reach out to <a href="mailto:support@trainwilco.com" style={{color:CA.accent}}>support@trainwilco.com</a> to get your lift featured.
+              Hit <span style={{color:TIER_COLORS[TIER_COLORS.length-1],fontWeight:700}}>LEGENDARY</span>? Reach out to <a href="mailto:support@trainwilco.com" style={{color:CA.accent}}>support@trainwilco.com</a> to get your lift featured.
             </div>
-            <button onClick={()=>setShowRankInfo(false)} style={{width:"100%",background:CA.accent,border:"none",color:"#000",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Got it</button>
+            <button onClick={()=>setShowRankInfo(false)} style={{width:"100%",background:CA.accent,border:"none",color:CA.onAccent,borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Got it</button>
           </div>
         </div>
         );
@@ -11243,7 +11258,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                 </div>
               ))}
             </div>
-            <button onClick={()=>setShowScoreInfo(false)} style={{width:"100%",background:CA.accent,border:"none",color:"#000",borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Got it</button>
+            <button onClick={()=>setShowScoreInfo(false)} style={{width:"100%",background:CA.accent,border:"none",color:CA.onAccent,borderRadius:10,padding:"11px",fontWeight:700,...DISP,letterSpacing:1,fontSize:14,cursor:"pointer"}}>Got it</button>
           </div>
         </div>
       )}
@@ -11311,7 +11326,7 @@ function GoalGlance({goal, compact=false}){
   if(!goal) return null;
   const {targets=[], labels=[], more=0} = goal;
   if(!targets.length&&!labels.length) return null;
-  return (
+  if(IS_DARK) return (
     <div style={{marginTop:compact?8:9}}>
       {targets.map((t,i)=>(
         <div key={`${t.lift}-${i}`} style={{marginTop:i?7:0}}>
@@ -11335,6 +11350,54 @@ function GoalGlance({goal, compact=false}){
         <div key={l} style={{marginTop:targets.length?7:0,color:CA.muted,fontSize:11,lineHeight:1.4}}>{l}</div>
       ))}
       {more>0&&<div style={{marginTop:6,color:CA.faint,fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,letterSpacing:0.6}}>+{more} MORE</div>}
+    </div>
+  );
+  // Light brand (Draft-2 goal glance): lift name + number on a header line, an
+  // 8-segment rule underneath, and a "current of target" subcap. A hit target
+  // fills the rule in forest; a quiet one shows just the number it reached,
+  // no rule, never a miss state.
+  return (
+    <div style={{marginTop:compact?8:10}}>
+      {targets.map((t,i)=>{
+        const hit = t.state==="hit", quiet = t.state==="quiet";
+        const cur = t.currentLbs!=null?Math.round(t.currentLbs):null;
+        const tgt = t.targetLbs!=null?Math.round(t.targetLbs):null;
+        const pct = hit?1:Math.max(0,Math.min(1,t.pct??0));
+        const segf = pct*8;
+        const ink = hit?CA.green:quiet?CA.muted:CA.text;
+        return (
+          <div key={`${t.lift}-${i}`} style={{marginTop:i?10:0}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:6}}>
+              <span style={{fontSize:12.5,fontWeight:600,color:ink}}>{prettyLift(t.lift)}</span>
+              {hit&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,fontWeight:700,letterSpacing:0.8,color:CA.green,border:`1px solid ${CA.green}`,borderRadius:4,padding:"1px 6px"}}>HIT IT</span>}
+              <span style={{marginLeft:"auto",...DISP,fontSize:15,color:quiet?CA.muted:CA.led,fontVariantNumeric:"tabular-nums"}}>
+                {quiet?cur:tgt}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small>
+              </span>
+            </div>
+            {!quiet&&(
+              <>
+                <div style={{display:"flex",gap:3,margin:"5px 0 4px"}}>
+                  {Array.from({length:8},(_,s)=>{
+                    const f = Math.max(0,Math.min(1,segf-s));
+                    return (
+                      <span key={s} style={{flex:1,height:3.5,borderRadius:2,background:CA.border,position:"relative",overflow:"hidden"}}>
+                        {f>0&&<span style={{position:"absolute",top:0,bottom:0,left:0,width:`${f*100}%`,background:hit?CA.green:CA.accent}}/>}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,letterSpacing:0.3,color:hit?CA.green:CA.faint}}>
+                  {hit?`HIT AT ${cur??tgt}`:cur?`${cur} OF ${tgt}`:"NOTHING LOGGED YET"}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+      {labels.map(l=>(
+        <div key={l} style={{marginTop:targets.length?9:0,color:CA.muted,fontSize:11.5,lineHeight:1.5}}>{l}</div>
+      ))}
+      {more>0&&<div style={{marginTop:7,color:CA.faint,fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,letterSpacing:0.6}}>+{more} MORE</div>}
     </div>
   );
 }
@@ -11610,7 +11673,7 @@ function CrewTab({athlete, demo=false}){
               style={inpA({padding:"9px 11px",fontSize:13,flex:1})}/>
             {!isOrg&&looksLikeCode&&(
               <button onClick={()=>sendRequest(query)} disabled={requesting}
-                style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"9px 15px",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
+                style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:8,padding:"9px 15px",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
                 {requesting?"…":"Add"}
               </button>
             )}
@@ -11702,11 +11765,11 @@ function CrewTab({athlete, demo=false}){
                 // glance down the pucks reads the crew's week without any ranking.
                 const pc = target&&r.trainedThisWeek>=target ? CA.cyan : r.trainedThisWeek>0 ? CA.accent : CA.steel;
                 return (
-                  <div key={r.id} style={{position:"relative",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 13px",marginBottom:11}}>
+                  <div key={r.id} style={{position:"relative",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:IS_DARK?"12px 13px":"14px 15px",marginBottom:IS_DARK?11:13}}>
                     <div className="crewpuck" style={{"--pc":pc}}>{initialsOf(r.name)}</div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:isOrg?9:7}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:IS_DARK?(isOrg?9:7):(isOrg?10:9)}}>
                       <span style={{...DISP,fontSize:17,letterSpacing:0.8,lineHeight:1,color:CA.text}}>{r.name}</span>
-                      <span style={{marginLeft:"auto",fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:1,color:r.trainedThisWeek>0?CA.cyan:CA.muted}}>
+                      <span style={{marginLeft:"auto",fontFamily:"ui-monospace,Menlo,monospace",fontSize:IS_DARK?9:9.5,letterSpacing:1.1,color:r.trainedThisWeek>0?CA.cyan:CA.muted}}>
                         {r.trainedThisWeek}{target?` OF ${target}`:""}
                       </span>
                     </div>
@@ -11714,11 +11777,11 @@ function CrewTab({athlete, demo=false}){
                         three chips for room on a phone. Org rows have no controls at
                         all, so their height is unchanged. */}
                     {!isOrg&&(
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:9}}>
+                      <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:8,marginBottom:IS_DARK?9:11}}>
                         {/* Comparison opt-in. Yours only: it takes both of you to
                             turn it on, and switching it off never tells them. */}
                         <button onClick={()=>toggleCompare(r.id,!r.compareMine)} disabled={cmpBusy===r.id}
-                          style={{background:r.compareMine?`${CA.accent}18`:"none",border:`1px solid ${r.compareMine?CA.accent:CA.border}`,color:r.compareMutual?CA.cyan:r.compareMine?CA.accent:CA.faint,borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:9.5,fontWeight:700,letterSpacing:0.6,fontFamily:"ui-monospace,Menlo,monospace"}}>
+                          style={{background:r.compareMine?`${CA.accent}18`:"none",border:`1px solid ${r.compareMine?CA.accent:CA.border}`,color:r.compareMutual?CA.cyan:r.compareMine?CA.accent:CA.faint,borderRadius:6,padding:IS_DARK?"2px 8px":"3px 10px",cursor:"pointer",fontSize:IS_DARK?9.5:10,fontWeight:700,letterSpacing:0.6,fontFamily:"ui-monospace,Menlo,monospace"}}>
                           {r.compareMutual?"COMPARING":r.compareMine?"WAITING":"COMPARE"}
                         </button>
                         {/* Nobody should have to tap a thing to find out what it does,
@@ -11737,7 +11800,7 @@ function CrewTab({athlete, demo=false}){
                         <div>You both have to turn it on, and either of you can turn it off whenever. Completely optional. Iron sharpens iron.</div>
                       </div>
                     )}
-                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                    <div style={{display:"flex",alignItems:"center",gap:IS_DARK?3:4}}>
                       {chain.map((on,k)=><div key={k} className={`streaklnk${on?" on":""}`}/>)}
                     </div>
                     <GoalGlance goal={r.goal}/>
@@ -11799,7 +11862,7 @@ function CrewTab({athlete, demo=false}){
                     <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                       <span style={{color:CA.text,fontSize:13}}>{p.otherName ? `${p.otherName} wants to join your crew` : "Someone wants to join your crew"}</span>
                       <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:"#000",borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
+                        <button onClick={()=>accept(p.id)} disabled={busyId===p.id} style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Accept</button>
                         <button onClick={()=>decline(p.id)} disabled={busyId===p.id} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"6px 10px",cursor:"pointer",fontSize:11}}>Decline</button>
                       </div>
                     </div>
@@ -11816,7 +11879,7 @@ function CrewTab({athlete, demo=false}){
                     <button onClick={shareCode} style={{background:CA_BTN,border:"none",color:"#fff",borderRadius:6,padding:"3px 11px",cursor:"pointer",fontSize:10.5,fontWeight:700,letterSpacing:0.5,boxShadow:`0 2px 10px ${CA_GLOW}`}}>Share</button>
                   </div>
                 ):(
-                  <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:"#000",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
+                  <button onClick={ensureCode} style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:8}}>Get my code</button>
                 )}
                 <div style={{color:CA.muted2,fontSize:11.5,lineHeight:1.5,marginBottom:10}}>Share sends a text with your code and a link to get the app, so it works on someone who doesn't have WILCO yet.</div>
                 {shareMsg&&<div style={{color:CA.cyan,fontSize:11.5,marginBottom:10}}>{shareMsg}</div>}
@@ -12005,7 +12068,7 @@ function ProfileCompletionModal({athlete, onClose, onSave}) {
               const sel=data.equipment.includes(eq);
               return <div key={eq} onClick={()=>setD("equipment",sel?data.equipment.filter(e=>e!==eq):[...data.equipment,eq])}
                 style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",marginBottom:6,padding:"10px 12px",background:sel?`${CA.accent}18`:CA.navy3,borderRadius:8,border:`2px solid ${sel?CA.accent:CA.border}`,transition:"all 0.15s"}}>
-                <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${sel?CA.accent:CA.muted}`,background:sel?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:"#000",fontWeight:700}}>{sel?"✓":""}</div>
+                <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${sel?CA.accent:CA.muted}`,background:sel?CA.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:9,color:CA.onAccent,fontWeight:700}}>{sel?"✓":""}</div>
                 <div style={{color:CA.text,fontSize:13,fontWeight:600}}>{eq}</div>
               </div>;
             })}
@@ -12244,7 +12307,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
       if(!fresh.athlete) throw new Error("Couldn't confirm your plan yet. Try again in a moment.");
       setExtUpgrade("idle");
       onCoachUpdate(fresh.athlete);
-      setUpgradeMsg(fresh.athlete.tier===selectedTier ? "You're all set! Your "+selectedTier.toUpperCase()+" plan is active." : "Still processing — check back in a moment.");
+      setUpgradeMsg(fresh.athlete.tier===selectedTier ? "You're all set! Your "+selectedTier.toUpperCase()+" plan is active." : "Still processing. Check back in a moment.");
       setTimeout(()=>setUpgradeMsg(""),5000);
     } catch(e){ setExtUpgrade("opened"); setUpgradeMsg(e.message || "Couldn't confirm payment yet. Try again in a moment."); }
   };
@@ -12305,7 +12368,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
             {proofEnabled&&<div style={{color:CA.muted,fontSize:10,marginBottom:10}}>Your timezone: {tz}</div>}
             <div style={{display:"flex",gap:8}}>
               <button onClick={saveProofSchedule} disabled={proofSaving} style={{flex:1,background:proofSaving?CA.navy:CA.navy,border:`1px solid ${CA.border}`,color:CA.text,borderRadius:8,padding:"9px",cursor:proofSaving?"default":"pointer",fontSize:13,fontWeight:600}}>{proofSaving?"Saving...":"Save schedule"}</button>
-              <button onClick={runProofNow} disabled={runningNow} style={{flex:1,background:runningNow?CA.navy3:CA.accent,border:"none",color:runningNow?CA.muted:"#000",borderRadius:8,padding:"9px",cursor:runningNow?"default":"pointer",fontSize:13,fontWeight:700,...DISP,letterSpacing:1}}>{runningNow?"Generating...":"Run now"}</button>
+              <button onClick={runProofNow} disabled={runningNow} style={{flex:1,background:runningNow?CA.navy3:CA.accent,border:"none",color:runningNow?CA.muted:CA.onAccent,borderRadius:8,padding:"9px",cursor:runningNow?"default":"pointer",fontSize:13,fontWeight:700,...DISP,letterSpacing:1}}>{runningNow?"Generating...":"Run now"}</button>
             </div>
             {proofSaveMsg&&<div style={{color:proofSaveMsg==="Saved."?CA.green:CA.red,fontSize:11,marginTop:8,textAlign:"center"}}>{proofSaveMsg}</div>}
             {runNowMsg&&<div style={{color:runNowMsg.startsWith("✓")?CA.green:CA.muted,fontSize:11,marginTop:8,textAlign:"center",lineHeight:1.4}}>{runNowMsg}</div>}
@@ -12453,7 +12516,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                 <button key={b} onClick={()=>setSelectedBilling(b)}
                   style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,letterSpacing:1,...DISP,
                     background:selectedBilling===b?CA.accent:"transparent",
-                    color:selectedBilling===b?"#000":CA.muted,transition:"all 0.15s"}}>
+                    color:selectedBilling===b?CA.onAccent:CA.muted,transition:"all 0.15s"}}>
                   {b==="monthly"?"MONTHLY":"ANNUAL · SAVE ~17%"}
                 </button>
               ))}
@@ -12477,16 +12540,16 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
               return (
                 <div key={key}
                   onClick={()=>setSelectedTier(key)}
-                  style={{background:isSelected?`${t.color}20`:CA.navy3,border:`2px solid ${isSelected?t.color:CA.border}`,borderRadius:10,padding:"10px 14px",cursor:"pointer",transition:"all 0.15s",position:"relative"}}>
+                  style={{background:isSelected?(IS_DARK?`${t.color}20`:`${CA.accent}0d`):CA.navy3,border:`2px solid ${isSelected?(IS_DARK?t.color:CA.accent):CA.border}`,borderRadius:10,padding:"10px 14px",cursor:"pointer",transition:"all 0.15s",position:"relative"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
-                    <div style={{...DISP,fontSize:16,color:t.color,letterSpacing:2}}>{t.label}</div>
+                    <div style={{...DISP,fontSize:16,color:IS_DARK?t.color:(key==="pro"?CA.accent:CA.text),letterSpacing:2}}>{t.label}</div>
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <div style={{color:CA.text,fontSize:13,fontWeight:700}}>{pricing[key][selectedBilling]}</div>
-                      {isCurrent&&<span style={{background:t.color,color:"#000",fontSize:9,fontWeight:800,borderRadius:4,padding:"2px 6px",letterSpacing:1}}>CURRENT</span>}
+                      {isCurrent&&<span style={{background:IS_DARK?t.color:CA.accent,color:CA.onAccent,fontSize:9,fontWeight:800,borderRadius:4,padding:"2px 6px",letterSpacing:1}}>CURRENT</span>}
                     </div>
                   </div>
                   <div style={{color:CA.muted2,fontSize:11,lineHeight:1.4}}>{tierFeatures[key]}</div>
-                  {isSelected&&!isCurrent&&<div style={{position:"absolute",top:8,right:8,width:16,height:16,borderRadius:"50%",background:t.color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#000",fontWeight:800}}>✓</div>}
+                  {isSelected&&!isCurrent&&<div style={{position:"absolute",top:8,right:8,width:16,height:16,borderRadius:"50%",background:IS_DARK?t.color:CA.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:CA.onAccent,fontWeight:800}}>✓</div>}
                 </div>
               );
             })}
@@ -12503,7 +12566,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                 placeholder="Enter PIN to confirm"
                 style={inpA({textAlign:"center",letterSpacing:6,marginBottom:8})}/>
               <button onClick={startUpgrade} disabled={upgrading}
-                style={btn(TIERS[selectedTier].color,"#000",{opacity:upgrading?0.7:1,cursor:upgrading?"not-allowed":"pointer"})}>
+                style={btn(IS_DARK?TIERS[selectedTier].color:CA.accent,IS_DARK?"#000":CA.onAccent,{opacity:upgrading?0.7:1,cursor:upgrading?"not-allowed":"pointer"})}>
                 {upgrading?"Updating...":hasStripeSub?`Switch to ${TIERS[selectedTier].label} →`:`Subscribe to ${TIERS[selectedTier].label} →`}
               </button>
             </div>
@@ -12535,8 +12598,8 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                     Finish your payment in the browser tab that just opened, then come back here.
                   </div>
                   <button onClick={finishExternalUpgrade} disabled={extUpgrade==="finishing"}
-                    style={btn(TIERS[selectedTier].color,"#000",{opacity:extUpgrade==="finishing"?0.7:1})}>
-                    {extUpgrade==="finishing" ? "Checking…" : "I've finished — Check My Plan →"}
+                    style={btn(IS_DARK?TIERS[selectedTier].color:CA.accent,IS_DARK?"#000":CA.onAccent,{opacity:extUpgrade==="finishing"?0.7:1})}>
+                    {extUpgrade==="finishing" ? "Checking…" : "I've finished. Check My Plan →"}
                   </button>
                 </>
               )}
@@ -12575,7 +12638,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
             // dismisses the native sheet without picking anything.
             if(isNativeIOS()){
               import("@capacitor/share").then(({ Share }) =>
-                Share.share({ title:"WILCO", text:`Use my code ${code} at trainwilco.com — your first month free.` }).catch(()=>{})
+                Share.share({ title:"WILCO", text:`Use my code ${code} at trainwilco.com. Your first month free.` }).catch(()=>{})
               ).catch(()=>{});
               haptic(10);
               return;
@@ -12656,7 +12719,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                 style={inpA({textAlign:"center",letterSpacing:6,flex:1})}/>
               {cancelAtPeriodEnd ? (
                 <button onClick={resumeSub} disabled={actionBusy}
-                  style={{flex:2,background:CA.green,border:"none",color:"#000",borderRadius:10,padding:"0 12px",cursor:"pointer",fontSize:13,fontWeight:700,opacity:actionBusy?0.7:1}}>
+                  style={{flex:2,background:CA.green,border:"none",color:CA.onAccent,borderRadius:10,padding:"0 12px",cursor:"pointer",fontSize:13,fontWeight:700,opacity:actionBusy?0.7:1}}>
                   {actionBusy?"Working...":"Resume Plan"}
                 </button>
               ) : (

@@ -150,7 +150,7 @@ const DRAFTING_LINES = [
   "Writing week 1, day by day…",
   "Setting loads and progressions…",
   "Adding every warm-up and cool-down…",
-  "Final pass — checking the details…",
+  "Final pass, checking the details…",
 ];
 
 export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, workoutHistory = [], onSaveToProgram, onParked }) {
@@ -219,7 +219,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const e = GEN.get(id);
       GEN.delete(id);
       if (e?.status === "done") { setDraftText(e.text); setPhase("draft"); }
-      else if (e?.status === "error") { setErr("Draft didn't come through — hit DRAFT IT again."); setPhase("interview"); }
+      else if (e?.status === "error") { setErr("Draft didn't come through. Hit DRAFT IT again."); setPhase("interview"); }
     };
     if (g.status === "running") { setPhase("drafting"); g.promise.then(sync, sync); }
     else sync();
@@ -275,7 +275,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const bp = precharge({ athlete, goals, lastBlock, viewer, liftProgress: liftDeltaLine(workoutHistory, lastBlock?.applied_at) });
       if (rebuildFrom) {
         const name = rebuildFrom.block_summary || (rebuildFrom.program_text || "").split("\n").find(l => l.trim()) || "a previous block";
-        bp.handoff = { value: `REBUILD of a past block: ${name}. Its full text is the starting template — keep what worked, change what the interview surfaces.`, source: "known" };
+        bp.handoff = { value: `REBUILD of a past block: ${name}. Its full text is the starting template. Keep what worked, change what the interview surfaces.`, source: "known" };
       }
       setBlueprint(bp);
       setPhase("interview");
@@ -340,7 +340,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       setChips(ch);
       // Park the opener too: switching away and back must never re-spend this call.
       park(bp, t1, "interview", null);
-    } catch (e) { setErr("Couldn't reach Joe — try again in a sec."); }
+    } catch (e) { setErr("Couldn't reach Joe. Try again in a sec."); }
     setBusy(false);
   };
 
@@ -378,12 +378,12 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       if (named && templateRef.current?.id !== named.id) {
         templateRef.current = named;
         bp.__templatePhase = named.id;
-        bp.handoff = { value: `Building off the past phase "${named.block_name}": ${named.block_recap || named.block_summary || "on record"}. Its structure is the starting template — keep what worked, change what this interview surfaces.`, source: "interview" };
+        bp.handoff = { value: `Building off the past phase "${named.block_name}": ${named.block_recap || named.block_summary || "on record"}. Its structure is the starting template. Keep what worked, change what this interview surfaces.`, source: "interview" };
       }
       setBlueprint(bp);
       const done = blueprintPct(bp, cells) === 100;
       if (done && !wasDone) {
-        const closing = "That's everything I need — the blueprint's at 100%. Hit ⚡ DRAFT IT when you're ready. Or keep going: I hold onto everything you tell me, and the more you give me about how you want this block to look and feel, the better it comes out.";
+        const closing = "That's everything I need: the blueprint's at 100%. Hit ⚡ DRAFT IT when you're ready. Or keep going: I hold onto everything you tell me, and the more you give me about how you want this block to look and feel, the better it comes out.";
         const t2 = [...t1, { role: "assistant", content: closing }];
         setTranscript(t2); setChips([]);
         park(bp, t2, "interview", null);
@@ -396,7 +396,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         setTranscript(t2); setChips(ch);
         park(bp, t2, "interview", null);
       }
-    } catch (e) { setErr("Couldn't reach Joe — your answers are safe, try again."); }
+    } catch (e) { setErr("Couldn't reach Joe. Your answers are safe, try again."); }
     setBusy(false);
   };
 
@@ -418,7 +418,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       if (tmpl) userPrompt += `\n\nPREVIOUS BLOCK (starting template — keep its working structure unless the blueprint says otherwise):\n${tmpl.slice(0, 3000)}`;
       startGeneration(id, { cached: doctrine(), sys, userPrompt, blueprint, cells });
       attachGen(id);
-    } catch (e) { setErr("Draft didn't come through — try DRAFT IT again."); setPhase("interview"); }
+    } catch (e) { setErr("Draft didn't come through. Try DRAFT IT again."); setPhase("interview"); }
     setBusy(false);
   };
 
@@ -431,12 +431,12 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const sys = `You are applying ONE change to a training program draft for its owner. Return ONLY the complete updated program text — no preamble, no fences. Make ONLY the change requested; preserve every other line character-for-character; keep the format.`;
       const raw = await askClaude(sys, `CURRENT DRAFT:\n${draftText}\n\nREQUESTED CHANGE: ${req}`, 4000, [], "claude-sonnet-5", "program_apply_change");
       const guard = mergeGuard(draftText, raw);
-      if (!guard.ok) { setErr("Couldn't make that change cleanly — say it more specifically."); }
+      if (!guard.ok) { setErr("Couldn't make that change cleanly. Say it more specifically."); }
       else {
         setDraftText(guard.text); setEditReq("");
         park(blueprint, transcript, "draft", guard.text);
       }
-    } catch (e) { setErr("Couldn't make that change — try again."); }
+    } catch (e) { setErr("Couldn't make that change. Try again."); }
     setBusy(false);
   };
 
@@ -451,7 +451,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       track("builder_draft_applied", "ai");
       setConfirmSave(null);
       setPhase("saved");
-    } catch (e) { setErr("Couldn't save that — try again in a sec."); }
+    } catch (e) { setErr("Couldn't save that. Try again in a sec."); }
     setBusy(false);
   };
 
@@ -509,11 +509,14 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
     <div style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%", minHeight: 0 }}>
       <style>{BUILDER_CSS}</style>
 
-      {/* ── Blueprint console: master cell + sub-cells ── */}
-      <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: 13, background: "rgba(31,42,55,0.45)", flexShrink: 0 }}>
+      {/* ── Blueprint console: master cell + sub-cells ──
+          Light brand (Draft-2): cream card, ledger-segment master line, field
+          CHIPS (green ✓ / · Known, amber · on file, plain open). Dark keeps the
+          original HUD console (grey scrim + battery tubes) untouched. */}
+      <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: 13, background: IS_DARK ? "rgba(31,42,55,0.45)" : CA.navy3, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 7 }}>
           <span style={{ ...DISP, fontSize: 15, letterSpacing: 1.5, color: CA.text }}>BLUEPRINT</span>
-          <span title="The Builder is brand new — double-check what Joe writes and tell us if something feels off."
+          <span title="The Builder is brand new. Double-check what Joe writes and tell us if something feels off."
             style={{ ...mono, fontSize: 7.5, letterSpacing: 1, color: CA.amber, border: `1px solid ${CA.amber}88`, borderRadius: 4, padding: "1px 4px" }}>BETA</span>
           <span style={{ ...mono, fontSize: 11, color: pct === 100 ? CA.led : CA.accent }}>{pct}%</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 4, alignItems: "center" }}>
@@ -530,24 +533,39 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
                 <button onClick={() => setResetArm(false)} style={{ ...miniBtn(false), padding: "2px 8px", fontSize: 9.5 }}>Keep</button>
               </>
             ) : (
-              <button onClick={() => setResetArm(true)} title="Wipe this interview and start over — every pre-filled bar goes back to unconfirmed"
+              <button onClick={() => setResetArm(true)} title="Wipe this interview and start over. Every pre-filled bar goes back to unconfirmed"
                 style={{ ...miniBtn(false), padding: "2px 8px", fontSize: 9.5, textTransform: "uppercase", letterSpacing: 1 }}>
                 ↺ Reset
               </button>
             ))}
           </span>
         </div>
-        <div className={`hcell${go ? " go" : ""}`} style={{ marginBottom: 10 }}>
-          <div className="htube">
-            <div className="hfill" style={{ "--pct": pct / 100, "--tc": pct === 100 ? CA.led : CA.accent, "--tb": pct === 100 ? 0.75 : pct / 130 }} />
+        {IS_DARK ? (
+          <div className={`hcell${go ? " go" : ""}`} style={{ marginBottom: 10 }}>
+            <div className="htube">
+              <div className="hfill" style={{ "--pct": pct / 100, "--tc": pct === 100 ? CA.led : CA.accent, "--tb": pct === 100 ? 0.75 : pct / 130 }} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ display: "flex", gap: 3, marginBottom: 11 }}>
+            {Array.from({ length: 8 }, (_, s) => {
+              const f = Math.max(0, Math.min(1, (pct / 100) * 8 - s));
+              const tc = pct === 100 ? CA.green : CA.accent;
+              return (
+                <span key={s} style={{ flex: 1, height: 4, borderRadius: 2, background: CA.border, position: "relative", overflow: "hidden" }}>
+                  {f > 0 && <span style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: `${f * 100}%`, background: tc }} />}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {IS_DARK ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(118px,1fr))", gap: "8px 12px" }}>
           {cells.map(c => {
             const b = blueprint?.[c.key];
             const chargedCell = !!b?.value;
             return (
-              <div key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${!chargedCell && b?.pending ? `\nOn file: ${b.pending} — Joe will confirm it with you.` : ""}`}>
+              <div key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${!chargedCell && b?.pending ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}>
                 <div style={{ display: "flex", gap: 5, alignItems: "baseline", marginBottom: 3 }}>
                   <span style={{ fontSize: 10.5, color: chargedCell ? CA.text : CA.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
                   {b?.source === "known" && chargedCell && <span style={{ ...mono, fontSize: 7.5, color: CA.muted }}>KNOWN</span>}
@@ -557,13 +575,29 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
             );
           })}
         </div>
+        ) : (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {cells.map(c => {
+            const b = blueprint?.[c.key];
+            const chargedCell = !!b?.value;
+            const onFile = !chargedCell && !!b?.pending;
+            const col = chargedCell ? CA.green : onFile ? CA.amber : CA.muted;
+            return (
+              <span key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${onFile ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}
+                style={{ fontSize: 11, fontWeight: 600, fontFamily: "'Inter'", padding: "5px 11px", borderRadius: 999, border: `1px solid ${chargedCell || onFile ? col : CA.border}`, color: col, background: CA.navy2, whiteSpace: "nowrap" }}>
+                {c.label}{chargedCell ? (b?.source === "known" ? " · Known" : " ✓") : onFile ? " · on file" : ""}
+              </span>
+            );
+          })}
+        </div>
+        )}
       </div>
 
       {/* ── Scheduled state: future start date → parked, not applied ── */}
       {phase === "scheduled" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ border: `1px solid ${CA.accent}55`, background: `${CA.accent}0d`, borderRadius: 12, padding: 16, color: CA.text, fontSize: 13, lineHeight: 1.7 }}>
-            📅 Scheduled — this program is parked in <b>Drafts</b>, planned for <b>{parseTimeline(blueprint?.timeline?.value).start}</b>. When the date comes (or your current phase wraps), Joe offers to swap it in with one tap. Want it sooner? Apply it any time from Drafts.
+            📅 Scheduled. This program is parked in <b>Drafts</b>, planned for <b>{parseTimeline(blueprint?.timeline?.value).start}</b>. When the date comes (or your current phase wraps), Joe offers to swap it in with one tap. Want it sooner? Apply it any time from Drafts.
           </div>
           <div>
             <button onClick={resetAll} style={priBtn}>START A NEW PROGRAM</button>
@@ -575,7 +609,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       {phase === "saved" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ border: `1px solid ${CA.green}55`, background: `${CA.green}0d`, borderRadius: 12, padding: 16, color: CA.text, fontSize: 13, lineHeight: 1.7 }}>
-            ✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} — it drives every session from here. The old phase is archived under Phases.
+            ✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} . It drives every session from here. The old phase is archived under Phases.
           </div>
           <div>
             <button onClick={resetAll} style={priBtn}>START A NEW PROGRAM</button>
@@ -585,14 +619,14 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
 
       {/* ── Drafting: Joe writes in the background — leaving is safe ── */}
       {phase === "drafting" && (
-        <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: "22px 18px", background: "rgba(31,42,55,0.45)", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ border: `1px solid ${CA.border}`, borderRadius: 12, padding: "22px 18px", background: IS_DARK ? "rgba(31,42,55,0.45)" : CA.navy3, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ ...DISP, fontSize: 17, letterSpacing: 2, color: CA.text }}>⚡ JOE'S WRITING YOUR BLOCK</div>
           <div className="htube" style={{ height: 14 }}>
             <div className="bscan" />
           </div>
           <div key={draftLine} className="bline" style={{ ...mono, fontSize: 12, color: CA.accent, minHeight: 18 }}>{DRAFTING_LINES[draftLine]}</div>
           <div style={{ color: CA.muted, fontSize: 11.5, lineHeight: 1.6 }}>
-            You don't have to watch — leave this tab and Joe keeps writing. The finished draft lands in <b>Drafts</b>.
+            You don't have to watch. Leave this tab and Joe keeps writing. The finished draft lands in <b>Drafts</b>.
           </div>
         </div>
       )}
@@ -602,8 +636,8 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1, minHeight: 0 }}>
           {confirmSave ? (
             <div style={{ overflowY: "auto" }}>
-              <div style={subhead}>Review — replaces the current program</div>
-              <div style={{ border: `1px solid ${CA.border}`, borderRadius: 10, background: "rgba(31,42,55,0.4)", padding: "10px 12px", maxHeight: 260, overflowY: "auto", margin: "8px 0 10px" }}>
+              <div style={subhead}>Review: replaces the current program</div>
+              <div style={{ border: `1px solid ${CA.border}`, borderRadius: 10, background: IS_DARK ? "rgba(31,42,55,0.4)" : CA.navy2, padding: "10px 12px", maxHeight: 260, overflowY: "auto", margin: "8px 0 10px" }}>
                 {confirmSave.map((d, i) => (
                   <div key={i} style={{ ...mono, fontSize: 11.5, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word", color: d.type === "add" ? CA.green : d.type === "del" ? CA.red : CA.muted, opacity: d.type === "same" ? 0.55 : 1 }}>
                     {d.type === "add" ? "+ " : d.type === "del" ? "− " : "  "}{d.text || " "}
@@ -617,12 +651,12 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
             </div>
           ) : (
             <>
-              <div style={subhead}>Draft — edit by hand, or tell Joe what to change</div>
+              <div style={subhead}>Draft: edit by hand, or tell Joe what to change</div>
               <textarea value={draftText} onChange={e => setDraftText(e.target.value)} rows={14}
                 style={{ flex: 1, minHeight: 180, width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono, ...PAPER_GRID }} />
               <div style={{ display: "flex", gap: 6 }}>
                 <input value={editReq} onChange={e => setEditReq(e.target.value)} onKeyDown={e => { if (e.key === "Enter") tellJoe(); }}
-                  placeholder='Tell Joe what to change — "swap day 2 to dumbbells"'
+                  placeholder='Tell Joe what to change: "swap day 2 to dumbbells"'
                   style={{ flex: 1, background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 9, padding: "8px 11px", color: CA.text, fontSize: 12, outline: "none", fontFamily:"'Inter'" }} />
                 <button onClick={tellJoe} disabled={busy || !editReq.trim()} style={miniBtn(!!editReq.trim())}>{busy ? "…" : "Apply"}</button>
               </div>
@@ -690,7 +724,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
             {draftText.trim() && pct === 100 && !busy && (
               <button onClick={() => setPhase("draft")} style={miniBtn(false)}>View draft</button>
             )}
-            {pct < 100 && <span style={{ color: CA.muted, fontSize: 10.5 }}>Joe drafts only from a 100% blueprint — {cells.length - filledCount(blueprint || {}, cells)} cell{cells.length - filledCount(blueprint || {}, cells) !== 1 ? "s" : ""} to go.</span>}
+            {pct < 100 && <span style={{ color: CA.muted, fontSize: 10.5 }}>Joe drafts only from a 100% blueprint, {cells.length - filledCount(blueprint || {}, cells)} cell{cells.length - filledCount(blueprint || {}, cells) !== 1 ? "s" : ""} to go.</span>}
             <button onClick={async () => { await park(blueprint, transcript, draftText ? "draft" : "interview", draftText || null); onParked && onParked(); }} disabled={busy || !blueprint || transcript.length === 0}
               style={{ ...miniBtn(false), marginLeft: "auto" }}>
               Save & exit → Drafts
@@ -869,7 +903,7 @@ QUESTION: <one short question>`;
             <div style={{ ...mono, fontSize: 9, letterSpacing: 2, color: CA.accent, textTransform: "uppercase" }}>
               Proposed change · {proposal.stats.added} added, {proposal.stats.removed} removed
             </div>
-            <div style={{ maxHeight: 220, overflowY: "auto", background: "rgba(31,42,55,0.18)", borderRadius: 8, padding: "8px 10px" }}>
+            <div style={{ maxHeight: 220, overflowY: "auto", background: IS_DARK ? "rgba(31,42,55,0.18)" : CA.navy2, borderRadius: 8, padding: "8px 10px" }}>
               {proposal.diff.filter(d => d.type !== "same").length === 0
                 ? <div style={{ color: CA.muted, fontSize: 11 }}>No line-level differences.</div>
                 : proposal.diff.map((d, i) => d.type === "same" ? null : (

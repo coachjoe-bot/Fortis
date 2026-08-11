@@ -374,7 +374,7 @@ function CoachesList({coaches,schools,onRefresh}) {
               </div>
             ) : (
               <div style={{padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:36,height:36,borderRadius:"50%",background:`linear-gradient(135deg,#57a0ff,#2a63e6)`,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:16,color:"#fff",flexShrink:0}}>{c.name?.[0]?.toUpperCase()||"?"}</div>
+                <div style={{width:36,height:36,borderRadius:"50%",background:IS_DARK?"linear-gradient(135deg,#57a0ff,#2a63e6)":CA.accent,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:16,color:"#fff",flexShrink:0}}>{c.name?.[0]?.toUpperCase()||"?"}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{color:CA.text,fontWeight:600,fontSize:14}}>{c.name}</div>
                   <div style={{color:CA.muted,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -1263,7 +1263,7 @@ function CoachDashboard({coach,onLogout}) {
                               {selectedIds.has(a.id)&&"✓"}
                             </div>
                           ):(
-                          <div style={{width:34,height:34,borderRadius:"50%",background:`linear-gradient(135deg,#57a0ff,#2a63e6)`,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:15,color:"#fff",flexShrink:0}}>{a.name[0].toUpperCase()}</div>
+                          <div style={{width:34,height:34,borderRadius:"50%",background:IS_DARK?"linear-gradient(135deg,#57a0ff,#2a63e6)":CA.accent,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:15,color:"#fff",flexShrink:0}}>{a.name[0].toUpperCase()}</div>
                           )}
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{color:CA.text,fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}>{a.name}{a.certified_badge_earned_at&&<span title="WILCO Certified" style={{color:CA.accent,fontSize:10,flexShrink:0}}>✦</span>}</div>
@@ -1607,7 +1607,7 @@ function CoachDashboard({coach,onLogout}) {
                         </div>
                       )}
                       {isTeam&&Array.isArray(c.actions)&&c.actions.length>0&&(
-                        <div style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.3)",borderRadius:10,padding:"12px 14px"}}>
+                        <div style={{background:`${CA.green}1a`,border:`1px solid ${CA.green}4d`,borderRadius:10,padding:"12px 14px"}}>
                           <div style={{color:CA.green,fontSize:10,fontWeight:700,letterSpacing:1.5,marginBottom:6}}>COACH ACTIONS</div>
                           <ul style={{margin:0,paddingLeft:16,color:CA.text,fontSize:13,lineHeight:1.7}}>{c.actions.map((act,i)=><li key={i}>{act}</li>)}</ul>
                         </div>
@@ -2674,7 +2674,7 @@ const EDITION_SERIF = "Georgia,'Times New Roman',serif";
 // "The Proof" newspaper so the two editions read as one franchise.
 const EDITION_MAST = "'Playfair Display',Georgia,serif";
 // Cool LED ink for the edition (replaces navy-era text colors).
-const EDITION_HEAD = "#eaf1ff", EDITION_BODY = "#aebfd8";
+const EDITION_HEAD = IS_DARK ? "#eaf1ff" : CA.text, EDITION_BODY = IS_DARK ? "#aebfd8" : CA.muted2;
 
 // Did the coach ask a question back (vs. answer)? Mirrors the athlete check-in's
 // clarifying-question detection so WILCO answers once, then re-asks.
@@ -2855,7 +2855,7 @@ function showWinsOverlay(dataUrl){
   ov.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(255,255,255,0.98);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;";
   const img=document.createElement("img");
   img.src=dataUrl; img.alt="WILCO: Wins This Week";
-  img.style.cssText="max-width:min(86vw,420px);max-height:70vh;border-radius:14px;box-shadow:0 8px 48px rgba(58,123,255,0.35);";
+  img.style.cssText=`max-width:min(86vw,420px);max-height:70vh;border-radius:14px;box-shadow:0 8px 48px ${IS_DARK?"rgba(58,123,255,0.35)":"rgba(31,42,55,0.18)"};`;
   const cap=document.createElement("div");
   cap.textContent="Press and hold the image, then tap “Add to Photos.”";
   cap.style.cssText=`color:${CA.text};font-family:'Inter',system-ui,-apple-system,sans-serif;font-size:14px;text-align:center;max-width:320px;line-height:1.5;`;
@@ -3015,7 +3015,7 @@ function CoachCheckin({digest, team, coach, onRead}){
         {msgs.map((m,i)=>(
           m.role==="sys"
             ? <div key={i} style={{alignSelf:"center",color:CA.green,fontSize:12,...DISP,letterSpacing:0.5}}>{m.text}</div>
-            : <div key={i} style={{alignSelf:m.role==="coach"?"flex-end":"flex-start",maxWidth:"85%",background:m.role==="coach"?"linear-gradient(135deg,#3f7bff,#2258e0)":CA.navy3,border:m.role==="coach"?"none":`1px solid ${CA.border}`,color:m.role==="coach"?"#fff":CA.text,padding:"9px 12px",borderRadius:12,fontSize:13.5,lineHeight:1.5,fontWeight:m.role==="coach"?500:400}}>{m.text}</div>
+            : <div key={i} style={{alignSelf:m.role==="coach"?"flex-end":"flex-start",maxWidth:"85%",background:m.role==="coach"?(IS_DARK?"linear-gradient(135deg,#3f7bff,#2258e0)":CA.accent):CA.navy3,border:m.role==="coach"?"none":`1px solid ${CA.border}`,color:m.role==="coach"?"#fff":CA.text,padding:"9px 12px",borderRadius:12,fontSize:13.5,lineHeight:1.5,fontWeight:m.role==="coach"?500:400}}>{m.text}</div>
         ))}
         <div ref={endRef}/>
       </div>
@@ -3794,7 +3794,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       {/* flexWrap: on narrow screens the status chips drop to their own row instead
           of crushing into the name (the ⚠ Pain smush) */}
       <div style={{padding:"16px 20px",borderBottom:`1px solid ${CA.border}`,background:CA.navy3,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-        <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,#57a0ff,#2a63e6)`,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:22,color:"#fff",flexShrink:0}}>
+        <div style={{width:48,height:48,borderRadius:"50%",background:IS_DARK?"linear-gradient(135deg,#57a0ff,#2a63e6)":CA.accent,display:"flex",alignItems:"center",justifyContent:"center",...DISP,fontSize:22,color:"#fff",flexShrink:0}}>
           {athlete.name[0].toUpperCase()}
         </div>
         <div style={{flex:"1 1 180px",minWidth:0}}>
@@ -4095,7 +4095,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                     </div>
                     {w.bot_reply&&(
                       <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
-                        <div style={{width:22,height:22,borderRadius:"50%",background:`linear-gradient(135deg,#57a0ff,#2a63e6)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>J</div>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:IS_DARK?"linear-gradient(135deg,#57a0ff,#2a63e6)":CA.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>J</div>
                         <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:"14px 14px 14px 4px",padding:"8px 12px",fontSize:12,color:CA.text,maxWidth:"85%",lineHeight:1.5}}>{w.bot_reply}</div>
                       </div>
                     )}
