@@ -13,7 +13,9 @@ test("app boots to the home/login screen with no console errors", async ({ page 
   // Brand line + all three entry points of the home screen. (Since 188569c the
   // athlete-entry WILCO wordmark lives in the storefront backdrop photo, not a
   // text node — only coach entry renders the text wordmark.)
-  await expect(page.getByText("COACH JOE-BOT", { exact: true })).toBeVisible();
+  // The entry subtitle became the wilco dictionary definition (08-10); the
+  // definition's first sense is the stable marker now.
+  await expect(page.getByText("Will comply.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Athlete Login" })).toBeVisible();
   await expect(page.getByRole("button", { name: "New Athlete Sign Up" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Coach Login" })).toBeVisible();
