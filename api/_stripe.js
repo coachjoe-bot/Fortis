@@ -31,7 +31,7 @@ export function getStripe() {
 // advertise $99 while Stripe charged $150, which is the one failure mode that
 // costs a refund conversation instead of a bug report. Unset = annual checkout
 // refuses (see priceFor), which is loud and free.
-const PRO_ANNUAL_99 = process.env.STRIPE_PRICE_PRO_ANNUAL || "";
+const PRO_ANNUAL_99 = process.env.STRIPE_PRICE_PRO_ANNUAL || "price_1U34g7RlrDCVlwEBiHa8hsb5";
 
 // Pro's monthly list price in cents. Mirrors PRICE_CENTS.pro.monthly in src/App.jsx
 // (display) and the live Stripe price (billing). Used here to turn a founding

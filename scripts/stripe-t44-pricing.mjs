@@ -35,7 +35,11 @@ if (!key) {
   process.exit(1);
 }
 
-const MODE = key.startsWith("sk_live") ? "LIVE" : "TEST";
+// `stripe login` issues a RESTRICTED key (rk_live_…), not a secret key, so mode
+// can't be sniffed off "sk_live" alone — an rk_live_ key read as TEST would skip
+// retiring the old $150 price and skip writing the new id into the code, while
+// happily creating live objects.
+const MODE = /^(sk|rk)_live/.test(key) ? "LIVE" : "TEST";
 const stripe = new Stripe(key);
 
 const PRO_ANNUAL_CENTS = 9900;   // $99.00/yr  (was $150.00)
@@ -137,7 +141,10 @@ if (PRO_MONTHLY_CENTS - FOUNDING_AMOUNT_OFF !== FOUNDING_PRICE_CENTS) {
       currency: "usd",
       duration: "forever",
       name: "WILCO Founding — $4.99/mo for life",
-      applies_to: { products: [productId] },
+      // No `applies_to`. It looks like a Pro-only guard but isn't: in LIVE, Pro,
+      // Elite and School are all prices on the SAME product (prod_UaYuCOpyRjoAk4),
+      // so scoping to that product excludes nothing. No live coupon sets it either.
+      // Pro-only is enforced in app code — create-subscription.js `if (tier !== "pro")`.
       metadata: {
         wilco_note: "T44 08-10. MONTHLY ONLY — enforced by FOUNDING_COUPON_IDS in api/_stripe.js.",
       },
@@ -151,13 +158,21 @@ if (PRO_MONTHLY_CENTS - FOUNDING_AMOUNT_OFF !== FOUNDING_PRICE_CENTS) {
   // A coupon on its own is not redeemable — resolvePromotionCode() looks up a
   // PROMOTION CODE and reads the coupon off it. A coupon with no code is invisible.
   step(`Founding promotion code — ${FOUNDING_CODE} (cap ${FOUNDING_CAP})`);
-  const existingCodes = await stripe.promotionCodes.list({ code: FOUNDING_CODE, limit: 1 });
-  if (existingCodes.data.length) {
-    const c = existingCodes.data[0];
+  // ⚠️ Stripe's `code` filter is NOT an exact match — listing `code=WILCO-FOUNDING-5`
+  // happily returns `WILCO-FOUNDING`, and vice versa. Deactivating whatever came back
+  // first is how the new code got switched off seconds after it was created (08-10).
+  // Always re-check `code` client-side before acting on the result.
+  const existingCodes = await stripe.promotionCodes.list({ limit: 100 });
+  const exact = existingCodes.data.filter((c) => c.code === FOUNDING_CODE);
+  if (exact.length) {
+    const c = exact[0];
     log(`   Already exists: ${c.code} — used ${c.times_redeemed}/${c.max_redemptions ?? "∞"}, active=${c.active}`);
   } else if (APPLY && coupon) {
     const created = await stripe.promotionCodes.create({
-      coupon: NEW_FOUNDING_COUPON,
+      // Newer API shape. A flat `coupon:` is rejected outright ("Received unknown
+      // parameter: coupon") — this is the same nested shape resolvePromotionCode()
+      // already reads back via promo.promotion.coupon.
+      promotion: { type: "coupon", coupon: NEW_FOUNDING_COUPON },
       code: FOUNDING_CODE,
       max_redemptions: FOUNDING_CAP,
       metadata: { wilco_note: "T44 08-10 — founding cohort, $4.99/mo for life, MONTHLY ONLY" },
@@ -185,6 +200,7 @@ if (PRO_MONTHLY_CENTS - FOUNDING_AMOUNT_OFF !== FOUNDING_PRICE_CENTS) {
     log(`   → founding-$5 slots claimed so far: ${totalRedeemed}`);
 
     for (const c of active) {
+      if (c.code === FOUNDING_CODE) continue; // never stand down the code we just made
       if (c.times_redeemed > 0) {
         log(`   ⚠ ${c.code} has ${c.times_redeemed} redemption(s) — LEAVING IT ACTIVE. Decide by hand.`);
       } else if (APPLY) {
