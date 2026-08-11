@@ -416,7 +416,7 @@ async function addCoachAction(req, res, body) {
       n += 1;   // someone else took this number between our read and our insert
     }
   }
-  throw httpErr(409, "Couldn't assign a unique access code — try again.");
+  throw httpErr(409, "Couldn't assign a unique access code, try again.");
 }
 
 // (log-error / log-events handlers + their helpers moved to ./_telemetry.js;

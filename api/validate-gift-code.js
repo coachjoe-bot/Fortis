@@ -60,7 +60,7 @@ export default async function handler(req, res) {
         promotionCodeId: result.promotionCodeId,
         kind: "tester",
         tier: result.tier,
-        discountLabel: `${tierLabel} unlocked — tester access, always free`,
+        discountLabel: `${tierLabel} unlocked: tester access, always free`,
       });
     }
 

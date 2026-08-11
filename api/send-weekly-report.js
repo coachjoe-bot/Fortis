@@ -33,7 +33,7 @@ export default async function handler(req, res) {
   console.log("[weekly-report] env check — SUPABASE_URL:", !!SUPABASE_URL, "| SUPABASE_KEY:", !!SUPABASE_KEY, "| RESEND_KEY:", !!RESEND_KEY, "| FROM_EMAIL:", FROM_EMAIL);
 
   if(!SUPABASE_URL || !SUPABASE_KEY) return res.status(500).json({error:"Missing Supabase config (SUPABASE_SERVICE_KEY)"});
-  if(!RESEND_KEY)                    return res.status(500).json({error:"Missing RESEND_API_KEY — add this in Vercel → Settings → Environment Variables"});
+  if(!RESEND_KEY)                    return res.status(500).json({error:"Missing RESEND_API_KEY: add this in Vercel → Settings → Environment Variables"});
 
   const sbH = {
     "apikey": SUPABASE_KEY,

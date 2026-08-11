@@ -647,7 +647,7 @@ async function prepCoachAlert(caller, table, data) {
     const extra = improved.length > 1 ? ` (+${improved.length - 1} more)` : "";
     return {
       coachId: athlete.coach_id, prefKey: "big_pr",
-      msg: { title: "WILCO", body: `${athlete.name} just hit a new ${top.exercise} PR — ${top.weight} × ${top.reps || 1}.${extra}`, url: "/", type: "coach_pr" },
+      msg: { title: "WILCO", body: `${athlete.name} just hit a new ${top.exercise} PR: ${top.weight} × ${top.reps || 1}.${extra}`, url: "/", type: "coach_pr" },
     };
   }
 
@@ -719,7 +719,7 @@ async function handleCrew(body, caller, res) {
         await sbWrite({ method: "PATCH", table: "athletes", query: `?id=eq.${enc(me.id)}`, body: { crew_code: candidate }, prefer: "return=minimal" });
         code = candidate;
       } catch (e) {
-        if (tries === 7) throw httpErr(500, "Couldn't generate a crew code — try again");
+        if (tries === 7) throw httpErr(500, "Couldn't generate a crew code, try again");
         // Likely a unique-constraint collision on crew_code — retry with a fresh suffix.
       }
     }

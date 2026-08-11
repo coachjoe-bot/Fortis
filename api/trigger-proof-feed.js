@@ -418,8 +418,8 @@ async function runAthlete(athlete, batch, { dryRun = false } = {}) {
 
   if (athlete.email) {
     const subject = isMonthly
-      ? `Your WILCO Monthly Recap — ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
-      : `Your WILCO Weekly — Week of ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}`;
+      ? `Your WILCO Monthly Recap: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
+      : `Your WILCO Weekly, Week of ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}`;
     await sendEmail(athlete.email, subject, buildDigestEmail(athlete.name, digest.contentJson, digest.label));
   }
 
@@ -507,8 +507,8 @@ async function runCoachReports(allAthletes, batch, coaches, opts = {}) {
       if (excess.length) await sbDelete("proof_digests", `?id=in.(${excess.join(",")})`);
       // A25: the monthly recap's email subject used to claim "Week of …" too.
       const subject = type === "monthly_coach"
-        ? `WILCO Coach's Edition — Monthly Recap, ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
-        : `WILCO Coach's Edition — Week of ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}`;
+        ? `WILCO Coach's Edition: Monthly Recap, ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}`
+        : `WILCO Coach's Edition, Week of ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" })}`;
       if (coach.email && !opts.skipEmail) await sendEmail(coach.email, subject, buildDigestEmail(coach.name || "Coach", report.contentJson, report.label));
       // Digest-ready push (respects the coach's notification_prefs.digest toggle).
       try {
@@ -557,7 +557,7 @@ export default async function handler(req, res) {
   const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
   if (!SUPABASE_URL) return res.status(500).json({ error: "Missing SUPABASE_URL" });
-  if (!SERVICE_KEY) return res.status(500).json({ error: "Missing SUPABASE_SERVICE_KEY — add it in Vercel → Settings → Environment Variables" });
+  if (!SERVICE_KEY) return res.status(500).json({ error: "Missing SUPABASE_SERVICE_KEY: add it in Vercel → Settings → Environment Variables" });
 
   let body = req.body;
   if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }

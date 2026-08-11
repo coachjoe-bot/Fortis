@@ -156,7 +156,7 @@ export const TESTER_COUPONS = {
 export const EVENT_SOURCES = {
   "crunch-aloma": {
     enabled: true, // ← EVENT-DAY SWITCH (server)
-    label: "Crunch Fitness — Winter Park (Aloma)",
+    label: "Crunch Fitness, Winter Park (Aloma)",
     trialDays: 30,
     tier: "pro", // the only tier this offer sells
   },
