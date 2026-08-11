@@ -35,11 +35,12 @@ test("upgrade payment step renders, and a blocked Stripe.js shows the failure st
 
   // The checkout-blocked error is reported to the ledger with its own error_type
   // (distinct from background load noise) — also part of b3901c9.
+  // Error reporting moved off the auth-critical identity route to its own
+  // endpoint (api/telemetry.js); identity keeps log-error only as a fallback.
   await expect
     .poll(() => calls.some((c) =>
-      c.url.endsWith("/api/identity") &&
-      c.body?.action === "log-error" &&
-      c.body?.event?.error_type === "StripeLoadCheckoutBlocked"
+      (c.url.endsWith("/api/telemetry") || c.url.endsWith("/api/identity")) &&
+      JSON.stringify(c.body || {}).includes("StripeLoadCheckoutBlocked")
     ))
     .toBe(true);
 

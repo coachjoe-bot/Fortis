@@ -2045,6 +2045,12 @@ export const CA_GLOW = IS_DARK ? "rgba(58,123,255,.5)" : "transparent";
 // Chat bubble / avatar fills — flat on light, original gradients on dark.
 export const CA_BUBBLE = IS_DARK ? "linear-gradient(180deg,#3f7bff,#2258e0)" : CA.accent;   // user message bubble
 export const CA_AVATAR = IS_DARK ? "linear-gradient(135deg,#3f7bff,#123a9e)" : CA.accent;   // assistant avatar circle
+// Journal paper (Will's Draft-2 call, built 08-10): programs sit on grid paper,
+// logs on ruled paper. Light brand only — the dark freeze stays flat. content-box
+// origin + local attachment keep the lines under the text and scrolling with it;
+// a consumer MUST pair the matching px lineHeight or text drifts off the rules.
+export const PAPER_GRID = IS_DARK ? {} : { backgroundColor:CA.navy2, backgroundImage:`linear-gradient(to bottom, transparent calc(22px - 0.8px), ${CA.border} 0), linear-gradient(90deg, ${CA.border} 0.7px, transparent 0.7px)`, backgroundSize:"22px 22px", backgroundOrigin:"content-box", backgroundAttachment:"local", lineHeight:"22px" };
+export const PAPER_RULED = IS_DARK ? {} : { backgroundColor:CA.navy2, backgroundImage:`linear-gradient(to bottom, transparent calc(26px - 0.9px), ${CA.line2} 0)`, backgroundSize:"100% 26px", backgroundOrigin:"content-box", backgroundAttachment:"local", lineHeight:"26px" };
 // Fonts (Inter, variable 300-700) load from index.html — an @import
 // here would sit unread until the whole JS bundle parses, delaying first text paint.
 export const GS = `
@@ -2144,11 +2150,19 @@ export const GSA = `
 /* HUD texture removed in the 2026-08-07 rebrand (scanline/grid/stripe) */
 /* Proof "living newspaper" — body loops up behind the fixed masthead (content duplicated → -50% seams) */
 @keyframes proofLoop{from{transform:translateY(0);}to{transform:translateY(-50%);}}
-.proof-loop{animation:proofLoop 30s linear infinite;will-change:transform;}
+.proof-loop{animation:proofLoop 75s linear infinite;will-change:transform;}
 .proof-scan:hover .proof-loop{animation-play-state:paused;}
 /* streak charge-chain — thin bars, trained days fill blue→cyan */
+${IS_DARK?`
 .streaklnk{flex:1;height:6px;border-radius:2px;background:${CA.navy3};border:1px solid ${CA.line2};position:relative;overflow:hidden;}
 .streaklnk.on::after{content:"";position:absolute;inset:0;background:${CA.accent};}
+`:`
+/* Journal X-boxes (Will's Draft-2 call): a trained day is a pen-stroke X in a
+   box, not a lit bar. Dark keeps the original charge-chain above. */
+.streaklnk{width:13px;height:13px;flex:none;border-radius:3px;background:${CA.navy2};border:1.2px solid ${CA.line2};position:relative;}
+.streaklnk.on{border-color:${CA.accent};}
+.streaklnk.on::after{content:"\\2715";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 8.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:${CA.accent};transform:rotate(-6deg);}
+`}
 /* ── CREW: the "charge line" skin (Will's pick, 07-30) ──────────────────────
    The roster hangs off ONE spine that lights from the top down in proportion to
    how much of the crew's week is actually logged, so the team reads as a single
@@ -8027,10 +8041,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         </div>
       )}
       {/* Header */}
-      <div style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:"1px solid rgba(120,150,210,.16)",paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
+      <div style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:IS_DARK?"1px solid rgba(120,150,210,.16)":`1px solid ${CA.border}`,paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
         {/* Row 1: identity */}
         <div style={{display:"flex",alignItems:"baseline",gap:10,minWidth:0}}>
-          <div style={{...DISP,fontSize:20,color:CA.cyan,letterSpacing:2,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>COACH JOE-BOT</div>
+          <div style={{...DISP,fontSize:17,color:CA.cyan,letterSpacing:1,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>COACH JOE-BOT</div>
           {(historyLoaded||warm)&&(
           <div style={{display:"flex",alignItems:"baseline",gap:4,flexShrink:0}} title="Workouts logged">
             <span style={{color:CA.muted,fontSize:9,letterSpacing:1,fontWeight:600}}>WORKOUTS:</span>
@@ -8064,14 +8078,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:8}}>
         {(athlete.tier||"free")!=="free"&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
-            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,...DISP,letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
+            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
             {quickLogParked?"⚡ RESUME LOG":"⚡ QUICK LOG"}
           </button>
         )}
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
           {(athlete.tier||"free")!=="free"&&(
             <button data-tour="program-btn" onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
-              style={{background:athlete.temp_program_text?`${CA.amber}15`:athlete.program_text?CA.navy2:CA.navy3,border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:"4px 10px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+              style={{background:athlete.temp_program_text?`${CA.amber}15`:athlete.program_text?CA.navy2:CA.navy3,border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:"4px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:0.5,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
               {athlete.temp_program_text?"✈️ Temp Program":"📋 "+(athlete.program_text?"Program":"Add Program")}
             </button>
           )}
@@ -8082,12 +8096,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           {(athlete.tier||"free")!=="free"&&(
             <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
-              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,...DISP,letterSpacing:1}}>
+              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5}}>
               MY LOG
               {proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:-3,right:-3,width:8,height:8,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 6px ${CA.accent}`,display:"block"}}/>}
             </button>
           )}
-          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:11,...DISP,letterSpacing:1}}>PROGRESS</button>}
+          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5}}>PROGRESS</button>}
           <button onClick={()=>setShowSettings(true)} title="Settings" style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:14,lineHeight:1}}>⚙</button>
           {!isMobile&&<button onClick={onLogout} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Log Out</button>}
         </div>
@@ -8150,7 +8164,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {messages.map((m,i)=>(
               <div key={i} className="fade-up" style={{marginBottom:12,display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
                 {m.role==="assistant"&&<div style={{width:28,height:28,borderRadius:"50%",background:CA_AVATAR,boxShadow:`0 0 12px ${CA_GLOW}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginRight:8,marginTop:2}}>J</div>}
-                <div style={{maxWidth:"80%",padding:"10px 14px",borderRadius:m.role==="user"?"15px 15px 4px 15px":"15px 15px 15px 4px",background:m.role==="user"?CA_BUBBLE:CA.navy2,backdropFilter:m.role==="assistant"?"blur(6px)":undefined,WebkitBackdropFilter:m.role==="assistant"?"blur(6px)":undefined,color:m.role==="user"?"#fff":"#dde5f2",fontSize:14,lineHeight:1.7,border:m.role==="assistant"?"1px solid rgba(120,150,210,.22)":"none",whiteSpace:"pre-wrap",
+                <div style={{maxWidth:"80%",padding:"10px 14px",borderRadius:m.role==="user"?"15px 15px 4px 15px":"15px 15px 15px 4px",background:m.role==="user"?CA_BUBBLE:CA.navy2,backdropFilter:m.role==="assistant"?"blur(6px)":undefined,WebkitBackdropFilter:m.role==="assistant"?"blur(6px)":undefined,color:m.role==="user"?(IS_DARK?"#fff":CA.onAccent):(IS_DARK?"#dde5f2":CA.text),fontSize:14,lineHeight:1.7,border:m.role==="assistant"?(IS_DARK?"1px solid rgba(120,150,210,.22)":`1px solid ${CA.border}`):"none",whiteSpace:"pre-wrap",
                   // iMessage-style: long-press to select/copy. iOS standalone PWAs
                   // default chat text to non-selectable with the callout suppressed,
                   // so enable both explicitly on every bubble.
@@ -8182,7 +8196,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {tourChat.map((m,i)=>(
               <div key={`tour${i}`} className="fade-up" style={{marginBottom:12,display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
                 {m.role==="assistant"&&<div style={{width:28,height:28,borderRadius:"50%",background:CA_AVATAR,boxShadow:`0 0 12px ${CA_GLOW}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginRight:8,marginTop:2}}>J</div>}
-                <div style={{maxWidth:"80%",padding:"10px 14px",borderRadius:m.role==="user"?"15px 15px 4px 15px":"15px 15px 15px 4px",background:m.role==="user"?CA_BUBBLE:CA.navy2,backdropFilter:m.role==="assistant"?"blur(6px)":undefined,WebkitBackdropFilter:m.role==="assistant"?"blur(6px)":undefined,color:m.role==="user"?"#fff":"#dde5f2",fontSize:14,lineHeight:1.7,border:m.role==="assistant"?"1px solid rgba(120,150,210,.22)":"none",whiteSpace:"pre-wrap"}}>
+                <div style={{maxWidth:"80%",padding:"10px 14px",borderRadius:m.role==="user"?"15px 15px 4px 15px":"15px 15px 15px 4px",background:m.role==="user"?CA_BUBBLE:CA.navy2,backdropFilter:m.role==="assistant"?"blur(6px)":undefined,WebkitBackdropFilter:m.role==="assistant"?"blur(6px)":undefined,color:m.role==="user"?(IS_DARK?"#fff":CA.onAccent):(IS_DARK?"#dde5f2":CA.text),fontSize:14,lineHeight:1.7,border:m.role==="assistant"?(IS_DARK?"1px solid rgba(120,150,210,.22)":`1px solid ${CA.border}`):"none",whiteSpace:"pre-wrap"}}>
                   {m.content}
                 </div>
               </div>
@@ -8646,7 +8660,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                           value={athleteProgramText}
                           onChange={e=>setAthleteProgramText(e.target.value)}
                           rows={10}
-                          style={{width:"100%",boxSizing:"border-box",minHeight:180,background:"rgba(58,123,255,0.03)",border:`1px solid ${athleteProgramText!==(athlete.program_text||"")?CA.amber:CA.line2}`,borderRadius:10,padding:"10px 12px",color:CA.text,fontSize:12,outline:"none",resize:"vertical",lineHeight:1.7,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"}}
+                          style={{width:"100%",boxSizing:"border-box",minHeight:180,background:"rgba(58,123,255,0.03)",border:`1px solid ${athleteProgramText!==(athlete.program_text||"")?CA.amber:CA.line2}`,borderRadius:10,padding:"10px 12px",color:CA.text,fontSize:12,outline:"none",resize:"vertical",fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",...PAPER_GRID}}
                         />
                         {athleteProgramMsg&&(
                           <div style={{color:athleteProgramMsg==="Saved."?CA.green:CA.red,fontSize:11,fontWeight:600,textAlign:"center",marginTop:6}}>{athleteProgramMsg}</div>
@@ -8702,7 +8716,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   onChange={e=>setAthleteProgramText(e.target.value)}
                   placeholder="Paste or type your program here, or use the photo upload above..."
                   rows={10}
-                  style={{flex:1,minHeight:180,background:"rgba(58,123,255,0.03)",border:`1px solid ${athleteProgramText!==(athlete.program_text||"")?CA.accent:CA.line2}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:12.5,outline:"none",resize:"none",lineHeight:1.75,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",transition:"border-color 0.15s"}}
+                  style={{flex:1,minHeight:180,background:"rgba(58,123,255,0.03)",border:`1px solid ${athleteProgramText!==(athlete.program_text||"")?CA.accent:CA.line2}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:12.5,outline:"none",resize:"none",fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",transition:"border-color 0.15s",...PAPER_GRID}}
                 />
                 {athleteProgramMsg&&(
                   <div style={{color:athleteProgramMsg==="Saved."?CA.green:CA.red,fontSize:12,fontWeight:600,textAlign:"center"}}>
@@ -9490,7 +9504,7 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
             onChange={e=>setDraft(e.target.value)}
             readOnly={phase==="streaming"}
             placeholder={phase==="rest"?"Your draft will appear here…":phase==="streaming"?"Drafting today's log…":""}
-            style={{flex:1,minHeight:160,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:14,outline:"none",resize:"none",lineHeight:1.8,fontFamily:"'Inter'",opacity:phase==="streaming"?0.85:1}}
+            style={{flex:1,minHeight:160,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:14,outline:"none",resize:"none",fontFamily:"'Inter'",...PAPER_RULED,opacity:phase==="streaming"?0.85:1}}
           />
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <div style={{color:CA.muted,fontSize:11}}>Tap the draft to edit directly, or tell Joe below.</div>
@@ -10950,7 +10964,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
               </div>
               <div style={{width:1,alignSelf:"stretch",background:CA.border}}/>
               <div style={{flex:1}}>
-                <div style={{...DISP,fontSize:30,color:CA.accent,lineHeight:1,textShadow:`0 0 16px ${CA.accent}66`}}>{strengthScore.toLocaleString()}</div>
+                <div style={{...DISP,fontSize:30,color:CA.accent,lineHeight:1,textShadow:`0 0 16px ${CA_GLOW}`}}>{strengthScore.toLocaleString()}</div>
                 <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                   STRENGTH SCORE
                   <span onClick={()=>setShowScoreInfo(true)} title="How is this calculated?" style={{cursor:"pointer",border:`1px solid ${CA.border}`,borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9,color:CA.muted2,lineHeight:1}}>i</span>

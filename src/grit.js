@@ -302,7 +302,15 @@ export const TIER_NAMES = ["ROOKIE", "GRITTY", "SHARP", "STRONG", "ELITE", "DOMI
 // LED-lit neon ramp (night-gym re-skin). Keeps the low->high heat logic and roughly
 // the same hue per rung; ELITE stays warm/gold-family but drops the literal old brand
 // hex. PROPOSAL — pending Will's approval; this also retunes athlete Benchmarks.
-export const TIER_COLORS = ["#7a8798", "#3a7bff", "#37e6ff", "#2ee6a8", "#ffd34d", "#ff8a3d", "#ff4d5e", "#b46dff"];
+// Tier ramp, theme-split 08-10 (Will's Draft-2 call): the neon HUD ramp belongs to
+// the dark freeze; the light brand gets a muted 8-step ramp that lives inside its
+// world (grey → blue-greys → navy → forest → bronze → terracotta → violet).
+// localStorage is guarded so node (test suites) and any server import fall back
+// to the light set — TIER_NAMES/points/thresholds are theme-independent.
+const TIER_COLORS_DARK = ["#7a8798", "#3a7bff", "#37e6ff", "#2ee6a8", "#ffd34d", "#ff8a3d", "#ff4d5e", "#b46dff"];
+const TIER_COLORS_LIGHT = ["#8B9199", "#6E86A8", "#5B7FB5", "#28508B", "#3C6B54", "#8A6B2F", "#9C4A2F", "#6B4E8E"];
+const GRIT_DARK = (() => { try { return typeof localStorage !== "undefined" && localStorage.getItem("wilco_theme") === "dark"; } catch (_) { return false; } })();
+export const TIER_COLORS = GRIT_DARK ? TIER_COLORS_DARK : TIER_COLORS_LIGHT;
 // Strength Score points per tier — each level worth more than the last.
 export const TIER_POINTS = [10, 25, 50, 100, 175, 275, 400, 600];
 // Flavor line per tier (shown in the Top Rank classification popover).

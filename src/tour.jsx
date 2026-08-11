@@ -45,6 +45,12 @@ const T = TOUR_DARK ? {
 // to suppress everything around the cutout, and dimming light-on-light reads as nothing.
 // Dropped 0.82 -> 0.55 and moved off near-black onto the brand ink (dark keeps 0.82).
 const DIM = TOUR_DARK ? "rgba(2,5,15,0.82)" : "rgba(31,42,55,0.55)";
+// Hand-synced copy of App.jsx's DISP (same no-import constraint as T above). The
+// relight referenced DISP here without any local definition, which crashed every
+// tour surface at render — caught 08-10 on the store-capture pass.
+const DISP = TOUR_DARK
+  ? { fontFamily:"'Bebas Neue','Inter',system-ui,-apple-system,sans-serif", fontWeight:400, textTransform:"uppercase" }
+  : { fontFamily:"'Inter',system-ui,-apple-system,sans-serif", fontWeight:800, textTransform:"uppercase" };
 
 // ── SAMPLE DATA (Quick Log demo) ─────────────────────────────────────────────
 // One believable bench day. Number-first like a real draft; the top single is

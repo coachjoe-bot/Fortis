@@ -12,6 +12,15 @@
 // version of THAT document each athlete agreed to.
 import React, { useState } from "react";
 
+// Hand-synced copy of App.jsx's DISP. This file is imported EAGERLY by App.jsx
+// (line ~19), so importing back would be a circular init — same constraint as
+// tour.jsx. The relight referenced DISP here with no definition at all, which
+// crashed the legal screens at render — caught 08-10 on the store-capture pass.
+const LEGAL_DARK = (() => { try { return localStorage.getItem("wilco_theme") === "dark"; } catch (_) { return false; } })();
+const DISP = LEGAL_DARK
+  ? { fontFamily:"'Bebas Neue','Inter',system-ui,-apple-system,sans-serif", fontWeight:400, textTransform:"uppercase" }
+  : { fontFamily:"'Inter',system-ui,-apple-system,sans-serif", fontWeight:800, textTransform:"uppercase" };
+
 // Split per-document (07-29 fix): the acceptance log was stamping every
 // document (terms, privacy, AND parental_consent) with ONE version string,
 // which falsely recorded athletes as having accepted a version of the Terms

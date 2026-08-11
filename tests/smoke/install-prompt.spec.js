@@ -119,7 +119,9 @@ test.describe("auto-show after signup + dismissal persistence — iOS Safari UA"
     // "Just training for myself" skips position/event (step 10, competitive only).
 
     // ── Step 11: injury history (optional) -> proceeds straight to consent ──
-    await page.getByRole("button", { name: "Save & Continue →" }).click();
+    // The solo-athlete wizard folded to 6 steps in the relight; the optional
+    // injuries step (5 of 6) uses the plain Next CTA, not "Save & Continue".
+    await page.getByRole("button", { name: "Next →" }).click();
 
     // ── Consent: adult (18+) -> Terms then Privacy, no parental gate ──
     await expect(page.getByText("Terms of Service & Liability Waiver")).toBeVisible();

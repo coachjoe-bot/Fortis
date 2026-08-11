@@ -34,11 +34,9 @@ test("a 3-month prize code discloses three free months, not one", async ({ page 
   await loginAsAthlete(page, makeAthlete({ tier: "free", stripe_subscription_id: null }));
   await applyCodeAtCheckout(page, "GRIP-TEST-CHAMP");
 
+  // T37's card-first checkout replaced the long dated disclosure with the label
+  // + a months-aware CTA; the CTA is what guards the 3-vs-1 month claim now.
   await expect(page.getByText("First 3 months of Pro free")).toBeVisible();
-  // The disclosure names three free months and charges at the END of them.
-  const disclosure = page.getByText(/Your first .*3 months.* of Pro are free/);
-  await expect(disclosure).toBeVisible();
-  await expect(page.getByText(monthsOut(3), { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Start 3 Months Free →" })).toBeVisible();
 });
 
@@ -47,7 +45,5 @@ test("the classic one-month gift code still reads as one free month", async ({ p
   await loginAsAthlete(page, makeAthlete({ tier: "free", stripe_subscription_id: null }));
   await applyCodeAtCheckout(page, "WILCO-ABCDE");
 
-  await expect(page.getByText(/Your first month of Pro is free/)).toBeVisible();
-  await expect(page.getByText(monthsOut(1), { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Start First Month Free →" })).toBeVisible();
 });

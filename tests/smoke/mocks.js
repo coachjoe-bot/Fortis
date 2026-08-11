@@ -228,6 +228,17 @@ export async function mockApi(page, options = {}) {
   });
 
   // ── /api/create-subscription — PaymentStep bootstrap ───────────────────────
+  // T37 card-first checkout: the payment screen mints a SetupIntent at mount and
+  // refuses to render the card form (or its CTA) until this resolves. Without the
+  // stub every payment-step spec hangs on "initializing".
+  await page.route("**/api/checkout-intent", async (route) => {
+    calls.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    // subscriptionDelayMs predates T37; the observable "Loading secure checkout…"
+    // window it exists to create is now the SetupIntent mint, so it throttles this.
+    if (subscriptionDelayMs) await new Promise((r) => setTimeout(r, subscriptionDelayMs));
+    route.fulfill({ json: { clientSecret: "seti_mock_secret_smoke" } });
+  });
+
   await page.route("**/api/create-subscription", async (route) => {
     record(route);
     await new Promise((r) => setTimeout(r, subscriptionDelayMs));
@@ -264,7 +275,9 @@ export async function mockApi(page, options = {}) {
 export async function loginAsAthlete(page, athlete) {
   await page.goto("/");
   await page.getByRole("button", { name: "Athlete Login" }).click();
-  await page.getByPlaceholder("Exact name you signed up with").fill(athlete.name);
+  // Relight (08-07) reworded the login field; "Exact name you signed up with"
+  // now lives on the forgot-PIN form and matched an invisible input here.
+  await page.getByPlaceholder("Your name, or the email you signed up with").fill(athlete.name);
   await page.getByPlaceholder("----").fill("1234");
   await page.getByRole("button", { name: "Let's Get to Work ->" }).click();
   // Athlete main surface = the Coach Joe-Bot chat header.

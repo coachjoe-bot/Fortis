@@ -5,7 +5,7 @@
 // the dynamic import means the cycle App→coach→App is resolved at load time.
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import {
-  CA, CA_BTN, CA_GLOW, GS, IS_DARK, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
+  CA, CA_BTN, CA_GLOW, DISP, GS, IS_DARK, PAPER_GRID, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
 } from "./App.jsx";
 // Program Builder (Phase C) — lazy so the doctrine text + Builder UI download
 // only when a coach actually opens the Builder subtab.
@@ -2152,8 +2152,13 @@ function CoachOverview({athletes,workouts,prs,manualRMs,prescriptions,onOpenAthl
                 const picked = dayPick&&dayPick.athleteId===r.a.id&&dayPick.di===di;
                 return <i key={`c${ri}-${di}`} className="c-fade"
                   onClick={()=>{ if(d===1) setDayPick(picked?null:{athleteId:r.a.id,di}); }}
-                  style={{aspectRatio:"1",borderRadius:3,background:d==null?"transparent":r.hasProgram?cell(d):(d?CA.accent:CA.navy3),opacity:d==null?1:r.hasProgram?1:.55,border:picked?`2px solid ${CA.cyan}`:d==null?`1px dashed ${CA.border}`:`1px solid ${CA.line2}22`,boxShadow:picked?`0 0 8px ${CA.cyan}66`:"none",cursor:d===1?"pointer":"default",["--d"]:`${Math.min(780,(ri*7+di)*16)}ms`}}
-                  {...tipOn(`${r.a.name.split(" ")[0]} · ${D.dayLabels[di].full} ${D.dayLabels[di].d}: ${d==null?"upcoming":d?"logged a session, tap to inspect":"no session"}${r.hasProgram?"":" (no program)"}`)}/>;
+                  style={IS_DARK
+                    ?{aspectRatio:"1",borderRadius:3,background:d==null?"transparent":r.hasProgram?cell(d):(d?CA.accent:CA.navy3),opacity:d==null?1:r.hasProgram?1:.55,border:picked?`2px solid ${CA.cyan}`:d==null?`1px dashed ${CA.border}`:`1px solid ${CA.line2}22`,boxShadow:picked?`0 0 8px ${CA.cyan}66`:"none",cursor:d===1?"pointer":"default",["--d"]:`${Math.min(780,(ri*7+di)*16)}ms`}
+                    /* Journal X-boxes (Will's Draft-2 call): a logged day is a pen-stroke X
+                       in a box; empty box = no session; dashed = day not here yet. The X
+                       ink carries the adherence grade so no signal is lost. */
+                    :{aspectRatio:"1",borderRadius:3,background:CA.navy2,display:"flex",alignItems:"center",justifyContent:"center",fontStyle:"normal",fontSize:11,fontWeight:700,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",color:d?(r.hasProgram?cell(d):CA.accent):"transparent",opacity:r.hasProgram||d==null?1:.6,border:picked?`2px solid ${CA.cyan}`:d==null?`1px dashed ${CA.border}`:`1.2px solid ${d?(r.hasProgram?cell(d):CA.accent):CA.line2}`,boxShadow:picked?`0 0 8px ${CA.cyan}66`:"none",cursor:d===1?"pointer":"default",["--d"]:`${Math.min(780,(ri*7+di)*16)}ms`}}
+                  {...tipOn(`${r.a.name.split(" ")[0]} · ${D.dayLabels[di].full} ${D.dayLabels[di].d}: ${d==null?"upcoming":d?"logged a session, tap to inspect":"no session"}${r.hasProgram?"":" (no program)"}`)}>{!IS_DARK&&d?<span style={{transform:"rotate(-6deg)"}}>{"\u2715"}</span>:null}</i>;
               }),
               <span key={`s${ri}`} style={{fontSize:11,fontWeight:800,textAlign:"right",color:adhColor(r.score),cursor:"pointer"}} {...tipOn(adhTip(r))}>{r.score==null?"—":`${r.score}`}</span>
             ])}
@@ -4322,7 +4327,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
               onChange={e=>setProgramText(e.target.value)}
               placeholder={"Paste or write the athlete's training program here...\n\nExamples:\n  Week 1: Squat 3×5, Bench 3×5, Deadlift 1×5\n  Week 2: Squat 3×5 +5lbs, Bench 3×5 +5lbs\n\nOr paste a full multi-week periodization plan, Joe-bot will read the whole thing."}
               rows={14}
-              style={{width:"100%",background:CA.navy3,border:`1px solid ${programText!==(athlete.program_text||"")?CA.accent:CA.border}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:13,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"'Inter'",transition:"border-color 0.15s"}}
+              style={{width:"100%",background:CA.navy3,border:`1px solid ${programText!==(athlete.program_text||"")?CA.accent:CA.border}`,borderRadius:12,padding:"12px 14px",color:CA.text,fontSize:13,outline:"none",resize:"vertical",fontFamily:"'Inter'",transition:"border-color 0.15s",...PAPER_GRID}}
             />
 
             <input ref={programPhotoRef} type="file" accept="image/*" style={{display:"none"}} onChange={handlePhotoProgram}/>

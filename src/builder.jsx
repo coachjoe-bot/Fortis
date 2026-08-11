@@ -19,7 +19,7 @@
 //   after the pane unmounts and parks the finished draft straight to the DB, so
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { CA, CA_BTN, IS_DARK, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
+import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs } from "./grit.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
@@ -619,7 +619,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
             <>
               <div style={subhead}>Draft — edit by hand, or tell Joe what to change</div>
               <textarea value={draftText} onChange={e => setDraftText(e.target.value)} rows={14}
-                style={{ flex: 1, minHeight: 180, width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono }} />
+                style={{ flex: 1, minHeight: 180, width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono, ...PAPER_GRID }} />
               <div style={{ display: "flex", gap: 6 }}>
                 <input value={editReq} onChange={e => setEditReq(e.target.value)} onKeyDown={e => { if (e.key === "Enter") tellJoe(); }}
                   placeholder='Tell Joe what to change — "swap day 2 to dumbbells"'
@@ -828,7 +828,7 @@ QUESTION: <one short question>`;
         </div>
         <textarea value={paste} onChange={e => setPaste(e.target.value)} rows={12}
           placeholder={"Paste your program here, any format.\n\nDay 1 - Upper\nBench 4x5 @ 185\n..."}
-          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono }} />
+          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono, ...PAPER_GRID }} />
         {err && <div style={{ color: CA.red, fontSize: 12 }}>{err}</div>}
         <button onClick={start} style={{ ...priBtn, opacity: paste.trim().length >= 20 ? 1 : 0.5 }}>Start editing →</button>
       </div>
@@ -844,7 +844,7 @@ QUESTION: <one short question>`;
           <span style={{ ...mono, fontSize: 9, color: CA.muted }}>type to edit directly</span>
         </div>
         <textarea value={text} onChange={e => setText(e.target.value)} rows={18}
-          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono }} />
+          style={{ width: "100%", boxSizing: "border-box", background: "rgba(58,123,255,0.03)", border: `1px solid ${CA.line2}`, borderRadius: 10, padding: "10px 12px", color: CA.text, fontSize: 12, outline: "none", resize: "vertical", lineHeight: 1.7, ...mono, ...PAPER_GRID }} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={save} disabled={saving} style={{ ...priBtn, opacity: saving ? 0.7 : 1 }}>{saving ? "Saving…" : "Save to my program"}</button>
           <button onClick={() => { setPhase("paste"); setText(""); setPaste(""); setLog([]); setProposal(null); setErr(""); }} style={miniBtn(true, CA.muted2)}>Start over</button>

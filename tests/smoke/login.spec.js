@@ -29,7 +29,7 @@ test("wrong PIN shows the error and stays on the login form", async ({ page }) =
 
   await page.goto("/");
   await page.getByRole("button", { name: "Athlete Login" }).click();
-  await page.getByPlaceholder("Exact name you signed up with").fill(athlete.name);
+  await page.getByPlaceholder("Your name, or the email you signed up with").fill(athlete.name);
   await page.getByPlaceholder("----").fill("9999"); // mock verifies pin === "1234"
   await page.getByRole("button", { name: "Let's Get to Work ->" }).click();
 

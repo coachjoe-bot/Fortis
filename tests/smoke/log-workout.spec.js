@@ -19,9 +19,11 @@ test("logging a workout replies, confirms the save, and writes to the gateway", 
   await expect(page.getByText(workoutMsg)).toBeVisible();
   await expect(page.getByText(reply)).toBeVisible();
 
-  // Save confirmation: the green check badge in the header (shows for ~3s
-  // after the workouts insert succeeds).
-  await expect(page.getByText("✓", { exact: true })).toBeVisible();
+  // No separate save-badge assertion: the header ✓ was removed on purpose
+  // (silent save + haptic), the WORKOUT #N stamp self-clears in ~2.6s, and the
+  // header counter reads the server session-count view, which the mock pins at
+  // its fixture value. The coach reply above plus the gateway insert below are
+  // the save confirmation.
 
   // And the persistence call itself: an op:"insert" into `workouts` carrying the
   // raw message and the parsed exercises.
