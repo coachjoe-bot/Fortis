@@ -384,7 +384,9 @@ function CoachesList({coaches,schools,onRefresh}) {
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <div style={{color:c.pin?CA.green:CA.red,fontSize:10,marginRight:4}}>{c.pin?"✓ Active":"Not set up"}</div>
+                  {/* "Not set up" overlapped long names and read as an error (Will, 08-11) —
+                      the Resend button already tells the story for un-set-up coaches. */}
+                  {c.pin&&<div style={{color:CA.green,fontSize:10,marginRight:4}}>✓ Active</div>}
                   {/* Resend invite */}
                   {c.email&&c.role!=="master"&&(
                     <button onClick={()=>resendInvite(c)} disabled={!!rs}
@@ -1693,10 +1695,8 @@ function CoachDashboard({coach,onLogout}) {
                             </span>
                           )}
                         </div>
-                        <div style={{display:"flex",gap:6}}>
-                          {tr.has_pain&&<div style={{background:CA.red+"1A",border:"1px solid "+CA.red+"4D",borderRadius:4,padding:"2px 6px",color:CA.red,fontSize:10}}>INJURIES</div>}
-                          {tr.has_missed&&<div style={{background:`${CA.navy3}`,border:`1px solid ${CA.border}`,borderRadius:4,padding:"2px 6px",color:CA.muted,fontSize:10}}>AT-RISK</div>}
-                        </div>
+                        {/* Flag chips live INSIDE the opened edition (Will, 08-11):
+                            the card face carries only the NEW dot. */}
                       </div>
                       {tr.content_json?.intro&&<div style={{color:CA.text,fontSize:13,lineHeight:1.6,marginBottom:8}}>{tr.content_json.intro}</div>}
                       <div style={{color:isM?CA.blue:CA.accent,fontSize:12,fontWeight:700,letterSpacing:1}}>OPEN REPORT →</div>

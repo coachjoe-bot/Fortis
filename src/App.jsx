@@ -2164,10 +2164,11 @@ ${IS_DARK?`
 .streaklnk.on::after{content:"";position:absolute;inset:0;background:${CA.accent};}
 `:`
 /* Journal X-boxes (Will's Draft-2 call): a trained day is a pen-stroke X in a
-   box, not a lit bar. Dark keeps the original charge-chain above. */
-.streaklnk{width:13px;height:13px;flex:none;border-radius:3px;background:${CA.navy2};border:1.2px solid ${CA.line2};position:relative;}
+   box, not a lit bar. Dark keeps the original charge-chain above.
+   Sized UP 08-11 (Will): 13px boxes across a full-width row read sparse. */
+.streaklnk{width:18px;height:18px;flex:none;border-radius:4px;background:${CA.navy2};border:1.3px solid ${CA.line2};position:relative;}
 .streaklnk.on{border-color:${CA.accent};}
-.streaklnk.on::after{content:"\\2715";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 8.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:${CA.accent};transform:rotate(-6deg);}
+.streaklnk.on::after{content:"\\2715";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:${CA.accent};transform:rotate(-6deg);}
 `}
 /* ── CREW: the "charge line" skin (Will's pick, 07-30) ──────────────────────
    The roster hangs off ONE spine that lights from the top down in proportion to
@@ -8102,17 +8103,22 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             Quick Log's label carries its state: an unfinished workout is visible from the
             chat screen without opening anything, which is what makes closing it safe. */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:8}}>
+        {/* Light brand (Will, 08-11): no emojis, one shared type register
+            (10.5/0.3 DISP) so QUICK LOG never gets smooshed. Dark keeps the
+            original stretched ⚡ button. */}
         {(athlete.tier||"free")!=="free"&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
-            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
-            {quickLogParked?"⚡ RESUME":"⚡ QUICK LOG"}
+            style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:IS_DARK?"6px 8px":"6px 10px",cursor:"pointer",fontSize:IS_DARK?10:10.5,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
+            {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ QUICK LOG"):(quickLogParked?"RESUME":"QUICK LOG")}
           </button>
         )}
-        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:5,flexShrink:0}}>
           {(athlete.tier||"free")!=="free"&&(
             <button data-tour="program-btn" onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
-              style={{background:athlete.temp_program_text?`${CA.amber}15`:athlete.program_text?CA.navy2:CA.navy3,border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:"4px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:0.5,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-              {athlete.temp_program_text?"✈️ Temp Program":"📋 "+(athlete.program_text?"Program":"Add Program")}
+              style={{background:athlete.temp_program_text?`${CA.amber}15`:(IS_DARK?(athlete.program_text?CA.navy2:CA.navy3):CA.navy3),border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:IS_DARK?"4px 8px":"6px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+              {IS_DARK
+                ? (athlete.temp_program_text?"✈️ Temp Program":"📋 "+(athlete.program_text?"Program":"Add Program"))
+                : (athlete.temp_program_text?"Temp Program":(athlete.program_text?"Program":"Add Program"))}
             </button>
           )}
           {/* The unread dot lived ONLY on the Proof tab inside this modal, so a new
@@ -8122,12 +8128,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           {(athlete.tier||"free")!=="free"&&(
             <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
-              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5}}>
+              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>
               MY LOG
               {proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:-3,right:-3,width:8,height:8,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 6px ${CA.accent}`,display:"block"}}/>}
             </button>
           )}
-          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:0.5}}>PROGRESS</button>}
+          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>PROGRESS</button>}
           <button onClick={()=>setShowSettings(true)} title="Settings" style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:14,lineHeight:1}}>⚙</button>
           {!isMobile&&<button onClick={onLogout} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Log Out</button>}
         </div>
