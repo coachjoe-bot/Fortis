@@ -23,6 +23,41 @@ export const epley1RM = (weight, reps) => {
   return Math.round(weight * (1 + Math.min(reps, MAX_E1RM_REPS) / 30));
 };
 
+// ── Implausible-jump guard (T46) ─────────────────────────────────────────────
+// A mistyped load logs silently and does not stay in the log: it becomes that
+// lift's estimated 1RM, which sets the Benchmarks tier, feeds Crew comparison,
+// and becomes the base the NEXT generated program computes its percentages from.
+// One "90" typed as "900" quietly rewrites an athlete's training.
+//
+// Will's rule (2026-08-11): a jump too big for even a beginner to make in one
+// session gets a double check — Joe asks whether it was a mistype instead of
+// celebrating it. Three conditions, all required, so the guard stays quiet on
+// the moves people actually make:
+//
+//   PCT   — the jump is ≥12% over their best known max for that lift. Will's
+//           example, 275 → 315, is +14.5%; a 12% gate catches it with room, and
+//           still lets a genuine +10 on a 185 bench (+5.4%) through untouched.
+//   MIN   — and it is ≥20 lb in absolute terms, so light accessory work can't
+//           trip it (25 lb curls → 30 is +20%, and nobody wants asking about it).
+//   FLOOR — and they had a real baseline (≥65 lb) to jump FROM.
+//
+// COLD START: with no prior max for a lift there is nothing to compare against,
+// so a first-ever absurd log still passes. That is the narrower remaining gap —
+// see outputs/T46-gauntlet-findings.md.
+export const IMPLAUSIBLE_JUMP_PCT = 0.12;
+export const IMPLAUSIBLE_JUMP_MIN_LBS = 20;
+export const IMPLAUSIBLE_JUMP_FLOOR_LBS = 65;
+
+export const implausibleJump = (priorLbs, newLbs) => {
+  const prior = Number(priorLbs) || 0;
+  const next = Number(newLbs) || 0;
+  if (prior < IMPLAUSIBLE_JUMP_FLOOR_LBS) return false;
+  if (next - prior < IMPLAUSIBLE_JUMP_MIN_LBS) return false;
+  // Ratio, not a multiply: 100 * 1.12 is 112.00000000000001 in float, so a load
+  // sitting exactly on the threshold fell through the comparison.
+  return next / prior >= 1 + IMPLAUSIBLE_JUMP_PCT - 1e-9;
+};
+
 // ── Parsing a timestamp that came out of the database ────────────────────────
 // A Postgres `timestamp WITHOUT time zone` serializes with no offset marker —
 // "2026-07-28 00:30:00.123456" — and JavaScript parses that space-separated form as

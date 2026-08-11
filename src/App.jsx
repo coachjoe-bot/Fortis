@@ -104,6 +104,7 @@ import {
   TIER_NAMES, TIER_COLORS, TIER_POINTS, TIER_DESC,
   BENCH_THRESHOLDS, tierForRatio, bwTierFactor, ageTierFactor, scaledThresholds, getBenchKey,
   sessionTonnage, sessionTopSet, goalTargets, liftSeriesPoints,
+  implausibleJump,
 } from "./grit.js";
 export {
   epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
@@ -1703,6 +1704,8 @@ Match length to the question: a sentence or two for logs and simple asks; go lon
 Pain → suggest alternatives, and if they have a coach, support the app's offer to send that coach a structured change request (never tell them to email about it). Equipment unavailable → 2-3 specific alternatives, same coach-request offer if it keeps blocking a locked program.
 Locked program → you can't edit it yourself, but you can draft the request their coach reviews. Out of scope (billing, account access): "That's one for Coach Joe directly -- email support@trainwilco.com."
 
+DIET, NUTRITION, SUPPLEMENTS: these are outside your scope of practice, and you say so FIRST, before anything else, every single time one comes up (meal plans, macros, calorie targets, cutting or bulking, fasting, supplements and doses). One short plain sentence in your own voice, e.g. "Straight up, nutrition is outside what I do as your strength coach, so take this as general info and run anything real past a dietitian." Then answer as you normally would. The warning is not optional and it is not a refusal: lead with it, then help. If the athlete is under 18 and the question is about losing weight, eating less, or cutting, also tell them to loop in a parent, guardian, or their athletic trainer before changing how they eat.
+
 UNUSUAL TRAINING CONDITIONS (travel, cruise, hotel, beach, limited equipment, injury layoff, etc.):
 - If athlete mentions they'll be away or have limited access but HASN'T described what's available yet: ask 2-3 direct questions, what equipment is on hand, how much space they have, how long the situation lasts. Do not give a program yet.
 - Once conditions ARE described: build a specific day-by-day program for exactly those conditions. Be clear it's temporary.
@@ -1733,7 +1736,7 @@ ${Object.entries(JOEBOT_GOALS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}
 SPORT PRIORITIES (apply the athlete's sport from the session context):
 ${Object.entries(JOEBOT_SPORTS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}`;
 
-const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null) => {
+const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null, suspectJumps=[]) => {
   // Both call sites pass `history` already ending with the current message, and
   // the current message is appended again explicitly in userMsg below — so the
   // window must EXCLUDE the last element or every prompt carries the athlete's
@@ -1896,7 +1899,16 @@ SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastCo
     contextMemory = `\n\nATHLETE CONTEXT (from monthly recap history: preferences, injuries, goals stated over time):\n${athleteContext}\nUse this as background, do not repeat it back, just let it inform your responses.`;
   }
 
-  const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory};
+  // Implausible-jump check (T46) — computed in code, never inferred. A load this
+  // far past their known max is more likely a mistyped number than a real jump, so
+  // Joe confirms it in THIS reply rather than celebrating a PR that would reset the
+  // athlete's Benchmarks tier and their next program's percentages.
+  let jumpContext = "";
+  if(Array.isArray(suspectJumps) && suspectJumps.length){
+    const lines = suspectJumps.map(j=>`- ${j.exercise}: they just logged ${j.weight}${j.unit==="kg"?"kg":" lbs"} x ${j.reps}, which reads as about ${j.e1rm} lbs. Their best on record is ${j.knownBest} lbs.`).join("\n");
+    jumpContext = `\n\nCHECK THIS NUMBER (computed by the app - authoritative):\n${lines}\nThat is a bigger jump than anyone makes in one session, so it is far more likely a typo than a real lift. Do NOT congratulate it, do NOT treat it as a new PR, and do NOT use the word "PR" about it at all: calling it one plants the number as real before they have confirmed it. Ask them plainly, in one short sentence, whether that number is right or a mistype, name the lift and both numbers, and tell them you can fix it if they say the word. Keep the rest of your reply about the work that DOES look right. If they confirm it, take them at their word.`;
+  }
+  const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory+jumpContext};
   const userMsg = `${hist}\n\n${athlete.name}: ${message}`;
   // Stream when the caller wants live rendering; otherwise the classic one-shot call.
   // 800 tokens (was 450): technical/programming answers were getting guillotined
@@ -6353,6 +6365,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // (fire-and-forget, gated on having ≥1 crew peer). Build spec §8 — get all
       // four sites or the feed is silently partial.
       const crewMoments = [];
+      // Lifts whose top set jumped too far past their known max to take at face
+      // value (T46). Collected here, checked by Joe in this same reply — a fake PR
+      // celebration on a typo is the outcome worth preventing. The workout itself
+      // still logs; the correction engine is the remedy if it WAS a mistype.
+      const suspectJumps = [];
       try {
         const prevCount = updatedAthlete.total_sessions_logged||0;
         // Authoritative session count comes from the SQL view (v_athlete_session_counts,
@@ -6510,7 +6527,18 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             .filter(s=>s.reps===1 && s.weight>0)
             .reduce((best,s)=>(!best || toLbs(s.weight,ex.unit) > toLbs(best.weight,ex.unit)) ? s : best, null);
           const knownBestLbs = manualMap[k] ? toLbs(manualMap[k].weight, manualMap[k].unit) : prE1RM;
-          if(bestSingle && toLbs(bestSingle.weight, ex.unit) > knownBestLbs){
+
+          // ── Implausible jump (T46) ──────────────────────────────────────────
+          // Too far past their known max to celebrate without asking. The `prs`
+          // ladder still records it (nothing is thrown away), but this lift skips
+          // the PR fanfare and the actual-1RM promotion this turn, and Joe asks
+          // whether it was a mistype. Confirming costs one message; a fake PR that
+          // silently reset the Benchmarks tier and the next program's percentages
+          // costs a lot more.
+          const suspect = implausibleJump(knownBestLbs, exE1RM);
+          if(suspect) suspectJumps.push({exercise:ex.name, weight:topSet.weight, unit:ex.unit||"lbs", reps:topSet.reps||1, e1rm:exE1RM, knownBest:Math.round(knownBestLbs)});
+
+          if(!suspect && bestSingle && toLbs(bestSingle.weight, ex.unit) > knownBestLbs){
             const unit = ex.unit==="kg" ? "kg" : "lbs";
             const newLbs = toLbs(bestSingle.weight, unit);
             const kNorm = normalizeExName(ex.name);
@@ -6533,7 +6561,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             prInsertRows.push({athlete_id:updatedAthlete.id,exercise:ex.name,weight:topSet.weight,reps:topSet.reps||1,estimated_1rm:exE1RM,unit:ex.unit||"lbs"});
             // Only let the estimate drive program-text propagation when there's no manual (actual) 1RM
             // for this lift — a manual 1RM is authoritative and should only change via an explicit attempt.
-            if(!manualMap[k]){
+            // A suspect jump is held back from BOTH the celebration and the program
+            // propagation until the athlete confirms the number is real.
+            if(!manualMap[k] && !suspect){
               newPRs.push({exercise:ex.name,weight:topSet.weight,unit:ex.unit||"lbs",reps:topSet.reps||1,e1rm:exE1RM,prevE1RM:prE1RM,diff:exE1RM-prE1RM,old1RM:prE1RM});
             }
           }
@@ -7363,7 +7393,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       };
       let reply="";
       try {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta);
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta,suspectJumps);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
       // Stream over (success or death): cancel any queued frame so a late flush
       // can't race the settle/fallback writes below, then settle the bubble.
@@ -7380,7 +7410,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         reply = streamedText;
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       } else {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext);
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,suspectJumps);
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       setLoading(false);

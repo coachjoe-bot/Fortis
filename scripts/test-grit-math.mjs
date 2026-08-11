@@ -14,6 +14,7 @@ import {
   scaledThresholds, BENCH_THRESHOLDS, TIER_NAMES, TIER_POINTS,
   REF_BW, bwLoadLabel, computeGritSnapshot, resolveLift,
   sessionTonnage, sessionTopSet,
+  implausibleJump,
 } from "../src/grit.js";
 
 let fail = 0, pass = 0;
@@ -329,6 +330,37 @@ console.log("sessionTonnage / sessionTopSet:");
   // set_details with per-set weights: the heaviest single set wins, not the last.
   const ramp = { name: "Squat", unit: "lbs", set_details: [{ weight: 275, reps: 3 }, { weight: 335, reps: 1 }, { weight: 225, reps: 8 }] };
   eq(sessionTopSet([ramp]).weight, 335, "heaviest set wins, not the last one");
+}
+
+// ── implausible-jump guard (T46) ─────────────────────────────────────────────
+// Will's rule: a leap too big for even a beginner gets a double check, not a PR
+// celebration. Quiet on the moves people actually make, loud on a mistyped load.
+console.log("\nimplausible jump:");
+{
+  // Will's own example — 275 max, suddenly 315.
+  eq(implausibleJump(275, 315), true, "275 -> 315 is checked (+14.5%)");
+  eq(implausibleJump(275, 305), false, "275 -> 305 is a real PR, left alone (+10.9%)");
+  eq(implausibleJump(90, 900), true, "the 900 lb bench typo is caught");
+
+  // Real progress must stay silent, or athletes learn to ignore the question.
+  eq(implausibleJump(185, 195), false, "a +10 bench PR is not questioned");
+  eq(implausibleJump(315, 330), false, "a +15 squat PR is not questioned");
+  eq(implausibleJump(405, 425), false, "a +20 deadlift PR on a big base is not questioned");
+
+  // Light accessory work: percentage swings are huge and meaningless there.
+  eq(implausibleJump(25, 30), false, "25 -> 30 lb curls (+20%) stays quiet, under the lb floor");
+  eq(implausibleJump(50, 65), false, "50 -> 65 lb stays quiet, baseline below the floor");
+
+  // No baseline to jump from = nothing to compare (the cold-start gap, by design).
+  eq(implausibleJump(0, 900), false, "no prior max means no comparison is possible");
+  eq(implausibleJump(null, 500), false, "a missing baseline never throws");
+  eq(implausibleJump(200, null), false, "a missing new value never throws");
+
+  // Boundary: all three conditions are required.
+  eq(implausibleJump(200, 224), true, "exactly +12% trips when the jump also clears 20 lb");
+  eq(implausibleJump(200, 222), false, "+11% does not trip");
+  eq(implausibleJump(100, 112), false, "+12% but only +12 lb stays quiet: the 20 lb floor also has to clear");
+  eq(implausibleJump(64, 200), false, "a baseline under the 65 lb floor never trips");
 }
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
