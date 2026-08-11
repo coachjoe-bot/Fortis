@@ -46,12 +46,23 @@ const doctrineFor = (topic) => DOC_CORE + (topic && TOPICS[topic] ? `\n\n${TOPIC
 // injection on the athlete side is a no-op). bscan = the drafting screen's
 // indeterminate charge sweep.
 const BUILDER_CSS = `
+${IS_DARK?`
+/* ORIGINAL dark power cell + scanner, restored verbatim 08-11 (source 6c8737d). */
+.htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:linear-gradient(180deg,#070d18,#05080f);}
+.htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
+.hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 62%,#000),var(--tc));box-shadow:0 0 calc(8px + var(--tb,0)*22px) var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
+.hfill::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 13px,transparent 13px 16px);opacity:.45;}
+.hcell.go .hfill{transform:scaleX(var(--pct,0));}
+@keyframes bscan{0%{transform:translateX(-105%);}100%{transform:translateX(305%);}}
+.bscan{position:absolute;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,${CA.accent},transparent);box-shadow:0 0 18px ${CA.accent};animation:bscan 1.5s ease-in-out infinite;}
+`:`
 .htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:${CA.navy3};}
 .htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
 .hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:var(--tc);transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
 .hcell.go .hfill{transform:scaleX(var(--pct,0));}
 @keyframes bscan{0%{transform:translateX(-105%);}100%{transform:translateX(305%);}}
 .bscan{position:absolute;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,${CA.accent},transparent);opacity:.5;animation:bscan 1.5s ease-in-out infinite;}
+`}
 @keyframes bfade{0%{opacity:0;transform:translateY(3px);}12%{opacity:1;transform:none;}88%{opacity:1;}100%{opacity:0;}}
 .bline{animation:bfade 2.6s ease-in-out both;}
 @media (prefers-reduced-motion: reduce){.hcell.go .hfill{transform:scaleX(var(--pct,0))!important;transition:none!important;}.bscan{animation:none;left:33%;}.bline{animation:none;}}

@@ -2106,6 +2106,16 @@ export const GSA = `
 .a-stamp{animation:aStamp .5s cubic-bezier(.2,.8,.2,1) both;}
 /* ═══ artifact-faithful console skin — ported 1:1 from the athlete overhaul artifact
    (40b4a378). These are the pieces that give the app its HUD look. ═══ */
+${IS_DARK?`
+/* ORIGINAL dark HUD, restored verbatim 08-11 (Will: dark stays exactly pre-rebrand;
+   only the background PHOTOS stay retired). Source: 6c8737d. */
+.cyber{background:#05060c;background-image:linear-gradient(rgba(58,123,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(58,123,255,.07) 1px,transparent 1px);background-size:22px 22px;}
+.cyber-away{background:#080a06;background-image:linear-gradient(rgba(245,165,36,.075) 1px,transparent 1px),linear-gradient(90deg,rgba(245,165,36,.075) 1px,transparent 1px);background-size:22px 22px;}
+.htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:linear-gradient(180deg,#070d18,#05080f);}
+.htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
+.hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 62%,#000),var(--tc));box-shadow:0 0 calc(8px + var(--tb,0)*22px) var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
+.hfill::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 13px,transparent 13px 16px);opacity:.45;}
+`:`
 /* blue grid ground for interior app screens (the single biggest "matches the artifact" change) */
 .cyber{background:${CA.navy};}
 /* amber grid ground for away / field mode */
@@ -2115,7 +2125,7 @@ export const GSA = `
 .htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:${CA.navy3};}
 .htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
 .hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
-/* HUD texture removed in the 2026-08-07 rebrand (scanline/grid/stripe) */
+`}
 .hcell.go .hfill{transform:scaleX(var(--pct,0));}
 /* Rank-up claim — replays the charge in the NEW tier colour when the athlete taps RANK UP */
 @keyframes rankCharge{0%{transform:scaleX(.03);filter:brightness(2.1) saturate(1.5);}55%{filter:brightness(1.7) saturate(1.25);}100%{transform:scaleX(var(--pct,0));}}
@@ -2123,7 +2133,7 @@ export const GSA = `
 /* RADAR empty state ("awaiting signal") */
 .radar{width:92px;height:92px;border-radius:50%;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
 ${IS_DARK?`
-.radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,transparent 0deg,rgba(91,127,181,.30) 42deg,transparent 62deg);animation:spin 2.4s linear infinite;}
+.radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,transparent 0deg,rgba(55,230,255,.35) 42deg,transparent 62deg);animation:spin 2.4s linear infinite;}
 `:`
 /* Light brand (Draft-2): the conic glow sweep reads as haze on a light ground —
    the radar survives as a thin navy NEEDLE, same 2.4s rotation. */
@@ -2132,36 +2142,55 @@ ${IS_DARK?`
 .radar::after{content:"";position:absolute;inset:16px;border-radius:50%;border:1px solid ${CA.line2};}
 @keyframes spin{to{transform:rotate(360deg);}}
 /* LOADERS — charge bar / grid scan / hex matrix */
+${IS_DARK?`
+.ld-charge{width:150px;height:8px;border-radius:6px;background:#0d1526;overflow:hidden;position:relative;border:1px solid ${CA.line2};}
+.ld-charge i{position:absolute;left:-42%;top:0;bottom:0;width:40%;border-radius:6px;background:linear-gradient(90deg,${CA.accent},${CA.cyan});box-shadow:0 0 12px ${CA.cyan};animation:charge 1.6s cubic-bezier(.5,0,.4,1) infinite;}
+@keyframes charge{to{left:102%;}}
+.ld-scan{width:70px;height:70px;border:1px solid ${CA.line2};border-radius:10px;position:relative;overflow:hidden;background:linear-gradient(180deg,#081020,#05080f);}
+.ld-scan::before{content:"";position:absolute;left:0;right:0;height:2px;top:4%;background:${CA.cyan};box-shadow:0 0 12px ${CA.cyan};animation:scan 1.5s ease-in-out infinite;}
+.ld-scan::after{content:"";position:absolute;inset:0;background:linear-gradient(rgba(55,230,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(55,230,255,.08) 1px,transparent 1px);background-size:10px 10px;}
+@keyframes scan{50%{top:92%;}}
+.ld-hex{display:grid;grid-template-columns:repeat(3,10px);gap:7px;}
+.ld-hex i{width:10px;height:10px;background:${CA.accent};border-radius:2px;transform:rotate(45deg);opacity:.2;animation:hp 1.3s ease-in-out infinite;}
+.ld-hex i:nth-child(2){animation-delay:.1s}.ld-hex i:nth-child(3){animation-delay:.2s}.ld-hex i:nth-child(4){animation-delay:.1s}.ld-hex i:nth-child(5){animation-delay:.2s}.ld-hex i:nth-child(6){animation-delay:.3s}.ld-hex i:nth-child(7){animation-delay:.2s}.ld-hex i:nth-child(8){animation-delay:.3s}.ld-hex i:nth-child(9){animation-delay:.4s}
+@keyframes hp{50%{opacity:1;box-shadow:0 0 10px ${CA.cyan};}}
+`:`
 .ld-charge{width:150px;height:8px;border-radius:6px;background:${CA.navy3};overflow:hidden;position:relative;border:1px solid ${CA.line2};}
 .ld-charge i{position:absolute;left:-42%;top:0;bottom:0;width:40%;border-radius:6px;background:${CA.accent};animation:charge 1.6s cubic-bezier(.5,0,.4,1) infinite;}
 @keyframes charge{to{left:102%;}}
 .ld-scan{width:70px;height:70px;border:1px solid ${CA.line2};border-radius:10px;position:relative;overflow:hidden;background:${CA.navy3};}
 .ld-scan::before{content:"";position:absolute;left:0;right:0;height:2px;top:4%;background:${CA.cyan};animation:scan 1.5s ease-in-out infinite;}
-/* HUD texture removed in the 2026-08-07 rebrand (scanline/grid/stripe) */
 @keyframes scan{50%{top:92%;}}
 .ld-hex{display:grid;grid-template-columns:repeat(3,10px);gap:7px;}
 .ld-hex i{width:10px;height:10px;background:${CA.accent};border-radius:2px;transform:rotate(45deg);opacity:.2;animation:hp 1.3s ease-in-out infinite;}
 .ld-hex i:nth-child(2){animation-delay:.1s}.ld-hex i:nth-child(3){animation-delay:.2s}.ld-hex i:nth-child(4){animation-delay:.1s}.ld-hex i:nth-child(5){animation-delay:.2s}.ld-hex i:nth-child(6){animation-delay:.3s}.ld-hex i:nth-child(7){animation-delay:.2s}.ld-hex i:nth-child(8){animation-delay:.3s}.ld-hex i:nth-child(9){animation-delay:.4s}
 @keyframes hp{50%{opacity:1;}}
+`}
 .ld-dots{display:flex;align-items:center;gap:5px;}
 .ld-dots i{width:8px;height:8px;border-radius:50%;background:${CA.muted};opacity:.4;animation:ldd 1.3s ease-in-out infinite;}
 .ld-dots i:nth-child(2){animation-delay:.18s}.ld-dots i:nth-child(3){animation-delay:.36s}
 @keyframes ldd{0%,60%,100%{opacity:.35;transform:translateY(0);}30%{opacity:1;transform:translateY(-4px);}}
 /* PR "NEW MAX" stamp — straight on, cyan */
 .stampstage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:700;pointer-events:none;}
+${IS_DARK?`
+.stamp{border:3px solid ${CA.cyan};border-radius:12px;padding:16px 30px;transform:scale(2.4);opacity:0;text-align:center;background:rgba(4,10,20,.72);box-shadow:0 0 40px ${CA.cyan};}
+`:`
 .stamp{border:3px solid ${CA.cyan};border-radius:12px;padding:16px 30px;transform:scale(2.4);opacity:0;text-align:center;background:${CA.navy2};}
+`}
 .stamp.hit{animation:stampIn 2.6s cubic-bezier(.2,1.3,.3,1) forwards;}
 @keyframes stampIn{0%{opacity:0;transform:scale(2.4);}14%{opacity:1;transform:scale(.94);}22%{transform:scale(1);}80%{opacity:1;transform:scale(1);}100%{opacity:0;transform:scale(1.03);}}
+${IS_DARK?`
 /* Proof cyan scanline overlay */
-/* HUD texture removed in the 2026-08-07 rebrand (scanline/grid/stripe) */
+.proof-scan::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(55,230,255,.035) 3px 4px);z-index:8;}
+`:``}
 /* Proof "living newspaper" — body loops up behind the fixed masthead (content duplicated → -50% seams) */
 @keyframes proofLoop{from{transform:translateY(0);}to{transform:translateY(-50%);}}
-.proof-loop{animation:proofLoop 75s linear infinite;will-change:transform;}
+.proof-loop{animation:proofLoop ${IS_DARK?"30s":"75s"} linear infinite;will-change:transform;}
 .proof-scan:hover .proof-loop{animation-play-state:paused;}
 /* streak charge-chain — thin bars, trained days fill blue→cyan */
 ${IS_DARK?`
-.streaklnk{flex:1;height:6px;border-radius:2px;background:${CA.navy3};border:1px solid ${CA.line2};position:relative;overflow:hidden;}
-.streaklnk.on::after{content:"";position:absolute;inset:0;background:${CA.accent};}
+.streaklnk{flex:1;height:6px;border-radius:2px;background:#0c1526;border:1px solid ${CA.line2};position:relative;overflow:hidden;}
+.streaklnk.on::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,${CA.accent},${CA.cyan});box-shadow:0 0 6px ${CA.cyan};}
 `:`
 /* Journal X-boxes (Will's Draft-2 call): a trained day is a pen-stroke X in a
    box, not a lit bar. Dark keeps the original charge-chain above.
@@ -2177,6 +2206,15 @@ ${IS_DARK?`
    whole language is borrowed from the Benchmarks power cell and the rank-up
    stamp rather than inventing anything new. */
 .crewline{position:relative;padding-left:30px;}
+${IS_DARK?`
+.crewspine{position:absolute;left:9px;top:4px;bottom:4px;width:3px;border-radius:2px;background:#132449;overflow:hidden;}
+.crewspine::after{content:"";position:absolute;left:0;right:0;top:0;height:calc(var(--lit,0)*100%);
+  background:linear-gradient(180deg,${CA.cyan},${CA.accent});box-shadow:0 0 12px ${CA.accent}73;
+  transition:height 1.05s cubic-bezier(.3,.8,.3,1);}
+.crewpuck{position:absolute;left:-30px;top:14px;width:23px;height:23px;border-radius:50%;display:grid;place-items:center;
+  font-family:'Bebas Neue';font-size:11px;letter-spacing:.5px;color:${CA.navy};background:var(--pc,${CA.accent});
+  box-shadow:0 0 11px var(--pc,${CA.accent});}
+`:`
 .crewspine{position:absolute;left:9px;top:4px;bottom:4px;width:3px;border-radius:2px;background:${CA.border};overflow:hidden;}
 .crewspine::after{content:"";position:absolute;left:0;right:0;top:0;height:calc(var(--lit,0)*100%);
   background:${CA.accent};
@@ -2184,11 +2222,12 @@ ${IS_DARK?`
 .crewpuck{position:absolute;left:-30px;top:14px;width:23px;height:23px;border-radius:50%;display:grid;place-items:center;
   font-family:'Inter',system-ui,sans-serif;font-weight:800;font-size:11px;letter-spacing:.5px;color:${CA.navy};background:var(--pc,${CA.accent});
   }
+`}
 /* Moment card: the rank-up colour washes in from the left edge. This is the one
    place Crew is allowed to look alive, because it's the one place where
    something actually just happened. */
 .mcard{position:relative;background:${CA.navy2};border:1px solid ${CA.border};border-radius:12px;padding:13px 14px;margin-bottom:10px;overflow:hidden;}
-.mcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mc,${CA.accent});}
+.mcard::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mc,${CA.accent});${IS_DARK?`box-shadow:0 0 16px var(--mc,${CA.accent});`:``}}
 .mcard::after{content:"";position:absolute;left:0;top:0;bottom:0;width:64px;pointer-events:none;
   background:linear-gradient(90deg,color-mix(in srgb,var(--mc,${CA.accent}) 17%,transparent),transparent);}
 /* V2 comparison: a crewmate's position INSIDE their own tier, riding on top of
@@ -2197,10 +2236,10 @@ ${IS_DARK?`
    low-contrast: this is a glance, not a scoreboard, and your own fill has to stay
    the thing you read first. */
 .cmpstrip{position:absolute;top:2px;bottom:2px;width:2.5px;border-radius:2px;background:var(--sc);
-  opacity:.92;pointer-events:none;transform:translateX(-50%);}
+  ${IS_DARK?`box-shadow:0 0 7px var(--sc);`:``}opacity:.92;pointer-events:none;transform:translateX(-50%);}
 .mstamp{font-family:ui-monospace,Menlo,monospace;font-size:8px;font-weight:700;letter-spacing:.9px;padding:2px 7px;border-radius:5px;
   color:var(--mc,${CA.accent});border:1px solid var(--mc,${CA.accent});background:color-mix(in srgb,var(--mc,${CA.accent}) 9%,transparent);
-  }
+  ${IS_DARK?`box-shadow:0 0 12px color-mix(in srgb,var(--mc,${CA.accent}) 40%,transparent);`:``}}
 /* mono HUD-kicker register (matches Field Mode kickers / loader captions) — used
    for Settings group labels ("PROOF FEED", "WEIGHT UNIT", etc.) */
 .setgrp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${CA.faint};}
@@ -2680,11 +2719,22 @@ const injuryTrend = (body) => {
 // dark, rules are hairlines. Playfair stays because a broadsheet without a serif is not
 // a broadsheet — this is the one sanctioned exception to the brand's no-serif rule and
 // it is flagged for Will.
-const NEWS = {
+const NEWS = IS_DARK ? {
+  // ORIGINAL dark broadsheet (restored 08-11, source 6c8737d): high-tech LED ink
+  // on the near-black app ground. `paper` carries the container backgrounds.
+  serif: "'Playfair Display', Georgia, 'Times New Roman', serif",
+  body: "Georgia, 'Times New Roman', serif",
+  label: "'DM Sans', system-ui, sans-serif",
+  paper: "radial-gradient(120% 80% at 50% 0%,#0c1016,#06090e)",
+  mastBg: "linear-gradient(180deg,#0b0f16 70%,rgba(11,15,22,.92) 86%,transparent)",
+  ink: "#eaf1ff", ink2: "#aebfd8", ink3: "#7f90ad",
+  rule: "rgba(120,160,255,.24)", rule2: "rgba(120,160,255,.46)",
+} : {
   serif: "'Playfair Display', Georgia, 'Times New Roman', serif",
   body: "Georgia, 'Times New Roman', serif",
   label: "'Inter', system-ui, sans-serif",
   paper: "#F7F4EF",
+  mastBg: "linear-gradient(180deg,#F7F4EF 70%,#F7F4EFEB 86%,transparent)",
   ink: "#1F2A37", ink2: "#4B5563", ink3: "#6B7280",
   rule: "rgba(31,42,55,.18)", rule2: "rgba(31,42,55,.38)",
 };
@@ -2823,12 +2873,12 @@ function ProofEnvelope({digest, athleteName, onOpen}) {
         </div>
       </div>
       {/* fixed masthead */}
-      <div style={{position:"absolute",top:0,left:0,right:0,zIndex:6,padding:"10px 14px 12px",background:`linear-gradient(180deg,${NEWS.paper} 70%,${NEWS.paper}EB 86%,transparent)`}}>
+      <div style={{position:"absolute",top:0,left:0,right:0,zIndex:6,padding:"10px 14px 12px",background:NEWS.mastBg}}>
         {masthead}
       </div>
       {/* fixed "open the edition" CTA */}
       <button onClick={onOpen} style={{position:"absolute",left:12,right:12,bottom:12,zIndex:7,padding:14,borderRadius:12,cursor:"pointer",
-        background:done?"transparent":CA_BTN,color:done?CA.accent:CA.onAccent,border:done?`1px solid ${CA.accent}`:"none",
+        background:done?(IS_DARK?"#0b0f16":"transparent"):CA_BTN,color:done?(IS_DARK?CA.cyan:CA.accent):(IS_DARK?"#02040c":CA.onAccent),border:done?(IS_DARK?`1px solid ${CA.cyan}55`:`1px solid ${CA.accent}`):"none",
         fontFamily:NEWS.label,fontWeight:700,fontSize:14,letterSpacing:2,textAlign:"center",
         boxShadow:done?"none":`0 8px 22px ${CA_GLOW}`}}>
         {done?"RE-READ THIS EDITION →":"OPEN THIS WEEK'S EDITION →"}
@@ -2888,44 +2938,93 @@ function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
         </div>
       )}
 
-      {/* PR block — distinct gold, not a routine card */}
-      {prSec&&(
-        <div className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, ${CA.accent}1f, ${CA.navy2} 70%)`,border:`1px solid ${CA.accent}52`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
-          <div style={{fontSize:9,letterSpacing:2,color:CA.accent,fontWeight:700,marginBottom:8}}>🏅 {prSec.label}</div>
-          <div style={{fontSize:12.5,lineHeight:1.6,color:IS_DARK?"#c7d2e0":CA.muted2,whiteSpace:"pre-wrap"}}>{prSec.body}</div>
-        </div>
-      )}
-
-      {/* Routine sections — receded, except a flag:"warn" section (e.g. a volume gap),
-          which the generator marks as the week's real story, so it stays elevated (amber). */}
-      {routine.map((s,i)=> s.flag==="warn" ? (
-        <div key={i} className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, ${CA.amber}1f, ${CA.navy2} 70%)`,border:`1px solid ${CA.amber}66`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
-          <div style={{fontSize:9,letterSpacing:2,color:CA.amber,fontWeight:700,marginBottom:7}}>⚠ {s.label}</div>
-          <div style={{fontSize:12.5,lineHeight:1.6,color:IS_DARK?"#e0d3bf":CA.muted2,whiteSpace:"pre-wrap"}}>{s.body}</div>
-        </div>
-      ) : (
-        <div key={i} className="proof-drop" style={{...delay(),background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
-          <div style={{fontSize:9,letterSpacing:2,color:CA.muted,fontWeight:700,marginBottom:7}}>{s.label}</div>
-          <div style={{fontSize:12.5,lineHeight:1.6,color:CA.muted2,whiteSpace:"pre-wrap"}}>{s.body}</div>
-        </div>
-      ))}
-
-      {/* Injury — urgent red */}
-      {injurySec&&(
-        <div className="proof-drop" style={{...delay(),background:`linear-gradient(150deg, ${CA.red}1f, ${CA.navy2} 70%)`,border:`1px solid ${CA.red}66`,borderRadius:12,padding:"13px 14px",marginBottom:10}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:9,letterSpacing:2,color:CA.red,fontWeight:700}}>⚠ {injurySec.label}</div>
-            {trend&&<div style={{fontSize:8,letterSpacing:1,padding:"3px 8px",borderRadius:12,background:`${trend.color}24`,border:`1px solid ${trend.color}66`,color:trend.color,fontWeight:700}}>{trend.color===CA.green?"▲":"▼"} {trend.txt}</div>}
+      {/* ── Newspaper columns (Will's 2A pick, 08-11) — sections read as a real
+          paper: serif column heads over a short colored rule, serif body, thin
+          hairlines between. Same structure both themes; NEWS carries the inks. */}
+      {(()=>{
+        const head = (label, color, glyph) => (
+          <div style={{marginBottom:7}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:7,minWidth:0}}>
+                {glyph&&<span style={{fontSize:12,color:color||NEWS.ink3,flexShrink:0}}>{glyph}</span>}
+                <span style={{fontFamily:NEWS.serif,fontWeight:700,fontSize:17,lineHeight:1.15,color:NEWS.ink}}>{titleCase(label)}</span>
+              </div>
+              {label===injurySec?.label&&trend&&<div style={{fontSize:8,letterSpacing:1,padding:"3px 8px",borderRadius:12,background:`${trend.color}24`,border:`1px solid ${trend.color}66`,color:trend.color,fontWeight:700,flexShrink:0}}>{trend.color===CA.green?"▲":"▼"} {trend.txt}</div>}
+            </div>
+            <div style={{borderTop:`2px solid ${color||NEWS.rule2}`,width:36,marginTop:5}}/>
           </div>
-          <div style={{fontSize:12,lineHeight:1.6,color:IS_DARK?"#d9c2c4":CA.muted2,whiteSpace:"pre-wrap"}}>{injurySec.body}</div>
-        </div>
-      )}
+        );
+        const bodyStyle = {fontFamily:NEWS.body,fontSize:13.5,lineHeight:1.65,color:NEWS.ink2,whiteSpace:"pre-wrap"};
+        const rule = <div style={{borderTop:`1px solid ${NEWS.rule}`,margin:"14px 0"}}/>;
+        // Goal instrument (2B-lite): read the (current, target) pairs Joe already
+        // cites — "222 vs 245 target" / "goal is 315 … Current top: 275" — and
+        // draw an 8-segment rule for each. Purely additive; no parse, no rule.
+        const goalPairs = (txt) => {
+          const out=[]; const t=String(txt||"");
+          const re=/(\d{2,4})(?:\s*(?:lbs?|kg))?(?:\s*e1RM)?\s*vs\.?\s*(?:your\s*)?(\d{2,4})(?:\s*(?:lbs?|kg))?\s*target/gi;
+          let m; while((m=re.exec(t))&&out.length<3) out.push([+m[1],+m[2]]);
+          if(!out.length){
+            const g=/goal\s+is\s+(\d{2,4})[\s\S]{0,90}?[Cc]urrent(?:\s+top)?:?\s+(\d{2,4})/.exec(t);
+            if(g) out.push([+g[2],+g[1]]);
+          }
+          return out.filter(([c,tg])=>tg>0&&c>0&&c<=tg*1.6);
+        };
+        const goalRules = (pairs) => pairs.length===0?null:(
+          <div style={{margin:"9px 0 2px",display:"flex",flexDirection:"column",gap:7}}>
+            {pairs.map(([c,tg],gi)=>{
+              const segf=Math.max(0,Math.min(1,c/tg))*8;
+              return (
+                <div key={gi}>
+                  <div style={{display:"flex",gap:3}}>
+                    {Array.from({length:8},(_,si)=>{
+                      const f=Math.max(0,Math.min(1,segf-si));
+                      return <span key={si} style={{flex:1,height:3.5,borderRadius:2,background:IS_DARK?"#132449":CA.border,position:"relative",overflow:"hidden"}}>
+                        {f>0&&<span style={{position:"absolute",top:0,bottom:0,left:0,width:`${f*100}%`,background:c>=tg?CA.green:CA.accent}}/>}
+                      </span>;
+                    })}
+                  </div>
+                  <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,letterSpacing:0.3,color:NEWS.ink3,marginTop:4}}>{c} OF {tg}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+        const isGoal = (l)=>/\bGOAL/i.test(l||"");
+        const isAhead = (l)=>/WEEK AHEAD|NEXT WEEK/i.test(l||"");
+        const cols = [];
+        if(prSec) cols.push(
+          <div key="pr" className="proof-drop" style={delay()}>
+            {head(prSec.label, CA.accent, "🏅")}
+            <div style={bodyStyle}>{prSec.body}</div>
+          </div>
+        );
+        routine.forEach((s,i)=>{
+          const warn = s.flag==="warn";
+          const ahead = isAhead(s.label);
+          cols.push(
+            <div key={i} className="proof-drop" style={delay()}>
+              {head(s.label, warn?CA.amber:isGoal(s.label)?CA.green:undefined, warn?"⚠":undefined)}
+              {isGoal(s.label)&&goalRules(goalPairs(s.body))}
+              {ahead&&!IS_DARK
+                ? <div style={{...PAPER_RULED,border:`1px solid ${CA.border}`,borderRadius:8,padding:"2px 12px"}}><div style={{...bodyStyle,lineHeight:"26px"}}>{s.body}</div></div>
+                : <div style={bodyStyle}>{s.body}</div>}
+            </div>
+          );
+        });
+        if(injurySec) cols.push(
+          <div key="inj" className="proof-drop" style={{...delay(),borderLeft:`3px solid ${CA.red}`,paddingLeft:11}}>
+            {head(injurySec.label, CA.red, "⚠")}
+            <div style={{...bodyStyle,fontSize:13}}>{injurySec.body}</div>
+          </div>
+        );
+        return cols.map((c,i)=><div key={i}>{c}{i<cols.length-1&&rule}</div>);
+      })()}
 
       {/* Focus — closing directive */}
       {focusSec&&(
-        <div className="proof-drop" style={{...delay(),borderLeft:`3px solid ${CA.accent}`,background:`${CA.accent}10`,borderRadius:"0 12px 12px 0",padding:"12px 14px",marginBottom:6}}>
+        <div className="proof-drop" style={{...delay(),borderLeft:`3px solid ${CA.accent}`,background:`${CA.accent}10`,borderRadius:"0 12px 12px 0",padding:"12px 14px",margin:"16px 0 6px"}}>
           <div style={{fontSize:9,letterSpacing:2,color:CA.accent,fontWeight:700,marginBottom:6}}>▶ {focusSec.label}</div>
-          <div style={{fontSize:13,lineHeight:1.55,color:CA.text,fontWeight:500,whiteSpace:"pre-wrap"}}>{focusSec.body}</div>
+          <div style={{fontFamily:NEWS.body,fontSize:13.5,lineHeight:1.55,color:NEWS.ink,whiteSpace:"pre-wrap"}}>{focusSec.body}</div>
         </div>
       )}
 
