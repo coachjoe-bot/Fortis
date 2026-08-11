@@ -24,3 +24,4 @@ ios/App/App.xcodeproj/project.xcworkspace/xcuserdata/
 ios/App/App.xcodeproj/xcuserdata/
 ios/.build/
 ios/DerivedData/
+scripts/gauntlet/.gauntlet-accounts.json

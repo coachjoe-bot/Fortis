@@ -6,7 +6,7 @@
 
 import {
   ATHLETE_CELLS, COACH_CELLS, cellsFor, blueprintPct, precharge, pickTopic,
-  parseExtraction, parseInterviewerReply, validateDraft, draftUser,
+  parseExtraction, parseInterviewerReply, validateDraft, draftUser, hasBarbellWork,
 } from "../src/programBuilder.js";
 
 let fail = 0;
@@ -133,6 +133,58 @@ Week 2: +5 lbs on mains. Deload when two sessions stall.`;
   ok(!validateDraft(good, { blueprint: { ...bp, schedule: { value: "5 days/week" } } }).ok, "day count below schedule fails");
   ok(!validateDraft(good, { blueprint: { ...bp, equipment: { value: "bodyweight only, no barbell" } } }).ok, "barbell work in a no-barbell blueprint fails");
   ok(!validateDraft("too short", { blueprint: bp }).ok, "stub text fails");
+}
+
+// ── equipment check judges PRESCRIPTIONS, not prose (T46) ────────────────────
+// A correct dumbbell-only draft that EXPLAINS itself ("No barbell means we lean
+// on DB pressing") used to fail this check, which fired a needless corrective
+// retry and then asked the model to fix a rule it had already followed.
+console.log("equipment check — prose vs prescription:");
+{
+  const noBar = { schedule: { value: "4 days/week" }, equipment: { value: "dumbbells only, no barbell" } };
+  const dbDraft = `Bench-to-Bodyweight Block (Dumbbell-Based)
+
+Coach's note: No barbell means we lean on DB pressing variations hard and get creative with unilateral loading. 4 days is plenty.
+
+Day 1 - Press Focus
+Warm-up: 3 min light cardio, 10 arm circles
+DB Flat Bench Press: 4 x 6, RPE 7
+DB Incline Press: 3 x 8, RPE 7
+Cool-down: 5 min pec stretch`;
+  // Assert on the equipment problem specifically — this excerpt is one day long,
+  // so the unrelated day-count rule fires and would mask the result.
+  const dbProblems = validateDraft(dbDraft, { blueprint: noBar }).problems;
+  ok(!dbProblems.some(p => /barbell/.test(p)), `negated barbell mention in the coach's note passes (got: ${dbProblems.join("; ")})`);
+  ok(!hasBarbellWork(dbDraft), "hasBarbellWork ignores an explanatory 'No barbell' line");
+
+  const negations = [
+    "Substitute the barbell back squat with a DB goblet squat: 3 x 10",
+    "Without a barbell, do DB RDLs 3 x 8 @ RPE 7",
+    "Instead of a barbell bench, DB floor press 4 x 6",
+    "You don't have a barbell, so 3 sets of push-ups to failure",
+  ];
+  for (const l of negations) ok(!hasBarbellWork(l), `negated prescription is not a violation: "${l.slice(0, 40)}…"`);
+
+  const violations = [
+    "Barbell Back Squat: 5 x 5 @ 80%",
+    "Bench Press 3x5 @ 185",
+    "Barbell Row: 4 x 8, RPE 8",
+    "Back Squat @ 75% x 5 sets",
+  ];
+  for (const l of violations) ok(hasBarbellWork(l), `real barbell prescription is caught: "${l.slice(0, 40)}…"`);
+
+  // A dumbbell/machine variant of the same movement is what a no-barbell program
+  // is supposed to prescribe — "bench press <number>" alone must not condemn it.
+  const substitutes = [
+    "DB Flat Bench Press 4x8 @ RPE 7",
+    "Dumbbell Bench Press: 3 x 10",
+    "Machine Bench Press 3x12",
+    "Goblet Back Squat 3 x 8",
+  ];
+  for (const l of substitutes) ok(!hasBarbellWork(l), `implement substitute is not a violation: "${l.slice(0, 40)}…"`);
+
+  // A bare mention with no sets/reps/load is prose, not a prescription.
+  ok(!hasBarbellWork("We'll revisit barbell work once you have gym access again."), "prose without a prescription is not a violation");
 }
 
 // ── draft prompt carries the blueprint ───────────────────────────────────────

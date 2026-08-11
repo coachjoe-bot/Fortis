@@ -5,13 +5,41 @@
 // Re-run on every doctrine edit (docs/doctrine/README.md).
 //
 //   ANTHROPIC_API_KEY=... node scripts/test-program-build.mjs
+//
+// No local key? Prod's is Vercel-only, so this harness was unrunnable on a dev
+// machine. It now falls back to the SAME proxy route test-program-edit-eval.mjs
+// uses: authenticate as a disposable athlete and go through a deployment's own
+// /api/claude, which applies the identical model + params the app ships.
+//
+//   EVAL_PROXY_BASE=https://app.trainwilco.com EVAL_PROXY_NAME="..." \
+//   EVAL_PROXY_PIN=1234 node scripts/test-program-build.mjs
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { cellsFor, drafterSystem, draftUser, validateDraft } from "../src/programBuilder.js";
+import { cellsFor, drafterSystem, draftUser, validateDraft, prescribes } from "../src/programBuilder.js";
 
-const KEY = process.env.ANTHROPIC_API_KEY;
-if (!KEY) { console.log("SKIP: ANTHROPIC_API_KEY not set — this harness generates real drafts."); process.exit(0); }
+const KEY = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_KEY;
+const PROXY_BASE = process.env.EVAL_PROXY_BASE;
+const PROXY_NAME = process.env.EVAL_PROXY_NAME;
+const PROXY_PIN = process.env.EVAL_PROXY_PIN;
+if (!KEY && !(PROXY_BASE && PROXY_NAME && PROXY_PIN)) {
+  console.log("SKIP: no ANTHROPIC_API_KEY and no EVAL_PROXY_* — this harness generates real drafts.");
+  process.exit(0);
+}
+
+// Proxy auth: one athlete-login, reused for every fixture.
+let proxyAuth = null;
+const proxyLogin = async () => {
+  if (proxyAuth) return proxyAuth;
+  const r = await fetch(`${PROXY_BASE}/api/identity`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "athlete-login", name: PROXY_NAME, pin: PROXY_PIN }),
+  });
+  const d = await r.json();
+  if (!d.athlete?.id) throw new Error(`proxy login failed: ${d.reason || r.status}`);
+  proxyAuth = { id: d.athlete.id, role: "athlete", token: d.token, pin: PROXY_PIN };
+  return proxyAuth;
+};
 
 const here = dirname(fileURLToPath(import.meta.url));
 const doc = (f) => readFileSync(join(here, "..", "docs", "doctrine", f), "utf8");
@@ -38,10 +66,10 @@ const FIXTURES = [
     extra: (t) => /hamstring/i.test(t) ? [] : ["red flag never acknowledged in draft text"] },
   { name: "45-min no-barbell", viewer: "athlete", topic: null, athlete: { name: "Busy", age: 25 },
     blueprint: bp({ goal: "Bench-press bodyweight (185) by October 1", schedule: "4 days/week, 45 min sessions", equipment: "dumbbells only, no barbell", red_flags: "None", non_negotiables: "no burpees", recovery: "high work stress", prep: "minimal", handoff: "coming off a layoff" }),
-    extra: (t) => /burpee/i.test(t) ? ["programmed a movement the athlete banned (burpees)"] : [] },
+    extra: (t) => prescribes(t, /burpees?/i) ? ["programmed a movement the athlete banned (burpees)"] : [] },
   { name: "winter-break conditioning", viewer: "athlete", topic: "conditioning", athlete: { name: "Break", age: 16, sport: "Volleyball" },
     blueprint: bp({ goal: "Hold conditioning through 2-week winter break, back December 29", schedule: "3 days/week, no gym access", equipment: "bodyweight only", red_flags: "None", non_negotiables: "None", recovery: "off practice for the break", prep: "one standard routine", handoff: "mid-season maintenance block" }),
-    extra: (t) => /barbell|rack|bench press \d/i.test(t) ? ["equipment violation: gym work in a bodyweight-only break plan"] : [] },
+    extra: (t) => prescribes(t, /barbells?|\brack\b|bench press \d/i) ? ["equipment violation: gym work in a bodyweight-only break plan"] : [] },
 ];
 
 const gen = async (fx) => {
@@ -49,10 +77,28 @@ const gen = async (fx) => {
     { type: "text", text: DOCTRINE.core + (fx.topic ? `\n\n${DOCTRINE[fx.topic]}` : ""), cache_control: { type: "ephemeral" } },
     { type: "text", text: drafterSystem({ viewer: fx.viewer }) },
   ];
+  const messages = [{ role: "user", content: draftUser({ blueprint: fx.blueprint, cells: cellsFor(fx.viewer, "full"), athlete: fx.athlete }) }];
+
+  if (!KEY) {
+    // Proxy route — /api/claude takes the cached doctrine block separately and
+    // applies the app's own model params for the program_generate feature.
+    const auth = await proxyLogin();
+    const r = await fetch(`${PROXY_BASE}/api/claude`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        auth, feature: "program_generate", model: "claude-sonnet-5", max_tokens: 3500,
+        system_cached: system[0].text, system: system[1].text, messages,
+      }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(typeof d.error === "string" ? d.error : d.error.message || "proxy error");
+    return d.content?.[0]?.text || d.text || "";
+  }
+
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 3500, system, messages: [{ role: "user", content: draftUser({ blueprint: fx.blueprint, cells: cellsFor(fx.viewer, "full"), athlete: fx.athlete }) }] }),
+    body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 3500, system, messages }),
   });
   const d = await r.json();
   if (d.error) throw new Error(d.error.message || "api error");
@@ -65,7 +111,17 @@ for (const fx of FIXTURES) {
     const text = await gen(fx);
     const base = validateDraft(text, { blueprint: fx.blueprint });
     const problems = [...base.problems, ...fx.extra(text)];
-    if (problems.length) { fail++; console.error(`✗ ${fx.name}\n${problems.map(p => `    - ${p}`).join("\n")}`); }
+    if (problems.length) {
+      fail++;
+      console.error(`✗ ${fx.name}\n${problems.map(p => `    - ${p}`).join("\n")}`);
+      // Generations vary, so a failure is only actionable with the offending text
+      // in hand — otherwise "it failed once" is unfalsifiable. DEBUG_DRAFT=1 dumps
+      // the whole draft; by default just the lines that tripped an equipment rule.
+      if (process.env.DEBUG_DRAFT) console.error(`\n--- draft ---\n${text}\n--- end ---`);
+      else for (const l of text.split("\n")) {
+        if (/barbell|burpee|back squat @|bench press \d/i.test(l)) console.error(`      | ${l.trim().slice(0, 160)}`);
+      }
+    }
     else console.log(`✓ ${fx.name}`);
   } catch (e) { fail++; console.error(`✗ ${fx.name} — generation failed: ${e.message}`); }
 }

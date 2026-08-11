@@ -241,8 +241,52 @@ export function validateDraft(text, { blueprint = {}, cells = [] } = {}) {
   if (!cooldowns) problems.push("no cool-down present");
   if (dayCount > 1 && warmups < dayCount) problems.push("not every day has a warm-up");
   const equip = (blueprint.equipment?.value || "").toLowerCase();
-  if (/(bodyweight only|no barbell|no gym|dumbbells? only)/.test(equip) && /barbell|back squat @|bench press \d/i.test(t)) {
+  if (/(bodyweight only|no barbell|no gym|dumbbells? only)/.test(equip) && hasBarbellWork(t)) {
     problems.push("barbell work programmed for a no-barbell blueprint");
   }
   return { ok: problems.length === 0, problems };
 }
+
+// Does the draft actually PRESCRIBE barbell work? A bare /barbell/ match reads the
+// coach's note as a violation — "No barbell means we lean on DB pressing" is the
+// drafter obeying the constraint and explaining itself, and it tripped the check on
+// a correct program every time it said so. That fired a needless corrective retry
+// (a second 3,500-token generation) and then told the model to "fix" a rule it had
+// already followed, which is how a good draft gets talked into a worse one.
+//
+// So: judge PRESCRIPTION lines only, and never a negated mention.
+//   • prose paragraphs (the title + coach's note) are not prescriptions
+//   • "no barbell", "without a barbell", "instead of a barbell", "sub the barbell"
+//     are the constraint being honored, not broken
+const NEGATORS = "no|without|instead of|rather than|not|skip(?:ping)?|sub(?:bing|stitute|stituting)?(?: for| out)?|swap(?:ping)?(?: out)?|replace(?:s|d|ment)?(?: for)?|minus|lack(?:ing)?|don'?t have|do not have|don'?t|can'?t use|cannot use|zero|nothing but|other than|besides|never|avoid(?:ing)?";
+
+// Does `banned` appear as an actual PRESCRIPTION, rather than as the drafter
+// saying it stayed away from it? Shared by the equipment rule below and the eval
+// harness's non-negotiable assertions, because both had the same false positive.
+export function prescribes(text, banned, { unless } = {}) {
+  const negated = new RegExp(`\\b(?:${NEGATORS})\\b[^.!?\\n]{0,60}?(?:${banned.source})`, "i");
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (!banned.test(line)) continue;
+    // The line names a different implement doing the same movement pattern
+    // ("DB Flat Bench Press 4x8") — not the banned equipment.
+    if (unless && unless.test(line)) continue;
+    // Title / coach's-note prose is explanation, not prescription.
+    if (/^(coach'?s note|note|title|summary)\b/i.test(line)) continue;
+    // A prescription line names sets/reps or a load; prose sentences don't.
+    if (!/\d\s*[x×]\s*\d|\bRPE\s*\d|\b\d+\s*%|\breps?\b|\bsets?\b|@\s*\d/i.test(line)) continue;
+    // "…no burpees anywhere in this program" is the ban being honored, not broken.
+    if (negated.test(line)) continue;
+    return true;
+  }
+  return false;
+}
+
+// "bench press <number>" / "back squat @" stand in for an unnamed barbell lift —
+// but a dumbbell, kettlebell, machine or Smith variant of the same movement is
+// exactly what a no-barbell program is SUPPOSED to prescribe, so those lines are
+// not violations. ("DB Flat Bench Press 4x8 @ RPE 7" was failing this check.)
+const BARBELL = /barbells?|back squat\s*[@\d]|bench press\s*\d/i;
+const NOT_A_BARBELL = /\b(db|dumbbells?|kb|kettlebells?|machine|smith|cable|bands?|bodyweight|goblet)\b/i;
+export const hasBarbellWork = (text) => prescribes(text, BARBELL, { unless: NOT_A_BARBELL });
