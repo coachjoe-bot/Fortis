@@ -2529,6 +2529,18 @@ export const pushSupported = () =>
   isNativeIOS() || // APNs via @capacitor/push-notifications — always available in the native shell
   (typeof window!=="undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 
+// iOS's WKWebView exposes no Web Notification API at all, so `Notification` is an
+// undefined global in the native shell — and pushSupported() returns true there on
+// the isNativeIOS() branch, because native push runs through APNs and needs none of
+// this. Reading Notification.permission directly therefore threw a ReferenceError
+// on device and the error boundary swallowed the whole Settings modal with it,
+// which also took out logout and in-app account deletion. Treat "no Notification
+// object" as "nothing has been denied" and let the native paths speak for themselves.
+const notifPermission = () => {
+  try{ return (typeof Notification!=="undefined" && Notification?.permission) || "default"; }
+  catch(_){ return "default"; }
+};
+
 const pushApi = async (payload) => {
   const r = await fetch("/api/push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth:CURRENT_AUTH,...payload})});
   const d = await r.json().catch(()=>({}));
@@ -6478,7 +6490,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // Skipped where push can't work (unsupported platform / permission denied) or
     // when this browser is already subscribed.
     try {
-      if(pushSupported() && !localStorage.getItem(PUSH_PROMPT_KEY) && Notification.permission!=="denied"){
+      if(pushSupported() && !localStorage.getItem(PUSH_PROMPT_KEY) && notifPermission()!=="denied"){
         getPushSubscription().then(sub=>{ if(!sub) setShowPushPrompt(true); });
       }
     } catch(_) {}
@@ -12388,8 +12400,12 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
   const [pushOn,setPushOn] = useState(false);
   const [pushBusy,setPushBusy] = useState(false);
   const [pushMsg,setPushMsg] = useState("");
-  const pushDenied = pushOk && Notification.permission==="denied";
-  useEffect(()=>{ if(pushOk) getPushSubscription().then(s=>setPushOn(!!s)); },[]);
+  const pushDenied = pushOk && notifPermission()==="denied";
+  // getPushSubscription() is a browser-only object and returns null on native by
+  // design, so reading it here showed the toggle as OFF on iPhone even with a live
+  // APNs registration. getPushStatusForCaller() answers for both platforms and
+  // checks the row is bound to THIS account.
+  useEffect(()=>{ if(pushOk) getPushStatusForCaller().then(on=>setPushOn(!!on)).catch(()=>{}); },[]);
 
   const togglePush = async () => {
     if(pushBusy) return;
@@ -12400,14 +12416,14 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
         setPushOn(false);
         setPushMsg("Notifications are off.");
       } else {
-        if(Notification.permission==="denied") throw new Error("denied");
+        if(notifPermission()==="denied") throw new Error("denied");
         await enablePush();
         setPushOn(true);
         try{localStorage.setItem(PUSH_PROMPT_KEY,"1");}catch(_){}
         setPushMsg("You're set. Joe will keep you posted.");
       }
     }catch(e){
-      setPushMsg(Notification.permission==="denied"
+      setPushMsg(notifPermission()==="denied"
         ? "Notifications are blocked for this app in your device settings. Turn them on there first."
         : "Couldn't update notifications. Try again.");
     }
