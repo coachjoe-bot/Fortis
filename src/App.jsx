@@ -2063,6 +2063,12 @@ export const PAPER_RULED = IS_DARK ? {} : { backgroundColor:CA.navy2, background
 // here would sit unread until the whole JS bundle parses, delaying first text paint.
 export const GS = `
 *{box-sizing:border-box;margin:0;padding:0;}
+/* Deliberately NOT locking html/body to height:100%;overflow:hidden. That does stop
+   the app shell being dragged around, but it also clips the screens that legitimately
+   grow past the viewport and rely on the document scrolling — signup runs 873px tall
+   on a 375x812 phone, and locking the document made the last 61px unreachable. The
+   shell is held in place by giving the chat list minHeight:0 instead, which is where
+   the overflow actually came from. */
 html,body{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 /* Body bg = the base ground (CA.navy, now light grey #EFEFEF). On iOS the
    home-indicator safe area paints the body color, so any MISMATCH between body and
@@ -2071,7 +2077,13 @@ html,body{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-a
    keep body on the base so it blends. */
 body{background:${CA.navy};color:${CA.text};font-family:'Inter',system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;}
 input,textarea,select,button{font-family:'Inter',system-ui,-apple-system,sans-serif;}
-::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:${CA.navy2};}::-webkit-scrollbar-thumb{background:${CA.border};border-radius:2px;}
+/* Scroll indicator. Was 4px wide with the thumb on CA.border — the same hairline
+   beige the ruled paper uses — so against a white card in MY LOG it read as nothing
+   at all. Wider, and inked in each theme's own colour rather than one value for both. */
+::-webkit-scrollbar{width:7px;height:7px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:${IS_DARK?"rgba(146,171,214,0.5)":"rgba(40,80,139,0.42)"};border-radius:4px;}
+::-webkit-scrollbar-thumb:active{background:${IS_DARK?"rgba(146,171,214,0.75)":"rgba(40,80,139,0.65)"};}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
 .fade-up{animation:fadeUp 0.25s ease forwards;}
@@ -8417,7 +8429,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       )}
 
       {/* Messages */}
-      <div data-tour="chat" style={{flex:1,overflowY:"auto",padding:"16px 16px 8px"}}>
+      {/* minHeight:0 is load-bearing. A flex child's min-height defaults to auto (its
+          content), so without this a long conversation grew taller than the 100dvh
+          shell, the whole app scrolled, the header slid out of view and dead space
+          opened under the composer. overscrollBehavior:contain stops a rubber-band at
+          the end of the list from dragging the shell with it. */}
+      <div data-tour="chat" style={{flex:1,minHeight:0,overscrollBehavior:"contain",overflowY:"auto",padding:"16px 16px 8px"}}>
         {/* The skeleton is now only for a TRUE cold start. A warm reopen already
             has the greeting (or today's transcript) painted from the device, so
             showing "Syncing feed" over it would be a step backwards. */}
