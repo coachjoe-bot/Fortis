@@ -60,29 +60,37 @@ WHERE event_name = 'notification_opened'
 GROUP BY 1, 2, 3;
 
 -- ── 3. Live subscriptions per platform ───────────────────────────────────────
--- The number that was two, and iOS-zero, and that nobody was looking at. Athlete
--- and coach rows live in separate tables, so they are UNIONed under an explicit
--- audience column rather than silently summed — "0 coach subscriptions, ever" is
--- a fact that must stay visible, not one that averages away into a total.
+-- The number that was two, and iOS-zero, and that nobody was looking at.
+--
+-- The grid of (audience × platform) is generated and LEFT JOINed, NOT grouped
+-- out of the tables. A plain GROUP BY emits no row for an empty combination, so
+-- "zero coach subscriptions, ever" and "zero iOS subscriptions, ever" — the two
+-- facts that made this task necessary — would render as MISSING ROWS. A missing
+-- row reads as "not applicable"; a zero reads as "broken." They must be zeros.
 CREATE OR REPLACE VIEW v_push_subscriptions_live
 WITH (security_invoker = on) AS
+WITH grid AS (
+  SELECT a.audience, p.platform
+  FROM (VALUES ('athlete'), ('coach')) AS a(audience)
+  CROSS JOIN (VALUES ('web'), ('ios')) AS p(platform)
+),
+rows_ AS (
+  SELECT 'athlete'::text AS audience, COALESCE(platform, 'web') AS platform,
+         athlete_id AS recipient_id, created_at
+  FROM push_subscriptions
+  UNION ALL
+  SELECT 'coach'::text, COALESCE(platform, 'web'), coach_id, created_at
+  FROM coach_push_subscriptions
+)
 SELECT
-  'athlete'::text                       AS audience,
-  COALESCE(platform, 'web')             AS platform,
-  COUNT(*)                              AS subscriptions,
-  COUNT(DISTINCT athlete_id)            AS recipients,
-  MAX(created_at)                       AS newest_subscription
-FROM push_subscriptions
-GROUP BY 1, 2
-UNION ALL
-SELECT
-  'coach'::text,
-  COALESCE(platform, 'web'),
-  COUNT(*),
-  COUNT(DISTINCT coach_id),
-  MAX(created_at)
-FROM coach_push_subscriptions
-GROUP BY 1, 2;
+  g.audience,
+  g.platform,
+  COUNT(r.recipient_id)                    AS subscriptions,
+  COUNT(DISTINCT r.recipient_id)           AS recipients,
+  MAX(r.created_at)                        AS newest_subscription
+FROM grid g
+LEFT JOIN rows_ r ON r.audience = g.audience AND r.platform = g.platform
+GROUP BY g.audience, g.platform;
 
 REVOKE ALL ON v_push_delivery_daily      FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON v_push_opens_daily         FROM PUBLIC, anon, authenticated;

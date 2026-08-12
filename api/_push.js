@@ -62,10 +62,13 @@ const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID || "com.trainwilco.wilco";
 //
 // APNS_ENVIRONMENT lets a dev build be tested without editing code; unset means
 // production, which is what every shipped build uses.
-const APNS_ENVIRONMENT = process.env.APNS_ENVIRONMENT === "sandbox" ? "sandbox" : "production";
-export const apnsHost = (env = APNS_ENVIRONMENT) =>
+// Read at CALL time, not module load: scripts/prove-push-delivery.mjs --apns
+// probes both gateways in one process, and a module-level capture would make the
+// second probe silently re-test the first one's host — the exact class of
+// false-green this whole section is about.
+const apnsEnvironment = () => (process.env.APNS_ENVIRONMENT === "sandbox" ? "sandbox" : "production");
+export const apnsHost = (env = apnsEnvironment()) =>
   env === "sandbox" ? "https://api.sandbox.push.apple.com" : "https://api.push.apple.com";
-const APNS_HOST = apnsHost();
 
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -105,7 +108,7 @@ function sendApns(deviceToken, payload) {
 
     let client;
     try {
-      client = http2.connect(APNS_HOST);
+      client = http2.connect(apnsHost());
     } catch (e) {
       console.error("[push] apns connect failed:", e?.message);
       return resolve("failed");
@@ -153,7 +156,7 @@ function sendApns(deviceToken, payload) {
       // loudly with the environment we sent to and KEEP the row.
       if (status === 400 && (reason === "BadDeviceToken" || reason === "DeviceTokenNotForTopic")) {
         console.error(
-          `[push] apns REJECTED token (${reason}) against the ${APNS_ENVIRONMENT} gateway — ` +
+          `[push] apns REJECTED token (${reason}) against the ${apnsEnvironment()} gateway — ` +
           `a token minted by the other environment looks exactly like this. Row kept, not pruned.`
         );
         return resolve("failed");
