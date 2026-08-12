@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		162D03D34D636C8F4673988C /* SessionCardRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C2CC9333F76E5DB9F9A3DBC /* SessionCardRouter.swift */; };
 		1B1DD1C97AEDF3A3F0234E71 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B1FD75663CEF6A34B4FE3EE2 /* Foundation.framework */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		33503DD033294BAE4D2E0ED3 /* SessionCardWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B36D11220DF95BC2FE5AF4BB /* SessionCardWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -51,6 +52,7 @@
 /* Begin PBXFileReference section */
 		01F4FB91C3D938EE7F42B779 /* SessionCardLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardLiveActivity.swift; sourceTree = "<group>"; };
 		0AA19DC55181E81D515C3399 /* SessionCardPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardPlugin.swift; sourceTree = "<group>"; };
+		0C2CC9333F76E5DB9F9A3DBC /* SessionCardRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardRouter.swift; sourceTree = "<group>"; };
 		192C414D768DE27DA9995BB0 /* SessionCardViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionCardViewController.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 				0AA19DC55181E81D515C3399 /* SessionCardPlugin.swift */,
 				192C414D768DE27DA9995BB0 /* SessionCardViewController.swift */,
 				ED5A498C87EC1FEE1D455088 /* Widget-Info.plist */,
+				0C2CC9333F76E5DB9F9A3DBC /* SessionCardRouter.swift */,
 			);
 			name = WilcoSessionCard;
 			path = WilcoSessionCard;
@@ -273,6 +276,7 @@
 				F1DA16A5BAEF68EE8522CCE0 /* SessionCardPlugin.swift in Sources */,
 				5A954D08D88EB1255319279F /* SessionCardViewController.swift in Sources */,
 				BFA089EAAC14CCBEF279160B /* SessionCardAttributes.swift in Sources */,
+				162D03D34D636C8F4673988C /* SessionCardRouter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

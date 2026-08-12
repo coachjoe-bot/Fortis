@@ -11,6 +11,11 @@ struct SessionCardAttributes: ActivityAttributes {
         var title: String      // "PUSH A · WEEK 3"
         var lines: [String]    // one exercise per entry, weights resolved
         var startedAt: Date
+        // The app's OWN theme toggle (localStorage, not the system appearance —
+        // WILCO's dark mode is in-app, so the widget can't read it and the JS
+        // hands it over on every show/update. Optional so a Live Activity
+        // started by an older binary still decodes.
+        var dark: Bool?
     }
     // Static for the life of one activity.
     var athleteName: String

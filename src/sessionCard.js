@@ -99,12 +99,37 @@ const postWebCard = async (title, body) => {
   });
 };
 
+// The app's own dark-mode flag (localStorage, module-eval'd in App.jsx). Read
+// lazily and defensively here so this module stays import-cycle-free and
+// testable in node — the native card can't see the WebView's storage, so every
+// show()/update() hands the current theme over.
+const isDarkTheme = () => {
+  try { return localStorage.getItem("wilco_theme") === "dark"; } catch (_) { return false; }
+};
+
+// Notifications must be ON for WILCO before anything lands on a lock screen
+// (Will, 08-11). On native that's the OS notification permission — Live
+// Activities have their own switch, but an athlete who denied notifications
+// should never get a pinned card, so this gates on the real permission and
+// asks for it if it has never been answered.
+const nativeNotificationsGranted = async () => {
+  try {
+    const { PushNotifications } = await import("@capacitor/push-notifications");
+    let { receive } = await PushNotifications.checkPermissions();
+    if (receive === "prompt" || receive === "prompt-with-rationale") {
+      ({ receive } = await PushNotifications.requestPermissions());
+    }
+    return receive === "granted";
+  } catch (_) { return false; }
+};
+
 export const showSessionCard = async (athleteId, card) => {
   if (!card || !sessionCardSupported()) return false;
   try {
     const native = nativeSessionCard();
     if (native) {
-      await native.show({ title: card.title, body: card.body });
+      if (!(await nativeNotificationsGranted())) return false;
+      await native.show({ title: card.title, body: card.body, dark: isDarkTheme() });
     } else {
       let perm = Notification.permission;
       if (perm === "default") {

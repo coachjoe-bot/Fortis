@@ -4,6 +4,20 @@
 <dict>
     <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
+	<!-- Deep link target for the lock-screen session card: tapping the Live
+	     Activity opens wilco://quicklog, which src/App.jsx routes into the Quick
+	     Log sheet with today's draft loaded. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.trainwilco.wilco</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>wilco</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

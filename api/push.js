@@ -50,13 +50,13 @@ const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString();
 // at random. Two distinct banks (14-day touch is a lighter check-in; 30-day is a
 // last honest nudge before we go quiet) so the two touches don't feel identical.
 const NUDGE_14_VARIANTS = [
-  "Haven't seen a log from you in a couple weeks. No pressure, just checking in, let's get back to it.",
+  "Haven't seen a log from you in a couple weeks. No pressure, just checking in — let's get back to it.",
   "It's been 14 days since your last session. Whenever you're ready, I'm here.",
   "Two weeks since we've trained together. Let's get one in today.",
 ];
 const NUDGE_30_VARIANTS = [
-  "It's been a month since your last log. Whenever life settles, come back. I'll pick up right where we left off.",
-  "30 days quiet. No judgment, just know the door's open whenever you want back in.",
+  "It's been a month since your last log. Whenever life settles, come back — I'll pick up right where we left off.",
+  "30 days quiet. No judgment — just know the door's open whenever you want back in.",
   "It's been a while. If you're ready to start again, I'm ready to coach.",
 ];
 
@@ -140,7 +140,7 @@ async function runNudges(res) {
     if (stageToSend) {
       const variants = stageToSend === "30" ? NUDGE_30_VARIANTS : NUDGE_14_VARIANTS;
       const body = variants[Math.floor(Math.random() * variants.length)];
-      const payload = pushPayload({ title: "Coach Joe", body, url: "/", type: stageToSend === "30" ? "nudge30" : "nudge14" });
+      const payload = pushPayload({ title: "WILCO", body, url: "/", type: stageToSend === "30" ? "nudge30" : "nudge14" });
       const { pruned: p } = await sendToAthlete(rows, payload);
       pruned += p;
       // Stamp the stage even if every device failed — retrying a broken endpoint
@@ -167,7 +167,7 @@ async function runNudges(res) {
   let coachAlerts = 0;
   for (const [coachId, quiet] of Object.entries(quietByCoach)) {
     const body = quiet.length === 1
-      ? `${quiet[0].name} has gone quiet: no logged workouts in ${quiet[0].stage} days.`
+      ? `${quiet[0].name} has gone quiet — no logged workouts in ${quiet[0].stage} days.`
       : `${quiet.length} athletes have gone quiet: ${quiet.map((q) => `${q.name} (${q.stage}d)`).join(", ")}.`;
     const { sent } = await notifyCoach(coachId, "inactive", { title: "WILCO", body, url: "/", type: "coach_quiet" });
     if (sent) coachAlerts++;
@@ -310,7 +310,7 @@ export default async function handler(req, res) {
       const rows = await sbSelect(subTable, `?${ownCol}=eq.${enc(caller.id)}&select=*`);
       if (rows.length === 0) return res.status(200).json({ sent: 0, pruned: 0 });
       const payload = pushPayload({
-        title: isCoachCaller ? "WILCO" : "Coach Joe",
+        title: "WILCO", // every push is from WILCO, never a persona (Will, 08-11)
         body: isCoachCaller ? "Notifications are on. I'll flag what needs you." : "Notifications are on. I'll keep you posted.",
         url: "/", type: body.action,
       });

@@ -34,6 +34,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // T49: the lock-screen session card opens wilco://quicklog. Routed here
+        // rather than through @capacitor/app's appUrlOpen — that event does not
+        // reach the WebView in this shell, so the card's tap silently did
+        // nothing. SessionCardViewController observes this and fires a window
+        // event the app listens for; the URL is also parked for a cold launch,
+        // where it arrives before the bridge exists.
+        if url.scheme?.lowercased() == "wilco" {
+            let target = (url.host ?? url.path.replacingOccurrences(of: "/", with: "")).lowercased()
+            if target == "quicklog" {
+                SessionCardRouter.shared.deliver("quicklog")
+                return true
+            }
+        }
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
