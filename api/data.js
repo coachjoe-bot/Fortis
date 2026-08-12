@@ -850,8 +850,11 @@ async function handleCrew(body, caller, res) {
       for (const e of accepted) acceptedEdgeByPeer[String(e.athlete_a) === String(me.id) ? e.athlete_b : e.athlete_a] = e;
     }
     const trainedByAthlete = trainedDaysThisWeekByAthlete(workoutRows);
+    // Current block's goal only, same rule as loadOwnGoals - a revised goal writes a
+    // new row, so keeping every row made one lift show up once per revision. goalsRows
+    // is ordered created_at.desc, so the first hit per athlete is their current one.
     const goalsByAthlete = {};
-    for (const g of goalsRows) (goalsByAthlete[g.athlete_id] = goalsByAthlete[g.athlete_id] || []).push(g);
+    for (const g of goalsRows) if (!goalsByAthlete[g.athlete_id]) goalsByAthlete[g.athlete_id] = [g];
     const lastWorkoutAt = {};
     for (const w of recentWorkoutRows) if (!lastWorkoutAt[w.athlete_id]) lastWorkoutAt[w.athlete_id] = w.created_at; // query is DESC — first hit per id is the latest
 
@@ -925,18 +928,28 @@ async function handleCrew(body, caller, res) {
     const ids = [...new Set([...peers, me.id])]; // peer set ∪ caller's own id
     if (!ids.length) return res.status(200).json([]);
     const idList = ids.map((id) => `"${id}"`).join(",");
-    const since = new Date(Date.now() - 14 * 864e5).toISOString(); // widest window (goal/milestone); per-type trim below
-    const rows = await sbSelect("crew_moments", `?athlete_id=in.(${idList})&created_at=gte.${enc(since)}&select=*&order=created_at.desc`);
+    // The rolling window stays (pr/week 7 days, goal/milestone 14) so an active crew
+    // reads fresh. But it used to empty the tab completely once everything aged out,
+    // which is what Will hit: three moments existed and the newest had expired the day
+    // before, so Moments looked broken rather than quiet. So reach back far enough to
+    // have a fallback, and if nothing is in-window show the LAST 3 regardless of age
+    // (Will, 08-12) — a quiet crew shows its most recent history instead of nothing.
+    // Bounded by an explicit limit: an unbounded select truncates silently at 1,000.
+    const since = new Date(Date.now() - 400 * 864e5).toISOString();
+    const rows = await sbSelect("crew_moments", `?athlete_id=in.(${idList})&created_at=gte.${enc(since)}&select=*&order=created_at.desc&limit=200`);
     const inWindow = rows.filter((m) => withinWindow(m));
-    if (!inWindow.length) return res.status(200).json([]);
-    const nameIds = [...new Set(inWindow.map((m) => m.athlete_id))];
+    const visible = inWindow.length ? inWindow : rows.slice(0, 3);
+    if (!visible.length) return res.status(200).json([]);
+    const nameIds = [...new Set(visible.map((m) => m.athlete_id))];
     const nameRows = await sbSelect("athletes", `?id=in.(${nameIds.map((id) => `"${id}"`).join(",")})&select=id,name`);
     const nameById = Object.fromEntries(nameRows.map((a) => [a.id, a.name]));
-    const momentIds = inWindow.map((m) => `"${m.id}"`).join(",");
-    const reactions = inWindow.length ? await sbSelect("crew_reactions", `?moment_id=in.(${momentIds})&select=*`) : [];
+    const momentIds = visible.map((m) => `"${m.id}"`).join(",");
+    const reactions = await sbSelect("crew_reactions", `?moment_id=in.(${momentIds})&select=*`);
     const reactionsByMoment = {};
     for (const r of reactions) (reactionsByMoment[r.moment_id] = reactionsByMoment[r.moment_id] || []).push(r);
-    return res.status(200).json(inWindow.map((m) => ({ ...m, athleteName: nameById[m.athlete_id] || null, reactions: reactionsByMoment[m.id] || [] })));
+    // stale=true lets the UI say these are older, rather than implying they just landed.
+    const stale = !inWindow.length;
+    return res.status(200).json(visible.map((m) => ({ ...m, stale, athleteName: nameById[m.athlete_id] || null, reactions: reactionsByMoment[m.id] || [] })));
   }
 
   // Goal sharing opt-in (finding #4). Default is OFF and stays OFF until the
@@ -1110,7 +1123,13 @@ async function loadCrewGoal(athleteId) {
 }
 
 async function loadOwnGoals(athleteId) {
-  const rows = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=12&select=*`);
+  const all = await sbSelect("athlete_goals", `?athlete_id=eq.${enc(athleteId)}&order=created_at.desc&limit=12&select=*`);
+  // CURRENT block's goal only (Will, 08-12). Every row used to render its own card,
+  // but a goal that gets REVISED writes a new row rather than editing the old one -
+  // so "bench 315 by end of summer" and "bench 315 pushed back past mid-August" both
+  // showed, and Bench Press appeared twice with two different targets. Newest row
+  // wins; the history stays in the table for the coach brain.
+  const rows = all.slice(0, 1);
   if (!rows.length) return [];
   const { resolveLift, bestE1RMForExercise, toLbs, epley1RM } = await import("./_grit.js");
   const currentByLift = {};

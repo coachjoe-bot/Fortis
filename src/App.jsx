@@ -2256,7 +2256,11 @@ ${IS_DARK?`
    low-contrast: this is a glance, not a scoreboard, and your own fill has to stay
    the thing you read first. */
 .cmpstrip{position:absolute;top:2px;bottom:2px;width:2.5px;border-radius:2px;background:var(--sc);
-  ${IS_DARK?`box-shadow:0 0 7px var(--sc);`:``}opacity:.92;pointer-events:none;transform:translateX(-50%);}
+  ${IS_DARK?`box-shadow:0 0 7px var(--sc);`:``}opacity:.92;cursor:pointer;transform:translateX(-50%);}
+/* The tick is 2.5px of ink — nothing you can hit with a thumb — and it used to carry
+   pointer-events:none, so tapping it did nothing at all. An invisible pad widens the
+   touch target to ~16x19 without changing a pixel of how it looks. */
+.cmpstrip::after{content:"";position:absolute;top:-7px;bottom:-7px;left:-7px;right:-7px;}
 .mstamp{font-family:ui-monospace,Menlo,monospace;font-size:8px;font-weight:700;letter-spacing:.9px;padding:2px 7px;border-radius:5px;
   color:var(--mc,${CA.accent});border:1px solid var(--mc,${CA.accent});background:color-mix(in srgb,var(--mc,${CA.accent}) 9%,transparent);
   ${IS_DARK?`box-shadow:0 0 12px color-mix(in srgb,var(--mc,${CA.accent}) 40%,transparent);`:``}}
@@ -10922,6 +10926,11 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
   const [editVal,setEditVal] = useState("");
   const [showScoreInfo,setShowScoreInfo] = useState(false);
   const [showRankInfo,setShowRankInfo] = useState(false);
+  // Crew tick identity. The strips already carried a title attribute, but a title
+  // never fires on touch, so on a phone they read as unexplained coloured slivers.
+  // Tapping one names the crewmate and their rank. {key, name, tier} or null.
+  const [cmpTip,setCmpTip] = useState(null);
+  useEffect(()=>{ if(!cmpTip) return; const t=setTimeout(()=>setCmpTip(null),2800); return ()=>clearTimeout(t); },[cmpTip]);
   // Rank-up "claim" moment: a lift that crossed into a higher tier (vs a stored baseline, and
   // not the athlete's first-ever record of that lift) waits as a tappable RANK UP button.
   // Tapping animates the tube up into the new tier, then the button retires. pendingRanks holds
@@ -11332,7 +11341,10 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                     {compareRows.map(c=>{
                       const l = c.lifts&&c.lifts[b.benchKey];
                       if(!l) return null;
-                      return <div key={c.id} className="cmpstrip" title={`${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`}
+                      const who = `${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`;
+                      return <div key={c.id} className="cmpstrip" title={who}
+                        role="button" tabIndex={0} aria-label={who}
+                        onClick={e=>{e.stopPropagation();setCmpTip({key:`${b.benchKey}:${c.id}`,name:c.name.split(" ")[0],tier:TIER_NAMES[l.tierIdx]});}}
                         style={{"--sc":TIER_COLORS[l.tierIdx],left:`${Math.round(l.pct*100)}%`}}/>;
                     })}
                   </div>
@@ -11349,10 +11361,26 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                     {compareRows.map(c=>{
                       const l = c.lifts&&c.lifts[b.benchKey];
                       if(!l) return null;
-                      return <div key={c.id} title={`${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`}
-                        style={{position:"absolute",top:-3,bottom:-3,width:2,borderRadius:1,background:CA.cyan,left:`${Math.round(((l.tierIdx+Math.min(l.pct,0.99))/8)*100)}%`}}/>;
+                      const who = `${c.name.split(" ")[0]} · ${TIER_NAMES[l.tierIdx]}`;
+                      // Transparent 16px-wide tap target with the 2px tick centred in it,
+                      // so the thing you can hit is thumb-sized while the ink stays a rule.
+                      return <div key={c.id} title={who}
+                        role="button" tabIndex={0} aria-label={who}
+                        onClick={e=>{e.stopPropagation();setCmpTip({key:`${b.benchKey}:${c.id}`,name:c.name.split(" ")[0],tier:TIER_NAMES[l.tierIdx]});}}
+                        style={{position:"absolute",top:-7,bottom:-7,width:16,marginLeft:-8,display:"flex",justifyContent:"center",cursor:"pointer",left:`${Math.round(((l.tierIdx+Math.min(l.pct,0.99))/8)*100)}%`}}>
+                        <span style={{width:2,alignSelf:"stretch",borderRadius:1,background:CA.cyan}}/>
+                      </div>;
                     })}
                   </div>
+                  )}
+                  {/* Tapped a crew tick: say whose it is. Rank and tier only, never
+                      their poundage — the crew privacy model the App Review notes and
+                      the Social Media=No answer both rest on. One popup serves both
+                      themes, since only one bar variant renders at a time. */}
+                  {cmpTip&&cmpTip.key.startsWith(`${b.benchKey}:`)&&(
+                    <div className="fade-up" style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:9,letterSpacing:0.6,color:CA.text,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:6,padding:"4px 8px",marginTop:5,display:"inline-block"}}>
+                      {cmpTip.name} <span style={{color:CA.muted}}>·</span> <span style={{color:CA.accent}}>{cmpTip.tier}</span>
+                    </div>
                   )}
                   <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:pending?CA.cyan:CA.faint,marginTop:5,letterSpacing:0.3}}>
                     {pending
