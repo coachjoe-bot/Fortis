@@ -180,8 +180,32 @@
         var isCanonical = host === 'app.trainwilco.com';
         var isDev = host === 'localhost' || host === '127.0.0.1';
         if (isCanonical) {
+          // A new service worker taking control means a NEW BUILD is live. Without
+          // this the running session keeps executing the old bundle until the app is
+          // force-quit, which is half of why the app looked like it never updated
+          // (Will, 08-11). Reload once, the moment the new worker claims the page.
+          //
+          // Two guards against a reload loop: only reload when a controller ALREADY
+          // existed (a first-ever install claims the page too, and must not reload),
+          // and a one-shot flag.
+          var hadController = !!navigator.serviceWorker.controller;
+          var reloading = false;
+          navigator.serviceWorker.addEventListener('controllerchange', function () {
+            if (!hadController || reloading) return;
+            reloading = true;
+            location.reload();
+          });
           window.addEventListener('load', function () {
-            navigator.serviceWorker.register('/sw.js');
+            navigator.serviceWorker.register('/sw.js').then(function (reg) {
+              // Browsers only check for a new sw.js on their own schedule; an
+              // installed PWA that resumes instead of cold-starting may not check
+              // for a long time. Check on every load and whenever the app comes back
+              // to the foreground, so a deploy is picked up on the next open.
+              reg.update().catch(function () {});
+              document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible') reg.update().catch(function () {});
+              });
+            }).catch(function () {});
           });
         } else if (!isDev) {
           navigator.serviceWorker.getRegistrations()

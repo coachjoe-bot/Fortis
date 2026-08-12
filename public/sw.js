@@ -1,7 +1,7 @@
 // v5 (2026-08-07 rebrand): the version MUST bump here or installed clients keep
 // serving the v4 shell and the retired Bebas Neue / DM Sans files from cache, and the
 // new type never appears no matter what ships.
-const CACHE = "wilco-v9";
+const CACHE = "wilco-v10";
 const ASSETS = [
   "/", "/index.html", "/manifest.json", "/icon-192.png", "/icon-512.png",
   // Self-hosted fonts (latin subsets only — the ones every screen actually uses;
@@ -49,6 +49,12 @@ self.addEventListener("activate", e => {
   ).then(() => pruneStaleAssets()));
   self.clients.claim();
 });
+
+// How long a navigation waits on the network before falling back to the cached
+// shell. Long enough that a normal connection (~100-300ms) always wins and the
+// athlete sees the current deploy; short enough that a dead connection can't hang
+// first paint. See the navigation handler below.
+const NAV_TIMEOUT_MS = 2500;
 
 // ─── STALE-ASSET PRUNING ──────────────────────────────────────────────────────
 // /assets/ entries are cache-first forever and the cache name never changes per
@@ -129,24 +135,38 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // Navigations: stale-while-revalidate. Serving the cached shell INSTANTLY is what
-  // kills the white screen on a cold reopen — no network round-trip gates first
-  // paint. The network fetch still runs in the background and refreshes the cache,
-  // so a new deploy shows up on the NEXT open (one-load lag, standard PWA behavior).
-  // A stale shell stays self-consistent: it references hashed /assets/ URLs that are
-  // themselves cache-first above.
+  // Navigations: NETWORK-FIRST with a short timeout, cached shell as fallback.
+  //
+  // This was stale-while-revalidate (always serve cache, refresh in background),
+  // which meant a deploy needed TWO cold opens to appear. On iOS that is much worse
+  // than it sounds: an installed PWA/native shell RESUMES from memory instead of
+  // cold-starting, so the "second open" can be days away — the app looks permanently
+  // stuck on an old build. That is exactly what Will hit on 08-11 ("why won't my app
+  // update"), so freshness now wins by default.
+  //
+  // Online, the athlete always gets the current deploy. Offline or on a bad
+  // connection the timeout fires and the cached shell still paints, so the white
+  // screen that SWR was introduced to kill stays killed. A served-from-cache shell
+  // is still self-consistent: it references hashed /assets/ URLs, cache-first above.
   if (req.mode === "navigate") {
-    const refresh = fetch(req).then(res => {
+    const network = fetch(req).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put("/", copy)); }
       return res;
     });
-    // Finish the background refresh even after we respond, then prune dead hashed
-    // assets (throttled internally; runs AFTER the refresh so the cached shell is
+    // Attaching this catch ALSO prevents an unhandled rejection when we've already
+    // answered from cache and the network promise settles late. Then prune dead
+    // hashed assets (throttled internally; after the refresh, so the cached shell is
     // current-deploy before anything is considered for deletion).
-    e.waitUntil(refresh.catch(() => {}).then(() => pruneStaleAssets()));
-    e.respondWith(
-      caches.match("/").then(hit => hit || refresh.catch(() => caches.match("/")))
-    );
+    e.waitUntil(network.catch(() => {}).then(() => pruneStaleAssets()));
+    e.respondWith((async () => {
+      try {
+        const timeout = new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("nav-timeout")), NAV_TIMEOUT_MS));
+        return await Promise.race([network, timeout]);
+      } catch (_) {
+        return (await caches.match("/")) || network;   // offline/slow → last good shell
+      }
+    })());
     return;
   }
 
