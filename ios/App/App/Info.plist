@@ -77,5 +77,11 @@
 	<string>WILCO uses the camera so you can film a lift and send it for form review.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>WILCO needs access to your photos so you can send an existing lift video or a photo of your program.</string>
+	<!-- WILCO only uses the HTTPS/TLS built into iOS and ships no crypto of its own, so it
+	     is exempt. Declaring it here stops App Store Connect holding every new build at
+	     "Missing Compliance", which makes the build invisible to TestFlight testers and
+	     sends no invite email. Build 4 was answered by hand for exactly this reason. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
