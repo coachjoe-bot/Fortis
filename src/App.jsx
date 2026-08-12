@@ -1736,7 +1736,7 @@ ${Object.entries(JOEBOT_GOALS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}
 SPORT PRIORITIES (apply the athlete's sport from the session context):
 ${Object.entries(JOEBOT_SPORTS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}`;
 
-const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null, suspectJumps=[]) => {
+const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null) => {
   // Both call sites pass `history` already ending with the current message, and
   // the current message is appended again explicitly in userMsg below — so the
   // window must EXCLUDE the last element or every prompt carries the athlete's
@@ -1899,16 +1899,7 @@ SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastCo
     contextMemory = `\n\nATHLETE CONTEXT (from monthly recap history: preferences, injuries, goals stated over time):\n${athleteContext}\nUse this as background, do not repeat it back, just let it inform your responses.`;
   }
 
-  // Implausible-jump check (T46) — computed in code, never inferred. A load this
-  // far past their known max is more likely a mistyped number than a real jump, so
-  // Joe confirms it in THIS reply rather than celebrating a PR that would reset the
-  // athlete's Benchmarks tier and their next program's percentages.
-  let jumpContext = "";
-  if(Array.isArray(suspectJumps) && suspectJumps.length){
-    const lines = suspectJumps.map(j=>`- ${j.exercise}: they just logged ${j.weight}${j.unit==="kg"?"kg":" lbs"} x ${j.reps}, which reads as about ${j.e1rm} lbs. Their best on record is ${j.knownBest} lbs.`).join("\n");
-    jumpContext = `\n\nCHECK THIS NUMBER (computed by the app - authoritative):\n${lines}\nThat is a bigger jump than anyone makes in one session, so it is far more likely a typo than a real lift. Do NOT congratulate it, do NOT treat it as a new PR, and do NOT use the word "PR" about it at all: calling it one plants the number as real before they have confirmed it. Ask them plainly, in one short sentence, whether that number is right or a mistype, name the lift and both numbers, and tell them you can fix it if they say the word. Keep the rest of your reply about the work that DOES look right. If they confirm it, take them at their word.`;
-  }
-  const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory+jumpContext};
+  const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory};
   const userMsg = `${hist}\n\n${athlete.name}: ${message}`;
   // Stream when the caller wants live rendering; otherwise the classic one-shot call.
   // 800 tokens (was 450): technical/programming answers were getting guillotined
@@ -6840,6 +6831,22 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           ).join("\n")+propagationNote}]);
         }
       }
+
+      // ── Implausible jump: ask before it becomes a max (T46) ─────────────────
+      // Deterministic, not a prompt rule, and deliberately NOT merged into Joe's
+      // main reply (see the note where suspectJumps is declared). Posted after the
+      // PR block so it can never sit alongside a celebration for the same lift —
+      // a flagged lift is excluded from newPRs above.
+      if(suspectJumps.length){
+        const lines = suspectJumps.map(j=>
+          `${j.exercise} at ${fmtWeight(j.weight,j.unit)}${j.reps>1?` x${j.reps}`:""}, when your best on record is ${j.knownBest} lbs`
+        ).join("\n");
+        const one = suspectJumps.length===1;
+        setTimeout(()=>setMessages(prev=>[...prev,{role:"assistant",content:
+          `Hold up before I bank ${one?"that":"those"}.\n${lines}\n\nThat's a bigger jump than one session usually adds, so I want to check ${one?"it":"them"} rather than log a number you didn't lift. ${one?"Is that right":"Are those right"}, or ${one?"was it":"were they"} a typo? Tell me the real number and I'll fix it.`
+        }]),900);
+      }
+
       // Total Workouts stamp — a logged session presses its lifetime number onto the
       // chat, NEW MAX-style. A PR day now shows BOTH (Will, 2026-07-27): the max
       // first, then the workout number behind it. It used to be suppressed entirely
@@ -7493,7 +7500,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       };
       let reply="";
       try {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta,suspectJumps);
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
       // Stream over (success or death): cancel any queued frame so a late flush
       // can't race the settle/fallback writes below, then settle the bubble.
@@ -7510,7 +7517,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         reply = streamedText;
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       } else {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,suspectJumps);
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext);
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       setLoading(false);
