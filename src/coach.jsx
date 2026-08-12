@@ -74,7 +74,11 @@ const parseAndCacheProgram = async (athleteId, programText)=>{
 const GSC = `
 body{background:${CA.navy};}
 /* calmer grid than the athlete .cyber (.04 @ 28px vs .07 @ 22px) */
+${IS_DARK?`
+.cyber-coach{background:#05060c;background-image:linear-gradient(rgba(58,123,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(58,123,255,.04) 1px,transparent 1px);background-size:28px 28px;}
+`:`
 .cyber-coach{background:${CA.navy};}
+`}
 /* card / chart entrance rise */
 @keyframes cUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
 .c-up{animation:cUp .5s cubic-bezier(.2,.7,.2,1) both;}
@@ -96,18 +100,24 @@ body{background:${CA.navy};}
 @keyframes cSweep{0%{transform:scaleX(0);opacity:.5;}70%{opacity:1;}100%{transform:scaleX(1);opacity:1;}}
 .c-sweep{transform-origin:left;animation:cSweep .65s cubic-bezier(.2,.7,.2,1) both;}
 @keyframes cSweepDot{0%{left:0;opacity:0;}8%{opacity:1;}92%{opacity:1;}100%{left:100%;opacity:0;}}
-.c-sweep-dot{position:absolute;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${CA.cyan};animation:cSweepDot .75s cubic-bezier(.2,.7,.2,1) both;}
+.c-sweep-dot{position:absolute;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:${CA.cyan};${IS_DARK?`box-shadow:0 0 12px 3px ${CA.cyan};`:``}animation:cSweepDot .75s cubic-bezier(.2,.7,.2,1) both;}
 /* faint cyan scanline overlay (edition page) */
-.coach-scan::after{content:"";position:absolute;inset:0;pointer-events:none;background:none;z-index:8;}
+.coach-scan::after{content:"";position:absolute;inset:0;pointer-events:none;background:${IS_DARK?"repeating-linear-gradient(0deg,transparent 0 3px,rgba(55,230,255,.028) 3px 4px)":"none"};z-index:8;}
 /* POWER CELL — the athlete benchmark battery tube, verbatim (GSA .htube/.hfill),
    so team benchmarks read identically to the athlete Progress screen */
+${IS_DARK?`
+.htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:linear-gradient(180deg,#070d18,#05080f);}
+.htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
+.hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,color-mix(in srgb,var(--tc) 62%,#000),var(--tc));box-shadow:0 0 calc(8px + var(--tb,0)*22px) var(--tc);filter:brightness(calc(1 + var(--tb,0)*0.9)) saturate(calc(1 + var(--tb,0)*0.4));transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
+.hfill::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 13px,transparent 13px 16px);opacity:.45;}
+`:`
 .htube{height:20px;border:1.5px solid ${CA.line2};border-radius:6px;position:relative;overflow:hidden;background:${CA.navy3};}
 .htube::after{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:4px;height:9px;border-radius:2px;background:${CA.line2};}
 .hfill{position:absolute;left:0;top:0;bottom:0;width:100%;transform:scaleX(0);transform-origin:left;background:var(--tc);transition:transform 1.05s cubic-bezier(.3,.8,.3,1);}
-/* HUD stripe texture removed in the 2026-08-07 rebrand */
+`}
 .hcell.go .hfill{transform:scaleX(var(--pct,0));}
 /* the one allowed loop: a small pulsing LIVE dot */
-@keyframes cLive{0%,100%{opacity:1;}50%{opacity:.35;}}
+${IS_DARK?`@keyframes cLive{0%,100%{opacity:1;box-shadow:0 0 6px ${CA.cyan};}50%{opacity:.35;box-shadow:0 0 2px ${CA.cyan};}}`:`@keyframes cLive{0%,100%{opacity:1;}50%{opacity:.35;}}`}
 .c-live{animation:cLive 1.8s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){
   .c-up,.c-rise,.c-draw,.a-draw,.c-fade,.c-flap,.c-live,.c-sweep{animation:none!important;transform:none!important;opacity:1!important;}
@@ -384,7 +394,9 @@ function CoachesList({coaches,schools,onRefresh}) {
                   </div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <div style={{color:c.pin?CA.green:CA.red,fontSize:10,marginRight:4}}>{c.pin?"✓ Active":"Not set up"}</div>
+                  {/* "Not set up" overlapped long names and read as an error (Will, 08-11) —
+                      the Resend button already tells the story for un-set-up coaches. */}
+                  {c.pin&&<div style={{color:CA.green,fontSize:10,marginRight:4}}>✓ Active</div>}
                   {/* Resend invite */}
                   {c.email&&c.role!=="master"&&(
                     <button onClick={()=>resendInvite(c)} disabled={!!rs}
@@ -1678,27 +1690,33 @@ function CoachDashboard({coach,onLogout}) {
                     const isM = tr.digest_type==="monthly_coach";
                     const mLabel = (tr.generated_at||tr.created_at) ? new Date(tr.generated_at||tr.created_at).toLocaleDateString("en-US",{month:"long"}) : "";
                     return (
-                    <button key={tr.id} onClick={()=>setSelectedDigest(tr)} style={{width:"100%",background:CA.navy2,border:`1px solid ${CA.accent}40`,borderRadius:14,padding:16,textAlign:"left",cursor:"pointer",display:"block",marginBottom:12}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                        <div style={{display:"flex",alignItems:"center",gap:7}}>
-                          <div style={{color:isM?CA.blue:CA.accent,...DISP,fontSize:16,letterSpacing:2}}>{isM?`MONTHLY RECAP${mLabel?` · ${mLabel.toUpperCase()}`:""}`:"THIS WEEK'S EDITION"}</div>
-                          {/* is_read was already set by the cron (false) and by check-in
-                              completion (true), and the ATHLETE side shows a dot for the
-                              same field — the coach just never got one, so a dismissed
-                              push meant no in-app signal a new edition was waiting. */}
-                          {!tr.is_read&&(
-                            <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
-                              <span style={{width:6,height:6,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 7px ${CA.accent}`}}/>
-                              <span style={{color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>NEW</span>
-                            </span>
-                          )}
-                        </div>
-                        <div style={{display:"flex",gap:6}}>
-                          {tr.has_pain&&<div style={{background:CA.red+"1A",border:"1px solid "+CA.red+"4D",borderRadius:4,padding:"2px 6px",color:CA.red,fontSize:10}}>INJURIES</div>}
-                          {tr.has_missed&&<div style={{background:`${CA.navy3}`,border:`1px solid ${CA.border}`,borderRadius:4,padding:"2px 6px",color:CA.muted,fontSize:10}}>AT-RISK</div>}
-                        </div>
+                    /* MINI MASTHEAD (Will's 1A pick, 08-11): the card IS a front page in
+                       miniature — double rule, kicker, serif masthead title, dateline,
+                       italic serif lede. Same footprint as the old flat box. Per Will's
+                       standing rule this ships in BOTH themes; the dark one keeps the
+                       dark palette + Bebas/DM register via EDITION_* + CA. */
+                    <button key={tr.id} onClick={()=>setSelectedDigest(tr)} style={{width:"100%",background:IS_DARK?CA.navy2:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:14,padding:"14px 16px 15px",textAlign:"left",cursor:"pointer",display:"block",marginBottom:12}}>
+                      {/* kicker line: franchise name + edition number, NEW dot rides here */}
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:6}}>
+                        <span style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,textTransform:"uppercase",color:CA.muted,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          The Coach's Edition{tr.content_json?.edition_no?` · No. ${tr.content_json.edition_no}`:""}
+                        </span>
+                        {!tr.is_read&&(
+                          <span style={{display:"inline-flex",alignItems:"center",gap:4,flexShrink:0}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:CA.accent,boxShadow:IS_DARK?`0 0 7px ${CA.accent}`:"none"}}/>
+                            <span style={{color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>NEW</span>
+                          </span>
+                        )}
                       </div>
-                      {tr.content_json?.intro&&<div style={{color:CA.text,fontSize:13,lineHeight:1.6,marginBottom:8}}>{tr.content_json.intro}</div>}
+                      {/* double rule over the masthead */}
+                      <div style={{borderTop:`2px solid ${CA.line2}`,borderBottom:`1px solid ${CA.border}`,height:3,marginBottom:9}}/>
+                      <div style={{fontFamily:EDITION_MAST,fontWeight:700,fontSize:26,lineHeight:1.05,letterSpacing:-0.4,color:EDITION_HEAD,marginBottom:6}}>
+                        {isM?`Monthly Recap${mLabel?`: ${mLabel}`:""}`:"This Week's Edition"}
+                      </div>
+                      <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.6,textTransform:"uppercase",color:CA.muted,paddingBottom:8,borderBottom:`1px solid ${CA.border}`,marginBottom:9}}>
+                        {(tr.generated_at||tr.created_at)?new Date(tr.generated_at||tr.created_at).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}):""}
+                      </div>
+                      {tr.content_json?.intro&&<div style={{fontFamily:EDITION_SERIF,fontStyle:"italic",fontSize:14,lineHeight:1.55,color:EDITION_BODY,marginBottom:10}}>{tr.content_json.intro}</div>}
                       <div style={{color:isM?CA.blue:CA.accent,fontSize:12,fontWeight:700,letterSpacing:1}}>OPEN REPORT →</div>
                     </button>
                     );
@@ -2675,6 +2693,10 @@ const EDITION_SERIF = "Georgia,'Times New Roman',serif";
 const EDITION_MAST = "'Playfair Display',Georgia,serif";
 // Cool LED ink for the edition (replaces navy-era text colors).
 const EDITION_HEAD = IS_DARK ? "#eaf1ff" : CA.text, EDITION_BODY = IS_DARK ? "#aebfd8" : CA.muted2;
+// Section labels arrive SHOUTED ("GOAL PROGRESS"); the newspaper column heads want
+// title case. Local twin of App.jsx's titleCase (coach.jsx can't import from App —
+// circular init), so keep the two in sync if either changes.
+const titleCaseC = (s) => String(s||"").toLowerCase().replace(/\b([a-z])/g,(m,ch)=>ch.toUpperCase());
 
 // Did the coach ask a question back (vs. answer)? Mirrors the athlete check-in's
 // clarifying-question detection so WILCO answers once, then re-asks.
@@ -3099,20 +3121,29 @@ function CoachEdition({digest, athletes, coach, school, onBack, onRead}){
             ))}
           </div>
         )}
+        {/* NEWSPAPER COLUMNS (Will 08-11, twin of the athlete ProofLetter): sections
+            stop being stacked grey boxes and read as a paper — serif column head over
+            a short colored rule, serif body, hairline between. Focus and warn keep
+            their accent/red identity as the rule colour + a left edge on warn.
+            Both themes; EDITION_* carries each palette's ink. */}
         {sections.map((s,i)=>{
           const tone=toneOf(s);
           const isFocus=tone==="focus";
-          const labelColor = tone==="warn"?CA.red: isFocus?CA.cyan:CA.faint;
-          const box = isFocus
-            ? {background:`${CA.accent}0e`,borderLeft:`2px solid ${CA.accent}`,borderRadius:"0 10px 10px 0"}
-            : {background:CA.navy3,border:`1px solid ${tone==="warn"?`${CA.red}40`:CA.line2}`,borderRadius:10};
-          const labelStyle = isFocus
-            ? {fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:10,letterSpacing:1.5,textTransform:"uppercase",color:labelColor,marginBottom:6}
-            : {...DISP,fontSize:13,letterSpacing:1.5,color:labelColor,marginBottom:6};
+          const ruleColor = tone==="warn"?CA.red: isFocus?CA.accent : CA.line2;
+          const glyph = tone==="warn"?"⚠": isFocus?"▶": null;   // the coloured rule carries the rest
           return (
-            <div key={i} className="c-up" style={{...box,...reveal(),padding:"12px 14px",marginBottom:9}}>
-              <div style={labelStyle}>{s.label}</div>
-              <div style={{color:EDITION_BODY,fontSize:13.5,lineHeight:1.65,whiteSpace:"pre-wrap"}}>{s.body}</div>
+            <div key={i} className="c-up" style={{...reveal(),padding:isFocus?"2px 0 2px 12px":"2px 0",marginBottom:14,
+              borderLeft:isFocus?`3px solid ${CA.accent}`:tone==="warn"?`3px solid ${CA.red}`:"none",
+              ...(tone==="warn"?{paddingLeft:12}:{}),
+              borderTop:i>0?`1px solid ${CA.border}`:"none",paddingTop:i>0?14:2}}>
+              <div style={{marginBottom:7}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:7}}>
+                  {glyph&&<span style={{fontSize:12,color:ruleColor,flexShrink:0}}>{glyph}</span>}
+                  <span style={{fontFamily:EDITION_MAST,fontWeight:700,fontSize:18,lineHeight:1.15,color:EDITION_HEAD}}>{titleCaseC(s.label)}</span>
+                </div>
+                <div style={{borderTop:`2px solid ${ruleColor}`,width:36,marginTop:5}}/>
+              </div>
+              <div style={{fontFamily:EDITION_SERIF,color:EDITION_BODY,fontSize:13.5,lineHeight:1.65,whiteSpace:"pre-wrap"}}>{s.body}</div>
             </div>
           );
         })}
