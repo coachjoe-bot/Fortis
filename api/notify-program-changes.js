@@ -101,7 +101,10 @@ export default async function handler(req, res) {
         let delivered = false;
         if (subs.length) {
           ensureVapid();
-          const payload = pushPayload({ title: "Program Update", body: "Coach updated your program. Take a look before your next session.", url: "/", type: "program" });
+          // Title is "WILCO" on every push, never a persona or a subject line
+          // (Will, 08-11). The destination comes from the type — DEEP_LINKS in
+          // _push.js sends this one straight to the program it is announcing.
+          const payload = pushPayload({ title: "WILCO", body: "Coach updated your program. Take a look before your next session.", type: "program" });
           const r = await sendToAthlete(subs, payload);
           pruned += r.pruned || 0;
           delivered = !!r.sentAny;

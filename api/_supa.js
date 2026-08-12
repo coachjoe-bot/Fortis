@@ -512,6 +512,13 @@ export const EVENT_NAMES = new Set([
   "workout_logged", "chat_opened", "chat_message_sent", "screen_view",
   "coach_dashboard_view", "event_landing_view",
   "push_enabled", "push_disabled",
+  // T51 delivery telemetry. push_sent/push_failed/push_pruned are written by the
+  // SERVER at send time (logPushOutcome below); notification_opened is the only
+  // one the client can raise, and it is what turns "we sent 40" into "8 people
+  // actually came back." Before these existed, nobody could answer how many
+  // notifications went out yesterday or how many failed — which is how the
+  // subscription table sat stale for five weeks without anyone noticing.
+  "push_sent", "push_failed", "push_pruned", "notification_opened",
   "self_change_applied", "change_request_sent",
   "tour_start", "tour_complete", "tour_skip",
 ]);
@@ -564,6 +571,40 @@ export async function logEvents(events, attribution = { role: "anon" }) {
     if (rows.length === 0) return;
     await sbInsert("usage_events", rows);   // array body => bulk insert
   } catch { /* engagement logging must never break anything */ }
+}
+
+// ── Push delivery telemetry (T51) ─────────────────────────────────────────────
+// Server-authored engagement rows for what actually happened on a send. Same
+// ledger as the client events (so the existing usage_events dashboards and the
+// v_push_* views can join them), but source="server" and NOT routed through
+// buildEventRow: there is no untrusted client body here, and the attribution is
+// the send itself.
+//
+// Deliberately metadata-only and one row per (send, outcome) — never per device
+// body text, never the payload. Best-effort like every other ledger write: a
+// telemetry failure must never break a push run.
+//
+// `outcomes` is the {sent, failed, pruned} shape sendToAthlete/notifyCoach return.
+export async function logPushOutcome({ pushType, platform, outcomes, role = "athlete", athleteId = null, coachId = null }) {
+  try {
+    const rows = [];
+    const base = {
+      source: "server",
+      area: "nav",
+      role: role === "coach" ? "coach" : "athlete",
+      actor_id: coachId || athleteId || null,
+      athlete_id: athleteId,
+      coach_id: coachId,
+      meta: { push_type: pushType || null, platform: platform || null },
+    };
+    for (const [outcome, name] of [["sent", "push_sent"], ["failed", "push_failed"], ["pruned", "push_pruned"]]) {
+      const n = Number(outcomes?.[outcome] || 0);
+      // One row per DEVICE, so "how many notifications went out yesterday" is a
+      // plain count and never needs a sum over a meta field.
+      for (let i = 0; i < Math.min(n, 25); i++) rows.push({ ...base, event_name: name });
+    }
+    if (rows.length) await sbInsert("usage_events", rows);
+  } catch { /* telemetry must never break a push run */ }
 }
 
 // Keep only the path of a route — query strings / fragments can carry tokens/ids.

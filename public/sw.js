@@ -198,23 +198,52 @@ self.addEventListener("push", e => {
     badge: data.badge || "/icon-192.png",
     tag: data.tag || "wilco-proof-feed",
     renotify: true,
-    data: { url: data.url || "/" },
+    data: { url: data.url || "/", type: data.type || null },
     actions: [{ action: "open", title: "View Now" }],
   };
   e.waitUntil(self.registration.showNotification(data.title, options));
 });
 
+// ─── NOTIFICATION TAP → THE SCREEN THE PUSH IS ABOUT (T51) ────────────────────
+// This used to call client.focus() and RETURN, before ever looking at the URL. So
+// a cold start landed correctly (openWindow got the url) while a warm start — the
+// PWA already open in the background, which is the common case on a phone —
+// dropped the athlete wherever they happened to be. "Coach updated your program"
+// tapped from a backgrounded app reopened the chat.
+//
+// Now: focus the existing window AND navigate it. WindowClient.navigate is what
+// makes the warm path land; it needs the client to be same-origin and controlled,
+// which every WILCO window is. If a browser refuses it (or the client is
+// uncontrolled), fall back to opening a fresh window at the target rather than
+// leaving the athlete on the wrong screen.
+//
+// Deliberately a real navigation rather than a postMessage the app routes
+// in-place: a postMessage only lands if the OPEN tab is already running a build
+// that understands it, and the whole point here is that the tap lands regardless
+// of which build the athlete is sitting on.
 self.addEventListener("notificationclick", e => {
   e.notification.close();
   const url = e.notification.data?.url || "/";
-  e.waitUntil(
-    clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
-      for (const client of clientList) {
-        if ("focus" in client) { client.focus(); return; }
+  const target = new URL(url, self.location.origin).href;
+  e.waitUntil((async () => {
+    const clientList = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of clientList) {
+      try {
+        // Order matters: navigate first, then focus the (possibly new) client
+        // handle it returns — focusing first can settle the tap before the
+        // navigation is applied on some engines.
+        const navigated = client.navigate ? await client.navigate(target) : null;
+        const focusable = navigated || client;
+        if ("focus" in focusable) await focusable.focus();
+        return;
+      } catch (_) {
+        // navigate() rejected (uncontrolled client, or unsupported): fall through
+        // to opening a window at the target — landing right beats reusing a tab.
+        break;
       }
-      if (clients.openWindow) return clients.openWindow(url);
-    })
-  );
+    }
+    if (clients.openWindow) return clients.openWindow(target);
+  })());
 });
 
 } // end canonical-host handlers (see SELF-DESTRUCT guard above)

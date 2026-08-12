@@ -12,7 +12,8 @@
 import http2 from "node:http2";
 import crypto from "node:crypto";
 import webpush from "web-push";
-import { httpErr, sbDelete, sbSelect } from "./_supa.js";
+import { httpErr, sbDelete, sbSelect, logPushOutcome } from "./_supa.js";
+import { mapPooled } from "./_pool.js";
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -42,7 +43,29 @@ const APNS_KEY_ID = process.env.APNS_KEY_ID || "";
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID || "";
 const APNS_PRIVATE_KEY = process.env.APNS_PRIVATE_KEY || "";
 const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID || "com.trainwilco.wilco";
-const APNS_HOST = "https://api.push.apple.com"; // production APNs gateway
+
+// ── The sandbox-vs-production environment trap (T51) ──────────────────────────
+// APNs is TWO separate services with two separate device-token namespaces, and a
+// token minted against one is rejected by the other with 400 BadDeviceToken:
+//
+//   api.push.apple.com          production  ← App Store AND TestFlight builds
+//   api.sandbox.push.apple.com  sandbox     ← Xcode/development builds only
+//
+// The distributed build's `aps-environment` entitlement is what decides which
+// environment the DEVICE registers against. ios/App/App/App.entitlements says
+// `development`, which is correct in the repo — Xcode's export step rewrites it
+// to `production` for App Store and TestFlight distribution. So:
+//
+//   • TestFlight on Will's phone  → production token → this default host. Works.
+//   • Xcode "Run" on a wired phone → sandbox token → 400 BadDeviceToken here,
+//     and (before this change) the row got PRUNED as if the device were dead.
+//
+// APNS_ENVIRONMENT lets a dev build be tested without editing code; unset means
+// production, which is what every shipped build uses.
+const APNS_ENVIRONMENT = process.env.APNS_ENVIRONMENT === "sandbox" ? "sandbox" : "production";
+export const apnsHost = (env = APNS_ENVIRONMENT) =>
+  env === "sandbox" ? "https://api.sandbox.push.apple.com" : "https://api.push.apple.com";
+const APNS_HOST = apnsHost();
 
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -97,6 +120,7 @@ function sendApns(deviceToken, payload) {
       },
       url: payload.url,
       tag: payload.tag,
+      type: payload.type,
     });
 
     const req = client.request({
@@ -116,10 +140,25 @@ function sendApns(deviceToken, payload) {
     req.on("end", () => {
       client.close();
       if (status === 200) return resolve("sent");
-      // 410 Unregistered / 400 BadDeviceToken: the device token is dead — prune it,
-      // same semantics as a 404/410 from a web-push endpoint.
-      if (status === 410 || status === 400) return resolve("pruned");
-      console.error(`[push] apns send failed (${status || "network"}):`, body.slice(0, 300));
+      let reason = "";
+      try { reason = JSON.parse(body)?.reason || ""; } catch { /* non-JSON error body */ }
+      // 410 Unregistered is the ONLY unambiguous "this device is gone" — the app
+      // was deleted or the token was invalidated. Prune it, same semantics as a
+      // 404/410 from a web-push endpoint.
+      if (status === 410) return resolve("pruned");
+      // 400 used to prune too, and that was wrong in the one case most likely to
+      // happen (T51): a sandbox token hitting the production gateway answers 400
+      // BadDeviceToken, and deleting the row turns a fixable environment mismatch
+      // into a silently unsubscribed athlete with nothing left to diagnose. Log
+      // loudly with the environment we sent to and KEEP the row.
+      if (status === 400 && (reason === "BadDeviceToken" || reason === "DeviceTokenNotForTopic")) {
+        console.error(
+          `[push] apns REJECTED token (${reason}) against the ${APNS_ENVIRONMENT} gateway — ` +
+          `a token minted by the other environment looks exactly like this. Row kept, not pruned.`
+        );
+        return resolve("failed");
+      }
+      console.error(`[push] apns send failed (${status || "network"}${reason ? ` ${reason}` : ""}):`, body.slice(0, 300));
       resolve("failed");
     });
     req.on("error", (e) => { console.error("[push] apns request error:", e?.message); client.close(); resolve("failed"); });
@@ -147,19 +186,60 @@ const TAGS = {
   nudge30: "wilco-nudge-30",
   program: "wilco-program",
   test: "wilco-test",
+  // "welcome" is the auto-fired confirmation the moment notifications are turned
+  // on. It had no entry here, so it fell through to the "wilco-proof-feed"
+  // default and shared a tray slot with feed pushes — an unread feed push could
+  // be silently replaced by a welcome, or vice versa.
+  welcome: "wilco-welcome",
   coach_digest: "wilco-coach-digest",
   coach_injury: "wilco-coach-injury",
   coach_pr: "wilco-coach-pr",
   coach_quiet: "wilco-coach-quiet",
 };
 
-// Build a standard payload. `title` varies by type (branding convention: "Coach
-// Joe" for Joe-voice pushes — feed/nudges/test — vs "Program Update" for the
-// coach-authored one, so an athlete can tell at a glance who's talking); `type`
-// selects the tag from TAGS above (falls back to the generic proof-feed tag if
-// omitted, matching the pre-v2 payload shape).
-export function pushPayload({ title, body, url = "/", type }) {
-  return { title, body, url, icon: ICON, badge: ICON, tag: TAGS[type] || "wilco-proof-feed" };
+// ── DEEP LINKS (T51) ─────────────────────────────────────────────────────────
+// Every one of the five pushPayload call sites passed `url: "/"`, so "Coach
+// updated your program" and "New PRs are in your Proof Feed" both opened the app
+// root and left the athlete to go find it. T49 was verifying that taps land
+// correctly; this is why they couldn't — there was nothing to land on.
+//
+// The app is a single page with modal screens, not a routed SPA, so a target is
+// a query param the client consumes at boot (`captureNotificationTarget` in
+// src/App.jsx) rather than a path a server has to serve. `?n=` is deliberately
+// short and opaque: it is stripped from the URL bar on arrival, never persisted,
+// and carries no ids — just which screen to open.
+//
+// Keyed by push TYPE so a new type cannot ship without a decision about where it
+// lands: an unmapped type falls back to "/" and scripts/test-push-deeplinks.mjs
+// fails the build-adjacent suite until it is added here.
+export const DEEP_LINKS = {
+  feed: "/?n=proof",              // the digest the push is announcing
+  nudge14: "/?n=log",             // "let's get back to it" → the log/chat screen
+  nudge30: "/?n=log",
+  program: "/?n=program",         // "coach updated your program" → the program
+  session_card: "/?n=quicklog",   // the lock-screen card → today's Quick Log
+  test: "/",                      // a test proves delivery; it has no destination
+  welcome: "/",
+  coach_digest: "/?n=coach-proof",
+  coach_injury: "/?n=coach-roster",
+  coach_pr: "/?n=coach-roster",
+  coach_quiet: "/?n=coach-roster",
+};
+
+// Build a standard payload. `title` is "WILCO" on every type (Will, 08-11 — the
+// app speaks, never a persona); `type` selects both the tray tag from TAGS and
+// the deep-link target from DEEP_LINKS. An explicit `url` still wins, for the
+// rare caller that has a more specific destination than the type implies.
+export function pushPayload({ title, body, url, type }) {
+  return {
+    title,
+    body,
+    url: url || DEEP_LINKS[type] || "/",
+    icon: ICON,
+    badge: ICON,
+    tag: TAGS[type] || "wilco-proof-feed",
+    type: type || null,   // carried through to the client so a tap can be attributed
+  };
 }
 
 // Send one push to one subscription row. Returns "sent", "pruned", or "failed".
@@ -219,29 +299,58 @@ export async function notifyCoach(coachId, prefKey, msg) {
     const enc = encodeURIComponent;
     const coach = (await sbSelect("coaches", `?id=eq.${enc(coachId)}&select=id,notification_prefs`))[0];
     if (!coach || (coach.notification_prefs || {})[prefKey] === false) return { sent: 0 };
-    const subs = await sbSelect("coach_push_subscriptions", `?coach_id=eq.${enc(coachId)}&select=*`);
+    const subs = await sbSelect("coach_push_subscriptions", `?coach_id=eq.${enc(coachId)}&select=*&limit=${DEVICE_LIMIT}`);
     if (!subs.length) return { sent: 0 };
     const payload = pushPayload(msg);
-    let sent = 0;
-    for (const s of subs) {
-      if ((await sendTo(s, payload, "coach_push_subscriptions")) === "sent") sent++;
-    }
-    return { sent };
+    const tallied = await fanOutToDevices(subs, payload, "coach_push_subscriptions");
+    logPushOutcome({ pushType: payload.type, platform: platformOf(subs), outcomes: tallied, role: "coach", coachId });
+    return { sent: tallied.sent };
   } catch (e) {
     console.error(`[push] coach alert (${prefKey}) failed:`, e?.message);
     return { sent: 0 };
   }
 }
 
-// Send one payload to every subscription row for an athlete (all their devices).
-// Returns { sentAny, pruned } — sentAny is true if at least one device got it.
-export async function sendToAthlete(rows, payload) {
-  let sentAny = false;
-  let pruned = 0;
-  for (const sub of rows || []) {
-    const outcome = await sendTo(sub, payload);
-    if (outcome === "sent") sentAny = true;
-    if (outcome === "pruned") pruned++;
+// An athlete or coach with more devices than this has a runaway/duplicated
+// subscription problem, not a device collection. Bounds the per-recipient fan-out
+// so one broken client can't consume a whole cron run.
+const DEVICE_LIMIT = 20;
+
+// Devices belonging to ONE recipient go out concurrently — they are independent
+// network calls to (usually) different push services, and awaiting them in
+// sequence is the shape that made the nudge cron's wall-clock the sum of every
+// device it has ever seen.
+const DEVICE_CONCURRENCY = 10;
+
+export async function fanOutToDevices(rows, payload, table) {
+  const outcomes = await mapPooled(rows || [], DEVICE_CONCURRENCY, (sub) => sendTo(sub, payload, table));
+  const tally = { sent: 0, failed: 0, pruned: 0 };
+  for (const o of outcomes) {
+    if (o === "sent") tally.sent++;
+    else if (o === "pruned") tally.pruned++;
+    else tally.failed++;
   }
-  return { sentAny, pruned };
+  return tally;
+}
+
+// "ios" / "web" / "mixed" — one label for the telemetry row, so the delivery
+// views can answer "how many subscriptions are live per platform" and "which
+// platform is failing" without unpacking a per-device array.
+export const platformOf = (rows) => {
+  const kinds = new Set((rows || []).map((r) => (resolveTransport(r) === "apns" ? "ios" : "web")));
+  return kinds.size === 1 ? [...kinds][0] : kinds.size ? "mixed" : null;
+};
+
+// Send one payload to every subscription row for an athlete (all their devices).
+// Returns { sentAny, pruned, sent, failed } — sentAny is kept for the existing
+// callers that only ask "did anyone get it."
+export async function sendToAthlete(rows, payload) {
+  const tally = await fanOutToDevices(rows, payload, "push_subscriptions");
+  if (rows?.length) {
+    logPushOutcome({
+      pushType: payload.type, platform: platformOf(rows), outcomes: tally,
+      role: "athlete", athleteId: rows[0]?.athlete_id || null,
+    });
+  }
+  return { ...tally, sentAny: tally.sent > 0 };
 }

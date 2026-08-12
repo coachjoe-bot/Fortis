@@ -7,6 +7,10 @@ import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import {
   CA, CA_BTN, CA_GLOW, DISP, GS, IS_DARK, PAPER_GRID, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
 } from "./App.jsx";
+// Imported from the module directly rather than re-exported through App.jsx —
+// deepLink.js is dependency-free, and routing a notification target should not
+// have to go through the App→coach import cycle to get here.
+import { takeNotificationTarget, isCoachTarget } from "./deepLink.js";
 // Program Builder (Phase C) — lazy so the doctrine text + Builder UI download
 // only when a coach actually opens the Builder subtab.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -700,6 +704,23 @@ function CoachDashboard({coach,onLogout}) {
   // blob) is not, and every pre-feature coach was backfilled as done. Resolution
   // persists via the coaches self-write path (notification_prefs + tour_done_at
   // only — api/data.js).
+  // ── NOTIFICATION DEEP LINK (T51) ────────────────────────────────────────────
+  // Coach pushes (the digest, and the injury / big-PR / gone-quiet alerts) used
+  // to open the dashboard root exactly like the athlete ones did. Consume the
+  // pending target once the roster has loaded, so "3 athletes have gone quiet"
+  // lands on the roster with the roster actually in it.
+  const deepLinkDoneRef = useRef(false);
+  useEffect(()=>{
+    if(deepLinkDoneRef.current || loading) return;
+    const target = takeNotificationTarget();
+    if(!target) return;
+    deepLinkDoneRef.current = true;
+    if(!isCoachTarget(target)) return; // an athlete target on a coach session: ignore
+    track("notification_opened","nav",{target});
+    if(target==="coach-proof") setActiveTab("reports");
+    else if(target==="coach-roster") setActiveTab("athletes");
+  },[loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [tour,setTour] = useState(null); // {steps,idx,part}
   const [tourOffer,setTourOffer] = useState(false);
   const [tourResolved,setTourResolved] = useState(false); // session-local: server write is fire-and-forget

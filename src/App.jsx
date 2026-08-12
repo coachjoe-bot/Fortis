@@ -54,6 +54,11 @@ import {
   repinSessionCard, clearSessionCard, activeSessionCard, expireSessionCardIfStale,
   sessionCardDeclinedToday, markSessionCardDeclined,
 } from "./sessionCard.js";
+// Notification deep links (T51): a push carries `?n=<target>`; this turns it into
+// the screen the push was about, on both cold and warm starts.
+import {
+  captureNotificationTarget, takeNotificationTarget, armNotificationTarget, isAthleteTarget,
+} from "./deepLink.js";
 // Where the athlete is in their program — week turns Sunday, day advances per logged
 // session, athlete's word wins. Replaces the calendar heuristic that kept drifting.
 import { currentPosition, positionBlock, parseBlockSpan } from "./programPosition.js";
@@ -5535,6 +5540,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // offeredCoachRef, keyed by flag since chat can surface more than one topic in a session.
   const coachFlagOfferedRef = useRef({});
   const [showLog,setShowLog] = useState(false);
+  // Which MY LOG tab it opens on. Normally "workouts"; a notification deep link
+  // (T51) sets it before opening so a feed push lands ON the Proof tab instead of
+  // dropping the athlete at the workouts list next to the thing they tapped for.
+  const [myLogTab,setMyLogTab] = useState("workouts");
+  // Bumped by the native tap listener to re-run the deep-link effect on an app
+  // that is already open (no page load, so no query string to re-read).
+  const [deepLinkTick,setDeepLinkTick] = useState(0);
   const [showSettings,setShowSettings] = useState(false);
   const [showProgram,setShowProgram] = useState(false);
   // Program Builder Phase A: the Program view is three subtabs (My Program /
@@ -6010,6 +6022,52 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(tries++ < 20) setTimeout(attach, 250);
     };
     attach();
+    return () => { cancelled = true; handle?.remove?.(); };
+  },[]);
+
+  // ── NOTIFICATION DEEP LINK → the screen the push was about (T51) ────────────
+  // A push carries a `?n=<target>` destination; captureNotificationTarget stashed
+  // it at module load, before the URL was tidied. Consume it once, here, where
+  // every athlete screen is reachable.
+  //
+  // Gated on historyLoaded rather than firing on mount: MY LOG and the Proof tab
+  // render off workoutHistory/proofDigest, and opening them against an empty
+  // working set shows an athlete a convincing, wrong "you have nothing here" for
+  // the second before the load lands.
+  const deepLinkDoneRef = useRef(false);
+  useEffect(()=>{
+    if(deepLinkDoneRef.current || !historyLoaded) return;
+    const target = takeNotificationTarget();
+    if(!target) return;
+    deepLinkDoneRef.current = true;
+    if(!isAthleteTarget(target)) return; // a coach- target on an athlete session: ignore, don't guess
+    track("notification_opened","nav",{target});
+    if(target==="program"){ setShowProgram(true); setProgramTab("program"); }
+    else if(target==="quicklog"){ setShowQuickLog(true); }
+    else if(target==="log"){ setMyLogTab("workouts"); setShowLog(true); }
+    else if(target==="proof"){ setMyLogTab("proof"); setShowLog(true); }
+    else if(target==="crew"){ setMyLogTab(athlete?.crew_allowed===false?"workouts":"crew"); setShowLog(true); }
+  },[historyLoaded, deepLinkTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A tap that arrives while the native app is ALREADY running never reloads the
+  // page, so there is no query string for captureNotificationTarget to read — the
+  // OS hands the payload to this listener instead. Arms the same pending target
+  // and re-opens the gate so the effect above runs again.
+  useEffect(()=>{
+    if(!isNativeIOS()) return;
+    let handle = null, cancelled = false;
+    (async () => {
+      try{
+        const { PushNotifications } = await import("@capacitor/push-notifications");
+        const h = await PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
+          const url = action?.notification?.data?.url || action?.notification?.data?.type;
+          if(!armNotificationTarget(url)) return;
+          deepLinkDoneRef.current = false;
+          setDeepLinkTick(t=>t+1);
+        });
+        if(cancelled) h?.remove?.(); else handle = h;
+      }catch(_){ /* no plugin in this shell: web capture still covers every other path */ }
+    })();
     return () => { cancelled = true; handle?.remove?.(); };
   },[]);
   // SEND TO CHAT on the sample workout: close the sheet and play the scripted
@@ -8720,7 +8778,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       )}
 
       {/* My Log Modal */}
-      {showLog&&<MyLogModal workoutHistory={workoutHistory} athlete={athlete} onClose={()=>setShowLog(false)} proofDigest={proofDigest} onDigestRead={(d)=>setProofDigest(d)} onOpenProofChat={(past)=>{setShowLog(false);setChatDigest(past&&past.id?past:null);setShowProofChat(true);}} setWorkoutHistory={setWorkoutHistory} onSessionCountChanged={()=>syncSessionCountAfterChange(athlete,setAthlete)}/>}
+      {showLog&&<MyLogModal initialTab={myLogTab} workoutHistory={workoutHistory} athlete={athlete} onClose={()=>{setShowLog(false);setMyLogTab("workouts");}} proofDigest={proofDigest} onDigestRead={(d)=>setProofDigest(d)} onOpenProofChat={(past)=>{setShowLog(false);setChatDigest(past&&past.id?past:null);setShowProofChat(true);}} setWorkoutHistory={setWorkoutHistory} onSessionCountChanged={()=>syncSessionCountAfterChange(athlete,setAthlete)}/>}
 
       {/* Program View Modal */}
       {showProgram&&(
@@ -9810,8 +9868,10 @@ function CountUp({end, dur=800, style}) {
   return <span style={style}>{n}</span>;
 }
 
-function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead, onOpenProofChat, setWorkoutHistory, onSessionCountChanged}) {
-  const [tab,setTab] = useState("workouts");
+function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead, onOpenProofChat, setWorkoutHistory, onSessionCountChanged, initialTab}) {
+  // initialTab is the notification deep link's landing tab (T51); every other
+  // caller omits it and still opens on the workouts list.
+  const [tab,setTab] = useState(initialTab || "workouts");
   const [editSession,setEditSession] = useState(null);
   // Older-session paging. workoutHistory is the recent working set (capped at ~100 raw
   // rows on load); anything older only exists on the server. The athlete pages it into
@@ -11610,6 +11670,8 @@ export const APP_INSTALL_URL = "https://app.trainwilco.com";
 // Fire immediately: the param has to be captured before anything reroutes or
 // tidies the URL, and long before the Crew tab exists.
 try{ captureCrewInvite(); }catch(_){ }
+// Same contract, same reason, for a notification's `?n=` destination (T51).
+try{ captureNotificationTarget(); }catch(_){ }
 
 export const buildCrewInvite = (code) => {
   const url = `${APP_INSTALL_URL}/?crew=${encodeURIComponent(code)}`;

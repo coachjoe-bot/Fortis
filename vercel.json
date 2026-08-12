@@ -54,7 +54,7 @@
     },
     {
       "path": "/api/push",
-      "schedule": "0 21 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/notify-program-changes",

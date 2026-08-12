@@ -35,9 +35,10 @@
 
 import {
   applyCors, httpErr, str, sbSelect, sbWrite, sbDelete,
-  authCaller, tryTokenAuth, authThrottle, clientIp, logError,
+  authCaller, tryTokenAuth, authThrottle, clientIp, logError, logPushOutcome,
 } from "./_supa.js";
-import { ensureVapid, vapidPublicKey, sendTo, sendToAthlete, pushPayload, notifyCoach } from "./_push.js";
+import { ensureVapid, vapidPublicKey, sendToAthlete, pushPayload, notifyCoach, fanOutToDevices, platformOf } from "./_push.js";
+import { mapPooled } from "./_pool.js";
 
 const enc = encodeURIComponent;
 
@@ -60,21 +61,99 @@ const NUDGE_30_VARIANTS = [
   "It's been a while. If you're ready to start again, I'm ready to coach.",
 ];
 
-// ── Daily nudge run (GET, cron-only) ──────────────────────────────────────────
-// Runs once/day. For each athlete with push subscriptions: find their most recent
-// workout, and if none in 14/30 days AND the matching stage hasn't already fired
-// for this streak, send it and stamp the stage. A workout since the last stage
-// stamp resets last_workout_at (via upsert below) which naturally re-arms both
-// stages for the NEXT streak — no separate "reset" branch needed, since the
-// 14/30-day check is always relative to the CURRENT last_workout_at.
+// ── Subscription read, PAGED ─────────────────────────────────────────────────
+// This used to be a bare `?select=*` with no bound. PostgREST caps a response at
+// its max-rows setting and returns the truncated page WITHOUT erroring, so past
+// that cap the cron would simply stop seeing the rest of the athletes — silently,
+// forever, with a 200 and a cheerful count. Page explicitly instead, and stop at
+// a ceiling that is far above any real subscriber count but still finite.
+const SUB_PAGE_SIZE = 1000;
+const SUB_MAX_ROWS = 20000;
+
+async function selectAllSubscriptions() {
+  const all = [];
+  for (let offset = 0; offset < SUB_MAX_ROWS; offset += SUB_PAGE_SIZE) {
+    const page = await sbSelect(
+      "push_subscriptions",
+      `?select=*&order=id.asc&offset=${offset}&limit=${SUB_PAGE_SIZE}`
+    );
+    all.push(...page);
+    if (page.length < SUB_PAGE_SIZE) return all;
+  }
+  console.error(`[push] subscription read hit the ${SUB_MAX_ROWS}-row ceiling — raise SUB_MAX_ROWS`);
+  return all;
+}
+
+// ── When a nudge is allowed to land (T51) ────────────────────────────────────
+// The cron used to be a single daily fire at 21:00 UTC, which is a reasonable
+// 5pm for the Eastern athletes WILCO has today and an indefensible 6am for a
+// West-Coast-plus-a-timezone athlete the App Store will hand us. `proof_timezone`
+// already exists on every athlete row and the Proof Feed already schedules per
+// athlete against it — the nudge cron was simply the one sender that never did.
+//
+// So: the cron runs HOURLY and each athlete is nudged in the hour their own
+// clock reads NUDGE_LOCAL_HOUR. Evening, after training has either happened or
+// clearly hasn't. An athlete with no (or an unparseable) timezone falls back to
+// the exact behaviour that shipped — the fixed UTC hour — so nobody's cadence
+// changes without a timezone to justify it.
+const NUDGE_LOCAL_HOUR = 18;      // 6pm, the athlete's own clock
+const NUDGE_FALLBACK_UTC_HOUR = 21; // unchanged legacy fire time for tz-less rows
+
+// Exported for scripts/test-push-schedule.mjs — this is pure and the whole
+// correctness of "never wake someone at 6am" lives in it.
+export function localHourIn(tz, at = new Date()) {
+  if (!tz) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false })
+      .formatToParts(at);
+    const h = Number(parts.find((p) => p.type === "hour")?.value);
+    return Number.isFinite(h) ? h % 24 : null;
+  } catch { return null; }
+}
+
+export function nudgeDueNow(athlete, at = new Date()) {
+  const local = localHourIn(athlete?.proof_timezone, at);
+  if (local == null) return at.getUTCHours() === NUDGE_FALLBACK_UTC_HOUR;
+  return local === NUDGE_LOCAL_HOUR;
+}
+
+// ── Nudge run (GET, cron-only) ────────────────────────────────────────────────
+// Runs hourly; each athlete is considered in their own 6pm hour (see above). For
+// each athlete due right now: find their most recent workout, and if none in
+// 14/30 days AND the matching stage hasn't already fired for this streak, send it
+// and stamp the stage. A workout since the last stage stamp resets last_workout_at
+// (via upsert below) which naturally re-arms both stages for the NEXT streak — no
+// separate "reset" branch needed, since the 14/30-day check is always relative to
+// the CURRENT last_workout_at.
 async function runNudges(res) {
   ensureVapid();
-  const subs = await sbSelect("push_subscriptions", "?select=*");
+  const subs = await selectAllSubscriptions();
   if (subs.length === 0) return res.status(200).json({ checked: 0, nudged14: 0, nudged30: 0, pruned: 0 });
 
+  const bySubscriber = {};
+  for (const s of subs) (bySubscriber[s.athlete_id] = bySubscriber[s.athlete_id] || []).push(s);
+  const subscribedIds = Object.keys(bySubscriber);
+  const subscribedList = subscribedIds.map((id) => `"${id}"`).join(",");
+
+  // Athlete rows FIRST, so the timezone gate runs before any of the expensive
+  // per-athlete work. On 23 of every 24 hourly runs almost nobody is due, and
+  // this is what keeps those runs to two cheap queries.
+  const allAthleteRows = await sbSelect(
+    "athletes", `?id=in.(${subscribedList})&select=id,name,coach_id,proof_timezone`
+  ).catch(() => []);
+  const athleteById = Object.fromEntries(allAthleteRows.map((a) => [a.id, a]));
+
+  const now = new Date();
   const byAthlete = {};
-  for (const s of subs) (byAthlete[s.athlete_id] = byAthlete[s.athlete_id] || []).push(s);
+  for (const id of subscribedIds) {
+    // A subscribed athlete with no athletes row at all still gets the legacy
+    // fixed-UTC-hour treatment rather than being dropped from the run.
+    if (nudgeDueNow(athleteById[id] || null, now)) byAthlete[id] = bySubscriber[id];
+  }
   const athleteIds = Object.keys(byAthlete);
+  if (athleteIds.length === 0) {
+    return res.status(200).json({ checked: 0, skippedOffHour: subscribedIds.length, nudged14: 0, nudged30: 0, pruned: 0 });
+  }
   const idList = athleteIds.map((id) => `"${id}"`).join(",");
 
   // Most recent workout per athlete (single query, then reduced client-side —
@@ -109,12 +188,18 @@ async function runNudges(res) {
   // stamps as the athlete nudges — a coach hears about a quiet athlete exactly
   // when that athlete crosses a stage, never on repeat runs. Name + coach_id for
   // the alert copy; aggregated per coach below so a multi-quiet day is one push.
-  const athleteRows = await sbSelect("athletes", `?id=in.(${idList})&select=id,name,coach_id`).catch(() => []);
-  const athleteById = Object.fromEntries(athleteRows.map((a) => [a.id, a]));
   const quietByCoach = {}; // coach_id -> [{name, stage}]
 
+  // Per-athlete work runs POOLED, not sequentially. Each athlete costs an awaited
+  // push per device plus an awaited state upsert; run end to end that made the
+  // cron's wall clock the SUM of every subscriber, under maxDuration 60 — the
+  // first thing in the system that breaks on subscriber growth (T46 scale).
+  // Concurrency 25 is the width the hourly proof sweep has run at since it
+  // shipped. See the ceiling arithmetic in outputs/T51-notification-delivery.md.
+  const NUDGE_CONCURRENCY = 25;
+
   let nudged14 = 0, nudged30 = 0, pruned = 0;
-  for (const [athleteId, rows] of Object.entries(byAthlete)) {
+  const perAthlete = await mapPooled(Object.entries(byAthlete), NUDGE_CONCURRENCY, async ([athleteId, rows]) => {
     const lastWorkout = lastWorkoutAt[athleteId] || null; // null = no workout row in NUDGE_WINDOW_DAYS (never logged, or 31+ days quiet — both past every stage cutoff)
     const state = stateByAthlete[athleteId] || null;
 
@@ -140,12 +225,16 @@ async function runNudges(res) {
     if (stageToSend) {
       const variants = stageToSend === "30" ? NUDGE_30_VARIANTS : NUDGE_14_VARIANTS;
       const body = variants[Math.floor(Math.random() * variants.length)];
-      const payload = pushPayload({ title: "WILCO", body, url: "/", type: stageToSend === "30" ? "nudge30" : "nudge14" });
+      const payload = pushPayload({ title: "WILCO", body, type: stageToSend === "30" ? "nudge30" : "nudge14" });
       const { pruned: p } = await sendToAthlete(rows, payload);
       pruned += p;
       // Stamp the stage even if every device failed — retrying a broken endpoint
       // tomorrow just burns the run; the rows self-heal (prune) or the athlete
       // re-subscribes, and this is a once-per-streak touch, not a repeating nudge.
+      // (T51 re-confirmed this is still the right call: the alternative is a
+      // permanently-dead endpoint re-firing every hour forever. The delivery
+      // telemetry logPushOutcome now writes is what makes a stamped-but-undelivered
+      // nudge VISIBLE rather than merely tolerated.)
       if (stageToSend === "30") { nudged30++; stage30Sent = new Date().toISOString(); }
       else { nudged14++; stage14Sent = new Date().toISOString(); }
       patch = { athlete_id: athleteId, last_workout_at: lastWorkout, stage_14_sent_at: stage14Sent, stage_30_sent_at: stage30Sent };
@@ -161,19 +250,24 @@ async function runNudges(res) {
         });
       } catch { /* state stamp is best-effort — worst case we re-evaluate next run */ }
     }
-  }
+  });
+  void perAthlete; // outcomes are tallied through the closure counters above
 
   // Fan out one quiet-athlete alert per coach (aggregated), pref-gated in notifyCoach.
-  let coachAlerts = 0;
-  for (const [coachId, quiet] of Object.entries(quietByCoach)) {
+  const coachIds = Object.entries(quietByCoach);
+  const coachResults = await mapPooled(coachIds, NUDGE_CONCURRENCY, async ([coachId, quiet]) => {
     const body = quiet.length === 1
       ? `${quiet[0].name} has gone quiet — no logged workouts in ${quiet[0].stage} days.`
       : `${quiet.length} athletes have gone quiet: ${quiet.map((q) => `${q.name} (${q.stage}d)`).join(", ")}.`;
-    const { sent } = await notifyCoach(coachId, "inactive", { title: "WILCO", body, url: "/", type: "coach_quiet" });
-    if (sent) coachAlerts++;
-  }
+    const { sent } = await notifyCoach(coachId, "inactive", { title: "WILCO", body, type: "coach_quiet" });
+    return sent ? 1 : 0;
+  });
+  const coachAlerts = coachResults.reduce((n, r) => n + (typeof r === "number" ? r : 0), 0);
 
-  return res.status(200).json({ checked: athleteIds.length, nudged14, nudged30, pruned, coachAlerts });
+  return res.status(200).json({
+    checked: athleteIds.length, skippedOffHour: subscribedIds.length - athleteIds.length,
+    nudged14, nudged30, pruned, coachAlerts,
+  });
 }
 
 // Vercel Pro: cap this function's execution time. 60s gives the nudge run room
@@ -312,16 +406,18 @@ export default async function handler(req, res) {
       const payload = pushPayload({
         title: "WILCO", // every push is from WILCO, never a persona (Will, 08-11)
         body: isCoachCaller ? "Notifications are on. I'll flag what needs you." : "Notifications are on. I'll keep you posted.",
-        url: "/", type: body.action,
+        type: body.action,
       });
-      let sent = 0;
-      let pruned = 0;
-      for (const sub of rows) {
-        const outcome = await sendTo(sub, payload, subTable); // prune from the caller's own table (coach rows live in coach_push_subscriptions)
-        if (outcome === "sent") sent++;
-        if (outcome === "pruned") pruned++;
-      }
-      return res.status(200).json({ sent, pruned });
+      // Prunes from the caller's OWN table (coach rows live in coach_push_subscriptions).
+      const tally = await fanOutToDevices(rows, payload, subTable);
+      logPushOutcome({
+        pushType: payload.type, platform: platformOf(rows), outcomes: tally,
+        role: caller.role, athleteId: isCoachCaller ? null : caller.id, coachId: isCoachCaller ? caller.id : null,
+      });
+      // `failed` is returned so the client can tell "you have no devices" (sent:0,
+      // failed:0) apart from "your device rejected it" (sent:0, failed:1) — the
+      // exact distinction that made the empty subscription table invisible.
+      return res.status(200).json({ sent: tally.sent, pruned: tally.pruned, failed: tally.failed });
     }
 
     throw httpErr(400, "Unknown action");

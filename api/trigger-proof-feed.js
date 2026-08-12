@@ -57,6 +57,7 @@ import {
 } from "./_proof.js";
 import { computeGritSnapshot } from "./_grit.js";
 import { sendToAthlete, pushPayload, ensureVapid, sendTo } from "./_push.js";
+import { mapPooled } from "./_pool.js";
 import { buildCrewBlip } from "./_crew.js";
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
@@ -123,17 +124,8 @@ function nextProofSlot(athlete) {
   return new Date(Date.now() + 7 * 864e5).toISOString();
 }
 
-// Run `fn` over `items` at bounded concurrency, collecting settled results in order.
-async function mapPooled(items, concurrency, fn) {
-  const out = [];
-  for (let i = 0; i < items.length; i += concurrency) {
-    const settled = await Promise.allSettled(items.slice(i, i + concurrency).map(fn));
-    for (const s of settled) {
-      out.push(s.status === "fulfilled" ? s.value : { ok: false, error: s.reason?.message || String(s.reason) });
-    }
-  }
-  return out;
-}
+// mapPooled now lives in api/_pool.js — api/push.js needed the exact same helper
+// (T51), and two copies of a concurrency limiter is one copy too many.
 
 // One self-invocation into a single-target mode (athlete_id or coach_id). Cron-secret
 // authed so the child enters the single-target branch (never recurses into the
@@ -227,7 +219,7 @@ async function sendFeedPush(athlete, digest, windowType) {
     if (prSection) body = "New PRs are in your Proof Feed. Go check it out.";
     else body = windowType === "monthly" ? "Your monthly recap is ready." : "Your weekly Proof Feed is ready.";
 
-    const payload = pushPayload({ title: "WILCO", body, url: "/", type: "feed" });
+    const payload = pushPayload({ title: "WILCO", body, type: "feed" });
     await sendToAthlete(subs, payload);
 
     await sbWrite({
@@ -517,7 +509,7 @@ async function runCoachReports(allAthletes, batch, coaches, opts = {}) {
           const subs = await sbSelect("coach_push_subscriptions", `?coach_id=eq.${enc(coach.id)}&select=*`);
           if (subs.length) {
             ensureVapid();
-            const payload = pushPayload({ title: "WILCO", body: `Your ${type === "monthly_coach" ? "monthly recap" : "Coach's Edition"} is ready.`, url: "/", type: "coach_digest" });
+            const payload = pushPayload({ title: "WILCO", body: `Your ${type === "monthly_coach" ? "monthly recap" : "Coach's Edition"} is ready.`, type: "coach_digest" });
             for (const s of subs) { try { await sendTo(s, payload, "coach_push_subscriptions"); } catch { /* per-device best-effort */ } }
           }
         }
