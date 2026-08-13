@@ -184,6 +184,8 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const [editReq, setEditReq] = useState("");     // "Tell Joe what to change" input
   const [confirmSave, setConfirmSave] = useState(null); // diff view before Save to My Program
   const [resetArm, setResetArm] = useState(false);
+  // Blueprint console shows only the open cells by default (see the renderer below).
+  const [cellsExpanded, setCellsExpanded] = useState(false);
   const [draftLine, setDraftLine] = useState(0);  // rotating status line while drafting
   const topicRef = useRef(initialDraft?.blueprint?.__topic || null); // locked at first pick (cache-identity)
   // Build-off-a-named-phase (Will, 07-27): past phases aren't browsable UI —
@@ -570,38 +572,68 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
             })}
           </div>
         )}
-        {IS_DARK ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(118px,1fr))", gap: "8px 12px" }}>
-          {cells.map(c => {
-            const b = blueprint?.[c.key];
-            const chargedCell = !!b?.value;
-            return (
-              <div key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${!chargedCell && b?.pending ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}>
-                <div style={{ display: "flex", gap: 5, alignItems: "baseline", marginBottom: 3 }}>
-                  <span style={{ fontSize: 10.5, color: chargedCell ? CA.text : CA.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
-                  {b?.source === "known" && chargedCell && <span style={{ ...mono, fontSize: 7.5, color: CA.muted }}>KNOWN</span>}
-                </div>
-                {cellTube(chargedCell, !!b?.pending)}
-              </div>
-            );
-          })}
-        </div>
-        ) : (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {cells.map(c => {
-            const b = blueprint?.[c.key];
-            const chargedCell = !!b?.value;
-            const onFile = !chargedCell && !!b?.pending;
-            const col = chargedCell ? CA.green : onFile ? CA.amber : CA.muted;
-            return (
-              <span key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${onFile ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}
-                style={{ fontSize: 11, fontWeight: 600, fontFamily: "'Inter'", padding: "5px 11px", borderRadius: 999, border: `1px solid ${chargedCell || onFile ? col : CA.border}`, color: col, background: CA.navy2, whiteSpace: "nowrap" }}>
-                {c.label}{chargedCell ? (b?.source === "known" ? " · Known" : " ✓") : onFile ? " · on file" : ""}
-              </span>
-            );
-          })}
-        </div>
-        )}
+        {/* Only the cells that still need an answer, up to three, plus one summary
+            chip for everything already confirmed (Will, 08-12: the full grid "seems
+            like a lot" and ate a big block of space). As each one turns green it
+            drops out and the next open cell takes its place, so the console always
+            shows the SHORTEST list of what Joe still needs. Tap the summary to see
+            everything. Same rule in both themes, each in its own styling. */}
+        {(() => {
+          const charged = cells.filter(c => !!blueprint?.[c.key]?.value);
+          const open = cells.filter(c => !blueprint?.[c.key]?.value);
+          const shown = cellsExpanded ? cells : open.slice(0, 3);
+          const hidden = cells.length - shown.length;
+          const summary = hidden > 0 && (
+            <button onClick={() => setCellsExpanded(v => !v)}
+              title={cellsExpanded ? "Show only what's left" : "Show every field"}
+              style={{ fontSize: 11, fontWeight: 600, fontFamily: "'Inter'", padding: "5px 11px", borderRadius: 999,
+                border: `1px dashed ${CA.border}`, color: CA.muted, background: "transparent", cursor: "pointer", whiteSpace: "nowrap" }}>
+              {cellsExpanded ? "Show less" : `${charged.length} confirmed · +${hidden} more`}
+            </button>
+          );
+          const expandOnly = cellsExpanded && hidden <= 0 && (
+            <button onClick={() => setCellsExpanded(false)}
+              style={{ fontSize: 11, fontWeight: 600, fontFamily: "'Inter'", padding: "5px 11px", borderRadius: 999,
+                border: `1px dashed ${CA.border}`, color: CA.muted, background: "transparent", cursor: "pointer", whiteSpace: "nowrap" }}>
+              Show less
+            </button>
+          );
+          if (IS_DARK) return (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(118px,1fr))", gap: "8px 12px", alignItems: "end" }}>
+              {shown.map(c => {
+                const b = blueprint?.[c.key];
+                const chargedCell = !!b?.value;
+                return (
+                  <div key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${!chargedCell && b?.pending ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}>
+                    <div style={{ display: "flex", gap: 5, alignItems: "baseline", marginBottom: 3 }}>
+                      <span style={{ fontSize: 10.5, color: chargedCell ? CA.text : CA.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.label}</span>
+                      {b?.source === "known" && chargedCell && <span style={{ ...mono, fontSize: 7.5, color: CA.muted }}>KNOWN</span>}
+                    </div>
+                    {cellTube(chargedCell, !!b?.pending)}
+                  </div>
+                );
+              })}
+              {(summary || expandOnly) && <div>{summary || expandOnly}</div>}
+            </div>
+          );
+          return (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {shown.map(c => {
+                const b = blueprint?.[c.key];
+                const chargedCell = !!b?.value;
+                const onFile = !chargedCell && !!b?.pending;
+                const col = chargedCell ? CA.green : onFile ? CA.amber : CA.muted;
+                return (
+                  <span key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${onFile ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}
+                    style={{ fontSize: 11, fontWeight: 600, fontFamily: "'Inter'", padding: "5px 11px", borderRadius: 999, border: `1px solid ${chargedCell || onFile ? col : CA.border}`, color: col, background: CA.navy2, whiteSpace: "nowrap" }}>
+                    {c.label}{chargedCell ? (b?.source === "known" ? " · Known" : " ✓") : onFile ? " · on file" : ""}
+                  </span>
+                );
+              })}
+              {summary || expandOnly}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Scheduled state: future start date → parked, not applied ── */}

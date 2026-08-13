@@ -2,9 +2,9 @@
   "appId": "com.trainwilco.wilco",
   "appName": "WILCO",
   "webDir": "dist",
-  "backgroundColor": "#04060c",
+  "backgroundColor": "#EFEFEF",
   "ios": {
-    "backgroundColor": "#04060c",
+    "backgroundColor": "#EFEFEF",
     "contentInset": "always",
     "preferredContentMode": "mobile"
   },
@@ -12,19 +12,23 @@
     "SplashScreen": {
       "launchShowDuration": 400,
       "launchAutoHide": true,
-      "backgroundColor": "#04060c",
+      "backgroundColor": "#EFEFEF",
       "showSpinner": false,
       "androidScaleType": "CENTER_CROP",
       "splashFullScreen": true,
       "splashImmersive": true
     },
     "StatusBar": {
-      "style": "DARK",
-      "backgroundColor": "#04060c",
+      "style": "LIGHT",
+      "backgroundColor": "#EFEFEF",
       "overlaysWebView": false
     },
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
     }
   }
 }
