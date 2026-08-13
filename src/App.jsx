@@ -2077,13 +2077,15 @@ html,body{touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-a
    keep body on the base so it blends. */
 body{background:${CA.navy};color:${CA.text};font-family:'Inter',system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;}
 input,textarea,select,button{font-family:'Inter',system-ui,-apple-system,sans-serif;}
-/* Scroll indicator. Was 4px wide with the thumb on CA.border — the same hairline
-   beige the ruled paper uses — so against a white card in MY LOG it read as nothing
-   at all. Wider, and inked in each theme's own colour rather than one value for both. */
-::-webkit-scrollbar{width:7px;height:7px;}
+/* Scroll indicator. Was 4px on CA.border (the hairline beige the ruled paper uses),
+   then a 42%-opacity navy which Will still read as white-on-white. Now the SOLID
+   brand navy at full strength, same ink as everything else on the light side, and a
+   solid pale blue on dark. Opacity was the problem, not the hue — anything
+   translucent over a white card washes straight out. */
+::-webkit-scrollbar{width:8px;height:8px;}
 ::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:${IS_DARK?"rgba(146,171,214,0.5)":"rgba(40,80,139,0.42)"};border-radius:4px;}
-::-webkit-scrollbar-thumb:active{background:${IS_DARK?"rgba(146,171,214,0.75)":"rgba(40,80,139,0.65)"};}
+::-webkit-scrollbar-thumb{background:${IS_DARK?"#92abd6":CA.accent};border-radius:4px;}
+::-webkit-scrollbar-thumb:active{background:${IS_DARK?"#b9cdf0":CA.accent};}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.4;}}
 .fade-up{animation:fadeUp 0.25s ease forwards;}
@@ -4671,7 +4673,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
     const features = {
       free:  ["Full AI coaching chat","Form review (video upload)","Coach welcome email","No session memory (fresh start each login)"],
       pro:   ["Everything in Free","Workout history saved","Progress tracking & PRs","Training program stored","Workout log viewable","Weekly coach progress reports"],
-      elite: ["Everything in Pro","Assigned WILCO Certified Coach","Guaranteed weekly check-in","Initial onboarding Zoom call"],
+      elite: ["Everything in Pro","Assigned WILCO Certified Coach","Guaranteed weekly check-in","Initial onboarding call"],
     };
     // Light brand (Draft-2 plan phone): Pro carries the single NAVY emphasis,
     // Free/Elite sit in plain ink — the gold/blue tier colors stay dark-mode only.
@@ -4790,8 +4792,12 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
           <label style={{color:CA.muted,fontSize:11,letterSpacing:1,display:"block",marginBottom:6}}>HEIGHT</label>
           <div style={{display:"flex",gap:8}}>
             <div style={{flex:1,position:"relative"}}>
+              {/* No placeholder. A greyed "5" here reads as a value that is already
+                  filled in, so people skipped the field entirely or assumed it had
+                  defaulted to five feet — Will's most common signup trip-up. The
+                  field sits empty and only the "ft" suffix marks what it wants. */}
               <input type="number" inputMode="numeric" min={3} max={8} value={data.heightFt}
-                onChange={e=>setD("heightFt",e.target.value)} placeholder="5" style={inpA({textAlign:"center"})}/>
+                onChange={e=>setD("heightFt",e.target.value)} style={inpA({textAlign:"center"})}/>
               <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:CA.muted,fontSize:12,pointerEvents:"none"}}>ft</span>
             </div>
             <div style={{flex:1}}>
@@ -4942,7 +4948,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
         {data.tier==="elite"&&(
           <div style={{background:`${CA.blue}18`,border:`1px solid ${CA.blue}`,borderRadius:10,padding:"10px 14px",marginBottom:12,marginTop:-4}}>
             <div style={{color:CA.blue,fontSize:12,fontWeight:600,marginBottom:2}}>What happens next with Elite:</div>
-            <div style={{color:CA.muted2,fontSize:11,lineHeight:1.6}}>After you create your account, a WILCO Certified Coach will reach out within 24 hours to schedule your initial Zoom call and get you paired up.</div>
+            <div style={{color:CA.muted2,fontSize:11,lineHeight:1.6}}>After you create your account, a WILCO Certified Coach will reach out within 24 hours to schedule your initial call and get you paired up.</div>
           </div>
         )}
       </>}
@@ -11368,7 +11374,11 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                         role="button" tabIndex={0} aria-label={who}
                         onClick={e=>{e.stopPropagation();setCmpTip({key:`${b.benchKey}:${c.id}`,name:c.name.split(" ")[0],tier:TIER_NAMES[l.tierIdx]});}}
                         style={{position:"absolute",top:-7,bottom:-7,width:16,marginLeft:-8,display:"flex",justifyContent:"center",cursor:"pointer",left:`${Math.round(((l.tierIdx+Math.min(l.pct,0.99))/8)*100)}%`}}>
-                        <span style={{width:2,alignSelf:"stretch",borderRadius:1,background:CA.cyan}}/>
+                        {/* The tick carries the crewmate's TIER colour, not one flat blue:
+                            a green slash reads as elite at a glance, grey as rookie. The
+                            dark variant already did this through --sc; this side was
+                            hard-coded to cyan for every rank. */}
+                        <span style={{width:2,alignSelf:"stretch",borderRadius:1,background:TIER_COLORS[l.tierIdx]}}/>
                       </div>;
                     })}
                   </div>
@@ -12324,7 +12334,8 @@ function ProfileCompletionModal({athlete, onClose, onSave}) {
           {needsPhysical&&<>
             <div style={{marginBottom:16}}>{label("HEIGHT")}
               <div style={{display:"flex",gap:8}}>
-                <div style={{flex:1,position:"relative"}}><input type="number" min={3} max={8} value={data.heightFt} onChange={e=>setD("heightFt",e.target.value)} placeholder="5" style={inpA({textAlign:"center"})}/><span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:CA.muted,fontSize:12,pointerEvents:"none"}}>ft</span></div>
+                {/* Same phantom-"5" trap as the signup field — see the comment there. */}
+                <div style={{flex:1,position:"relative"}}><input type="number" min={3} max={8} value={data.heightFt} onChange={e=>setD("heightFt",e.target.value)} style={inpA({textAlign:"center"})}/><span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:CA.muted,fontSize:12,pointerEvents:"none"}}>ft</span></div>
                 <div style={{flex:1}}><select value={data.heightIn} onChange={e=>setD("heightIn",e.target.value)} style={inpA({textAlign:"center"})}>{[0,1,2,3,4,5,6,7,8,9,10,11].map(n=><option key={n} value={n}>{n} in</option>)}</select></div>
               </div>
             </div>
@@ -12737,8 +12748,13 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
         )}
 
         {/* Install app — the persistent entry point for users who dismissed the
-            post-signup prompt. Hidden once the app is already on the home screen. */}
-        {onInstallApp&&!isStandalone()&&(
+            post-signup prompt. Hidden once the app is already on the home screen, and
+            hidden entirely in the native shell: isStandalone() is false inside a
+            Capacitor WKWebView (neither display-mode:standalone nor
+            navigator.standalone is set), so the App Store build was telling people to
+            install the app they were already using. Still shown on the web app, where
+            add-to-home-screen is the only way to get an icon. */}
+        {onInstallApp&&!isStandalone()&&!isNativeIOS()&&(
           <button onClick={onInstallApp} style={btn("transparent",CA.accent,{border:`1px solid ${CA.accent}55`,fontSize:13,padding:"10px",letterSpacing:1,marginBottom:10})}>
             Install the App on Your Phone
           </button>
