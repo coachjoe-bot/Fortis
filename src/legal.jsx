@@ -10,7 +10,7 @@
 // AND its matching *_VERSION constant. Each version is written into the
 // legal_acceptances table on signup so we have an auditable record of which
 // version of THAT document each athlete agreed to.
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 // Hand-synced copy of App.jsx's DISP. This file is imported EAGERLY by App.jsx
 // (line ~19), so importing back would be a circular init — same constraint as
@@ -153,11 +153,11 @@ Wilco Training LLC801 International Pkwy, Suite #5034, Lake Mary, Florida 32746T
 
 BY CHECKING THE BOX BELOW, YOU CONFIRM THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE LEGALLY BOUND BY THESE TERMS OF SERVICE AND LIABILITY WAIVER.
 
-[ ]  I have read and agree to the Wilco Training Terms of Service and Liability Waiver.
+I have read and agree to the Wilco Training Terms of Service and Liability Waiver.
 
 If you are under 18, your parent or legal guardian must also check the box below before your account is created:
 
-[ ]  I am the parent or legal guardian of the minor user. I have read and understood these Terms in full, including the Liability Waiver, and I consent to the minor’s use of the Platform on the terms stated herein.
+I am the parent or legal guardian of the minor user. I have read and understood these Terms in full, including the Liability Waiver, and I consent to the minor’s use of the Platform on the terms stated herein.
 
 Wilco Training LLC  |  TrainWilco.com  |  support@trainwilco.com801 International Pkwy, Suite #5034, Lake Mary, Florida 32746`;
 
@@ -367,21 +367,47 @@ function ParentalBody({ C }) {
 // the primary button, plus an always-active "Decline & Go Back".
 export function LegalModal({ C, kicker, title, text, parental, checkboxLabel, primaryLabel, onAccept, onDecline, busy }) {
   const [checked, setChecked] = useState(false);
-  const canContinue = checked && !busy;
+  // You cannot agree to something you have not been shown. The box stays disabled
+  // until the document has actually been scrolled to the bottom (Will, 08-12).
+  // Short documents that fit on screen with nothing to scroll count as read, or the
+  // gate would be impossible to satisfy on a tall phone.
+  const scrollRef = useRef(null);
+  const [readToEnd, setReadToEnd] = useState(false);
+  const noteScroll = (el) => {
+    if (!el || readToEnd) return;
+    if (el.scrollHeight - el.clientHeight <= 24 || el.scrollTop + el.clientHeight >= el.scrollHeight - 24) setReadToEnd(true);
+  };
+  // Measure only AFTER a paint. On mount the body has not laid out yet, so
+  // scrollHeight still equals clientHeight and the "nothing to scroll" branch would
+  // pass a document nobody has read — which would quietly make this gate do nothing.
+  // Two frames covers layout plus the webfont swap that reflows the text.
+  useEffect(() => {
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => noteScroll(scrollRef.current)); });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+  }, [text, parental]);
+  // Unchecking after reading must not re-arm the gate — you have still read it.
+  const canContinue = checked && readToEnd && !busy;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: C.navy, display: "flex", flexDirection: "column", maxWidth: 600, margin: "0 auto" }}>
       <div style={{ padding: "calc(16px + env(safe-area-inset-top,0px)) 20px 12px", borderBottom: `1px solid ${C.border}` }}>
         {kicker && <div style={{ color: C.gold, ...DISP, fontSize: 13, letterSpacing: 2, marginBottom: 4 }}>{kicker}</div>}
         <div style={{ color: C.text, fontSize: 18, fontWeight: 700 }}>{title}</div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "16px 20px" }}>
+      <div ref={scrollRef} onScroll={e => noteScroll(e.currentTarget)}
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "16px 20px" }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           {parental ? <ParentalBody C={C} /> : <LegalDocBody C={C} text={text} />}
         </div>
       </div>
       <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 20px calc(14px + env(safe-area-inset-bottom,0px))", background: C.navy2 }}>
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", marginBottom: 12 }}>
-          <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} style={{ marginTop: 2, width: 18, height: 18, accentColor: C.gold, flexShrink: 0 }} />
+        {!readToEnd && (
+          <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.5, marginBottom: 10, textAlign: "center" }}>
+            Scroll to the end to continue.
+          </div>
+        )}
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: readToEnd ? "pointer" : "not-allowed", marginBottom: 12, opacity: readToEnd ? 1 : 0.5 }}>
+          <input type="checkbox" checked={checked} disabled={!readToEnd} onChange={e => setChecked(e.target.checked)} style={{ marginTop: 2, width: 18, height: 18, accentColor: C.gold, flexShrink: 0 }} />
           <span style={{ color: C.text, fontSize: 13, lineHeight: 1.5 }}>{checkboxLabel}</span>
         </label>
         <button onClick={onAccept} disabled={!canContinue} style={localBtn(canContinue ? C.gold : C.navy3, canContinue ? "#000" : C.muted, { opacity: canContinue ? 1 : 0.7, cursor: canContinue ? "pointer" : "not-allowed" })}>

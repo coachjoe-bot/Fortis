@@ -91,6 +91,11 @@ const CHILD_TIMEOUT_MS = 180000;
 const todayStr = () => new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
 const enc = encodeURIComponent;
 
+// How far back a session has to exist for a digest to be worth generating. 14 days
+// covers the weekly cadence plus a missed week, so a normal athlete taking a light
+// week never drops out; only genuinely silent accounts do.
+const PROOF_ACTIVITY_DAYS = 14;
+
 // Edition history depth (per athlete / per coach). The cron used to DELETE every
 // prior digest before inserting — so nobody could ever re-read last week's letter
 // and the masthead's "No. N" could never exceed 1-2 (it counts rows). We now stamp
@@ -655,8 +660,33 @@ export default async function handler(req, res) {
       bootstrap = neverRun.filter((a) => has.has(a.id));
     }
 
-    const allDue = [...due, ...bootstrap.filter((a) => !due.find((d) => d.id === a.id))]
+    let allDue = [...due, ...bootstrap.filter((a) => !due.find((d) => d.id === a.id))]
       .filter((a) => a.proof_enabled !== false && a.last_proof_run_date !== todayStr());
+
+    // ── ACTIVITY GATE (Will, 08-12) ──────────────────────────────────────────
+    // A digest is a report on training that happened. An athlete who has logged
+    // nothing has nothing to report, and generating one anyway spent a Claude call
+    // per cycle on an empty week: measured over the 30 days to 08-12, 149 of 202
+    // proof calls (74%) and 458k tokens went to athletes with no workout in the
+    // 14 days before the call. Skip them, and push their next slot out so the
+    // dispatcher stops reconsidering them every hour. The moment they log again
+    // they fall back into the normal cadence — logging is what re-arms this.
+    if (allDue.length) {
+      const dueIds = allDue.map((a) => `"${a.id}"`).join(",");
+      const activeCut = new Date(Date.now() - PROOF_ACTIVITY_DAYS * 864e5).toISOString();
+      const recent = await sbSelect("workouts", `?athlete_id=in.(${dueIds})&created_at=gte.${enc(activeCut)}&select=athlete_id`);
+      const activeIds = new Set(recent.map((w) => w.athlete_id));
+      const silent = allDue.filter((a) => !activeIds.has(a.id));
+      if (silent.length) {
+        // Bump the slot so a silent athlete is not re-evaluated every single run.
+        const nextSlot = new Date(Date.now() + PROOF_ACTIVITY_DAYS * 864e5).toISOString();
+        await Promise.all(silent.map((a) =>
+          sbWrite({ method: "PATCH", table: "athletes", query: `?id=eq.${enc(a.id)}`, prefer: "return=minimal",
+                    body: { next_proof_due_at: nextSlot } }).catch(() => {})));
+        results.skipped.push(...silent.map((a) => ({ athlete_id: a.id, reason: "no-sessions-in-window" })));
+      }
+      allDue = allDue.filter((a) => activeIds.has(a.id));
+    }
 
     // ── FAN OUT: one bounded-parallel self-invocation per due athlete ──
     // Each child hits the body.athlete_id branch above → generates in its own

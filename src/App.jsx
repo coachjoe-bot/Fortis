@@ -2001,7 +2001,17 @@ export const propagateForPRs = async (programText, prs) => {
 // through them.
 export const THEME_KEY = "wilco_theme";
 export const IS_DARK = (() => { try { return localStorage.getItem(THEME_KEY) === "dark"; } catch (_) { return false; } })();
-export const setDarkTheme = (on) => { try { localStorage.setItem(THEME_KEY, on ? "dark" : "light"); } catch (_) {} location.reload(); };
+// IS_DARK is read once at module load, so a theme flip can only take effect through a
+// full reload. That reload is indistinguishable from a cold launch, and a cold launch
+// re-authenticates — which is why switching to dark mode asked Will for Face ID. Re-arm
+// the rolling trust window on the way out so the reload can never be the thing that
+// expires it. A genuine cold launch after the window lapses still asks, which is the
+// intended security model; only the theme flip is exempt.
+export const setDarkTheme = (on) => {
+  try { localStorage.setItem(THEME_KEY, on ? "dark" : "light"); } catch (_) {}
+  try { touchAuthSession(); } catch (_) {}
+  location.reload();
+};
 
 export const DISP = IS_DARK
   ? { fontFamily:"'Bebas Neue','Inter',system-ui,-apple-system,sans-serif", fontWeight:400, textTransform:"uppercase" }
