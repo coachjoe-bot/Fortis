@@ -671,6 +671,123 @@ async function sbReadPaged(table, order = "created_at.desc", filter = "") {
 }
 
 // ─── COACH DASHBOARD ──────────────────────────────────────────────────────────
+// ─── SAVED PROGRAMS (G8) ──────────────────────────────────────────────────────
+// The coach's own library. Save a program once, put it on any athlete later. Rows
+// are coach-owned; api/data.js forces coach_id scoping on every read and write, so
+// a coach can never see or touch another coach's library.
+function CoachPrograms({coachId, athletes = [], onApplied}) {
+  const [rows,setRows] = useState(null);
+  const [err,setErr] = useState("");
+  const [busy,setBusy] = useState(null);
+  const [name,setName] = useState("");
+  const [text,setText] = useState("");
+  const [saving,setSaving] = useState(false);
+  const [applyFor,setApplyFor] = useState(null);   // program id awaiting an athlete pick
+  const [confirmDel,setConfirmDel] = useState(null);
+
+  const load = async () => {
+    try{ setRows(await sbRead("coach_programs", `?select=*&order=created_at.desc&limit=200`)); }
+    catch(e){ setErr(e.message||"Couldn't load your programs."); setRows([]); }
+  };
+  useEffect(()=>{ load(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async () => {
+    const n = name.trim(), t = text.trim();
+    if(!n || !t || saving) return;
+    setSaving(true); setErr("");
+    try{ await sbInsert("coach_programs",{coach_id:coachId, name:n, program_text:t}); setName(""); setText(""); await load(); }
+    catch(e){ setErr(e.message||"Couldn't save that program."); }
+    setSaving(false);
+  };
+
+  // Applying overwrites a real athlete's training, so it confirms first and says so.
+  const applyTo = async (row, athleteId) => {
+    const a = athletes.find(x=>String(x.id)===String(athleteId));
+    if(!a) return;
+    if(!window.confirm(`Put "${row.name}" on ${a.name}? This replaces the program they have now.`)) return;
+    setBusy(row.id); setErr("");
+    try{
+      await sbUpdate("athletes", a.id, {program_text: row.program_text});
+      setApplyFor(null);
+      if(onApplied) await onApplied();
+    }catch(e){ setErr(e.message||"Couldn't apply that program."); }
+    setBusy(null);
+  };
+
+  const remove = async (row) => {
+    setBusy(row.id);
+    try{ await sbDelete("coach_programs", `?id=eq.${row.id}`); setConfirmDel(null); await load(); }
+    catch(e){ setErr(e.message||"Couldn't delete that program."); }
+    setBusy(null);
+  };
+
+  const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:14,background:CA.navy2,marginBottom:12};
+  return (
+    <div>
+      <div style={{...card}}>
+        <div style={{...DISP,fontSize:14,letterSpacing:1.5,color:CA.text,marginBottom:8}}>SAVE A PROGRAM</div>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Name it (e.g. Fall Base — Linemen)"
+          style={{...inpA({}),marginBottom:8}}/>
+        <textarea value={text} onChange={e=>setText(e.target.value)} rows={6}
+          placeholder="Paste or write the program here. Build one in an athlete's Program tab and paste it in to keep it."
+          style={{...inpA({}),resize:"vertical",lineHeight:1.5}}/>
+        <button onClick={save} disabled={!name.trim()||!text.trim()||saving}
+          style={btn(name.trim()&&text.trim()&&!saving?CA_BTN:CA.navy3, name.trim()&&text.trim()&&!saving?CA.onAccent:CA.muted,{marginTop:10})}>
+          {saving?"Saving...":"Save to my library"}
+        </button>
+      </div>
+
+      {err&&<div style={{color:CA.red,fontSize:12,marginBottom:10}}>{err}</div>}
+
+      <div style={{...DISP,fontSize:14,letterSpacing:1.5,color:CA.text,margin:"18px 0 10px"}}>
+        MY PROGRAMS{rows?` · ${rows.length}`:""}
+      </div>
+      {rows===null&&<div style={{color:CA.muted,fontSize:13}}>Loading...</div>}
+      {rows&&rows.length===0&&(
+        <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>
+          Nothing saved yet. Build a program in an athlete's Program tab, then paste it above to keep it and reuse it on anyone.
+        </div>
+      )}
+      {rows&&rows.map(r=>(
+        <div key={r.id} style={card}>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
+            <span style={{color:CA.text,fontSize:14,fontWeight:700}}>{r.name}</span>
+            <span style={{marginLeft:"auto",color:CA.faint,fontSize:11}}>{fmtDateShort(r.created_at)}</span>
+          </div>
+          <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap",maxHeight:96,overflow:"hidden",marginBottom:10}}>
+            {String(r.program_text||"").slice(0,400)}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            {applyFor===r.id ? (
+              <>
+                <select defaultValue="" onChange={e=>e.target.value&&applyTo(r,e.target.value)}
+                  style={{...inpA({}),maxWidth:230}}>
+                  <option value="">Choose an athlete...</option>
+                  {athletes.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                <button onClick={()=>setApplyFor(null)} style={btn("transparent",CA.muted,{border:`1px solid ${CA.border}`,padding:"8px 12px",fontSize:12})}>Cancel</button>
+              </>
+            ) : (
+              <button onClick={()=>setApplyFor(r.id)} disabled={busy===r.id||!athletes.length}
+                style={btn("transparent",CA.accent,{border:`1px solid ${CA.accent}55`,padding:"8px 12px",fontSize:12})}>
+                {busy===r.id?"Working...":"Put on an athlete"}
+              </button>
+            )}
+            {confirmDel===r.id ? (
+              <>
+                <button onClick={()=>remove(r)} style={btn("transparent",CA.red,{border:`1px solid ${CA.red}55`,padding:"8px 12px",fontSize:12})}>Really delete</button>
+                <button onClick={()=>setConfirmDel(null)} style={btn("transparent",CA.muted,{border:`1px solid ${CA.border}`,padding:"8px 12px",fontSize:12})}>Keep</button>
+              </>
+            ) : (
+              <button onClick={()=>setConfirmDel(r.id)} style={{background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer",marginLeft:"auto"}}>Delete</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CoachDashboard({coach,onLogout}) {
   // isMobile (<640) = phone layout; isNarrow (<900) = too tight for list+detail side-by-side
 
@@ -1158,7 +1275,7 @@ function CoachDashboard({coach,onLogout}) {
   // the one coaching real athletes day to day — structurally could not enable its
   // own digest push or the new injury / big-PR / quiet alerts. Nothing on that tab
   // is scoped to a school, so there's nothing for master to be excluded from.
-  const tabs = ["overview","athletes","progress","reports","settings",...(isMaster?["coaches"]:[]),...(!isMaster&&isAdmin?["account"]:[])];
+  const tabs = ["overview","athletes","progress","programs","reports","settings",...(isMaster?["coaches"]:[]),...(!isMaster&&isAdmin?["account"]:[])];
 
   return (
     <div className="cyber-coach" style={{minHeight:"100dvh"}}>
@@ -1490,6 +1607,16 @@ function CoachDashboard({coach,onLogout}) {
             {/* ── PROGRESS TAB (group trends) ── */}
             {activeTab==="progress"&&(
               <GroupProgress athletes={athletes} workouts={workouts} manualRMs={manualRMs} prs={prs} analytics={analytics}/>
+            )}
+
+            {/* ── PROGRAMS TAB (G8) ──────────────────────────────────────────
+                A coach's own library. The per-athlete builder already exists in
+                the athlete detail view (viewer="coach"); what was missing was a
+                place to KEEP a program and put it on someone else later. Rows are
+                coach-owned (coach_id) and reach the DB only through api/data.js,
+                which forces that scoping — see COACH_SELF_SCOPED there. */}
+            {activeTab==="programs"&&(
+              <CoachPrograms coachId={coach?.id} athletes={athletes} onApplied={loadAll}/>
             )}
 
             {/* ── SETTINGS TAB (notifications) ── */}

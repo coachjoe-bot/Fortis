@@ -45,6 +45,8 @@ const WRITABLE = new Set([
   // request loop. Scoping enforced below (coach_context/coach_push_subscriptions =
   // own coach_id; program_change_requests = athlete inserts own, coach updates status).
   "coach_context", "coach_push_subscriptions", "program_change_requests",
+  // Saved Programs library (G8). Coach-owned; scoping is coach_id, same as coach_context.
+  "coach_programs",
   // Parsed-program cache: the coach dashboard parses missing/stale programs on
   // demand (Haiku via api/claude.js, hash-keyed) and upserts the result here —
   // same row shape parseProgramIfNeeded writes on the proof cron. Ownership-scoped
@@ -113,7 +115,7 @@ const READ_OWN_COL = {
 // roster's athlete_ids) — the coach's own data + the aggregate/inbox rows.
 const COACH_SELF_SCOPED = new Set([
   "proof_digests", "coach_context", "coach_push_subscriptions", "program_change_requests",
-  "program_drafts",
+  "program_drafts", "coach_programs",
 ]);
 
 // Tables an ATHLETE caller may write, each mapped to the column that must equal
@@ -459,7 +461,7 @@ export default async function handler(req, res) {
           // admin → any athlete in their school; coach → only their own roster.
           ownFilter = isAdmin ? `&school_id=eq.${enc(sid)}` : `&coach_id=eq.${enc(caller.id)}`;
           assertRows((r) => (isAdmin ? String(r.school_id) === String(sid) : String(r.coach_id) === String(caller.id)));
-        } else if (table === "coach_context" || table === "coach_push_subscriptions" || table === "program_change_requests" || table === "proof_digests" || table === "program_drafts") {
+        } else if (table === "coach_context" || table === "coach_push_subscriptions" || table === "program_change_requests" || table === "proof_digests" || table === "program_drafts" || table === "coach_programs") {
           // program_drafts: the coach writes their OWN drafts (coach_id = them).
           // The athlete_id a draft targets isn't roster-asserted here — a draft is
           // the coach's private workspace; APPLYING it goes through the athletes-
