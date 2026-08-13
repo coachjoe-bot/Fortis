@@ -83,16 +83,35 @@
       @font-face{font-family:'Playfair Display';font-style:normal;font-weight:900;font-display:swap;src:url(/fonts/playfair-display-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;}
     </style>
     <title>WILCO</title>
+    <script>
+      // Stamp the boot theme on <html> BEFORE the critical CSS below is used, so a
+      // dark-mode user never sees a light frame flash first. Same wilco_theme key
+      // src/App.jsx reads for IS_DARK; default is light, matching the brand.
+      (function(){ try { if (localStorage.getItem("wilco_theme") === "dark") document.documentElement.setAttribute("data-boot-theme","dark"); } catch (e) {} })();
+    </script>
     <!-- Critical inline CSS: the app's real styles are injected by React, so without
          this the page canvas is WHITE until the whole JS bundle parses. Painting the
          night-gym navy + a skeleton here makes the shell appear instantly; React
          replaces #root's children on mount. -->
     <style>
-      html,body{background:#04060c;margin:0}
-      #root{min-height:100vh;background:#04060c}
+      /* Boot chrome is painted BEFORE any JS parses, so it cannot read the palette
+         from App.jsx — these values are hand-synced with CA_LIGHT / CA_DARK there.
+         It shipped hard-coded to the retired dark brand (#04060c ground, #22d3ee
+         wordmark), so on the light brand every cold launch went dark-splash then a
+         dark-boot → light app. Now it reads the same wilco_theme key the app does
+         and defaults to light, so the first frame already matches where it lands. */
+      html,body{background:#EFEFEF;margin:0}
+      #root{min-height:100vh;background:#EFEFEF}
+      html[data-boot-theme="dark"],html[data-boot-theme="dark"] body{background:#04060c}
+      html[data-boot-theme="dark"] #root{background:#04060c}
       .boot{min-height:100vh;padding:calc(env(safe-area-inset-top,0px) + 18px) 16px 16px;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
-      .boot-brand{color:#22d3ee;font-size:22px;font-weight:800;letter-spacing:3px;margin-bottom:14px;animation:bootPulse 1.4s ease-in-out infinite}
-      .boot-bar{border-radius:8px;background:linear-gradient(100deg,#0a1226 40%,#12203f 50%,#0a1226 60%);background-size:200% 100%;animation:bootShimmer 1.5s linear infinite}
+      /* No infinite pulse. The wordmark used to breathe on a 1.4s loop for as long as
+         the bundle took to parse, which on a cold start reads as the screen shuddering
+         for five to ten seconds. It fades in once and then holds still. */
+      .boot-brand{color:#28508B;font-size:22px;font-weight:800;letter-spacing:3px;margin-bottom:14px;animation:bootFade .4s ease-out both}
+      html[data-boot-theme="dark"] .boot-brand{color:#22d3ee}
+      .boot-bar{border-radius:8px;background:linear-gradient(100deg,#E4E4E4 40%,#F3F1EC 50%,#E4E4E4 60%);background-size:200% 100%;animation:bootShimmer 1.5s linear infinite}
+      html[data-boot-theme="dark"] .boot-bar{background:linear-gradient(100deg,#0a1226 40%,#12203f 50%,#0a1226 60%);background-size:200% 100%}
       .boot-pills{display:flex;gap:8px;margin-bottom:22px}
       .boot-pills .boot-bar{height:30px;flex:1;border-radius:9px}
       .boot-msg{max-width:78%;height:64px;margin-bottom:14px;border-radius:15px 15px 15px 4px;border:1px solid rgba(120,150,210,.14)}
@@ -108,7 +127,7 @@
       .boot-splash{min-height:100vh;display:flex;align-items:center;justify-content:center}
       .boot-splash .boot-brand{margin:0}
       @keyframes bootShimmer{to{background-position:-200% 0}}
-      @keyframes bootPulse{0%,100%{opacity:1}50%{opacity:.55}}
+      @keyframes bootFade{from{opacity:0}to{opacity:1}}
     </style>
   </head>
   <body>

@@ -353,6 +353,7 @@ function touchAuthSession(){   // extend the rolling window when the app is fore
 function clearAuthSession(){
   try{ localStorage.removeItem(AUTH_SESSION_KEY); }catch{}
   try{ pruneSnapshots(null); }catch{}
+  try{ clearCrewCache(); }catch{}   // holds crewmates' names and ranks — same shared-phone rule
   CURRENT_AUTH = null;
 }
 
@@ -11764,17 +11765,31 @@ export const buildCrewInvite = (code) => {
   return { title: "Join my crew on WILCO", text: body, full: body };
 };
 
+// Crew is remounted every time MY LOG → Crew is opened, so its load effect refetched
+// the roster, the comparison rows and the moments feed from scratch on each visit —
+// which is why it always sat on a spinner (Will, 08-12). Keep the last good payload
+// in module scope and paint it immediately, then revalidate in the background and
+// swap in the fresh copy. Module scope, not localStorage: this holds other athletes'
+// names and ranks, so it must die with the tab rather than persist on a shared phone.
+// clearCrewCache() is called on logout for the same reason.
+const CREW_CACHE = { key: null, list: null, compare: null, feed: null, at: 0 };
+const CREW_CACHE_MS = 5 * 60 * 1000;
+const crewCacheFresh = (key) => CREW_CACHE.key === key && Date.now() - CREW_CACHE.at < CREW_CACHE_MS;
+export const clearCrewCache = () => { CREW_CACHE.key = null; CREW_CACHE.list = CREW_CACHE.compare = CREW_CACHE.feed = null; CREW_CACHE.at = 0; };
+
 function CrewTab({athlete, demo=false}){
+  const cacheKey = `${demo?"demo":"live"}:${athlete?.id||"anon"}`;
+  const warm = crewCacheFresh(cacheKey);
   const [sub,setSub] = useState("crew");
-  const [loading,setLoading] = useState(true);
+  const [loading,setLoading] = useState(!warm || !CREW_CACHE.list);
   const [err,setErr] = useState("");
-  const [data,setData] = useState(null); // {isOrg, team, code, pending, roster, myGoals, myWeek}
+  const [data,setData] = useState(warm ? CREW_CACHE.list : null); // {isOrg, team, code, pending, roster, myGoals, myWeek}
   const [query,setQuery] = useState("");
   const [codeInput,setCodeInput] = useState("");
   const [requesting,setRequesting] = useState(false);
   const [reqMsg,setReqMsg] = useState("");
   const [sentNudge,setSentNudge] = useState(()=>new Set());
-  const [feed,setFeed] = useState(null);
+  const [feed,setFeed] = useState(warm ? CREW_CACHE.feed : null);
   const [feedLoading,setFeedLoading] = useState(false);
   const [busyId,setBusyId] = useState(null);
   const [copied,setCopied] = useState(false);
@@ -11786,14 +11801,17 @@ function CrewTab({athlete, demo=false}){
   const [goalBusy,setGoalBusy] = useState(null);
   // V2 comparison. Mutual opt-in, individual crews only. Loaded lazily with the
   // roster; an org athlete never has an edge to opt in on, which IS the ban.
-  const [compare,setCompare] = useState({me:null,peers:[]});
+  const [compare,setCompare] = useState(warm && CREW_CACHE.compare ? CREW_CACHE.compare : {me:null,peers:[]});
   const [cmpBusy,setCmpBusy] = useState(null);
   const [infoFor,setInfoFor] = useState(null); // which row's "what is this" panel is open
 
   const loadRoster = ()=>{
-    setLoading(true); setErr("");
+    // Only show the spinner when there is nothing on screen. With a cached paint the
+    // refresh happens silently underneath, which is the whole point of the cache.
+    setLoading(prev => prev || !CREW_CACHE.list); setErr("");
     crewApi("crew-list",{},{demo}).then(d=>{
       setData(d);
+      CREW_CACHE.key = cacheKey; CREW_CACHE.list = d; CREW_CACHE.at = Date.now();
       // Generate the crew code lazily on first open for individual athletes, so
       // it's simply THERE instead of behind a button (Will's review, finding #1:
       // he could not find anywhere to see his code or add someone). Org athletes
@@ -11820,7 +11838,7 @@ function CrewTab({athlete, demo=false}){
       }
     }).catch(e=>setErr(e.message||"Couldn't load your crew.")).finally(()=>setLoading(false));
   };
-  useEffect(()=>{ loadRoster(); loadCompare(); },[]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{ loadRoster(); loadCompare(); },[]); // eslint-disable-line react-hooks/exhaustive-deps -- revalidates behind the cached paint
   // Arrived from someone's invite link. Prefill their code rather than adding
   // anyone automatically: joining a crew is still a thing you choose to do.
   useEffect(()=>{
@@ -11830,10 +11848,13 @@ function CrewTab({athlete, demo=false}){
   },[loading,data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFeed = ()=>{
-    setFeedLoading(true);
-    crewApi("crew-feed",{},{demo}).then(rows=>setFeed(Array.isArray(rows)?rows:[])).catch(()=>setFeed([])).finally(()=>setFeedLoading(false));
+    setFeedLoading(prev => prev || !CREW_CACHE.feed);
+    crewApi("crew-feed",{},{demo}).then(rows=>{
+      const list = Array.isArray(rows)?rows:[];
+      setFeed(list); CREW_CACHE.key = cacheKey; CREW_CACHE.feed = list; CREW_CACHE.at = Date.now();
+    }).catch(()=>setFeed(f=>f||[])).finally(()=>setFeedLoading(false));
   };
-  useEffect(()=>{ if(sub==="moments"&&feed===null) loadFeed(); },[sub]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{ if(sub==="moments") loadFeed(); },[sub]); // eslint-disable-line react-hooks/exhaustive-deps -- cached feed paints first, this refreshes it
 
   const ensureCode = async ()=>{
     try{ const r = await crewApi("crew-code-ensure",{},{demo}); setData(prev=>({...(prev||{}),code:r.code})); }
