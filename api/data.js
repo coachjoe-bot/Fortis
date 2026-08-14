@@ -109,6 +109,11 @@ const READ_OWN_COL = {
   // program_history is athlete data proper: roster-scoped for coaches like workouts.
   program_drafts: "athlete_id",
   program_history: "athlete_id",
+  // Saved Programs library (G8): the coach's OWN rows, like coach_context. An
+  // athlete caller's forced scope (coach_id = their athlete id) matches nothing.
+  // NOTE this list is a FOURTH registration point beyond the three the G8 commit
+  // named — reads die loudly ("Table not readable") without it while writes land.
+  coach_programs: "coach_id",
 };
 
 // Tables read/written by COACH callers scoped to their OWN coach_id (not their
