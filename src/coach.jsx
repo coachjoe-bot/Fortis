@@ -1108,7 +1108,9 @@ function CoachDashboard({coach,onLogout}) {
   // (the per-row ⚠ badge check).
   const painMap = useMemo(()=>{
     const m = new Map();
-    athletes.forEach(a=>m.set(a.id,{anyPain:false,unresolvedPain:false,resolved:(a.resolved_pain||[]).map(x=>x.toLowerCase())}));
+    // Array.isArray, not ||[]: resolved_pain is athlete-writable jsonb, and a
+    // non-array value here crashed the whole coach dashboard (08-11, 4x).
+    athletes.forEach(a=>m.set(a.id,{anyPain:false,unresolvedPain:false,resolved:(Array.isArray(a.resolved_pain)?a.resolved_pain:[]).map(x=>String(x).toLowerCase())}));
     workouts.forEach(w=>{
       const e = m.get(w.athlete_id); if(!e) return;
       const flags = w.parsed_data?.pain_flags;
@@ -3835,7 +3837,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
   // athlete's ALL-TIME lazy-loaded history — hundreds of rows for a 55-session
   // athlete, thousands for a multi-year one. Direct input-latency win in the
   // surface coaches type in most.
-  const resolvedPainAreas = useMemo(()=>(athlete.resolved_pain||[]).map(a=>a.toLowerCase()),[athlete.resolved_pain]);
+  const resolvedPainAreas = useMemo(()=>(Array.isArray(athlete.resolved_pain)?athlete.resolved_pain:[]).map(a=>String(a).toLowerCase()),[athlete.resolved_pain]);
   const hasPain = useMemo(()=>workouts.some(w=>getPD(w).pain_flags?.some(p=>!resolvedPainAreas.includes(p.area.toLowerCase()))),[workouts,resolvedPainAreas]);
   const sessionCount = useMemo(()=>groupIntoSessions(workouts).length,[workouts]);
   const tabs = ["overview","workouts","progress","program"];
