@@ -73,7 +73,6 @@ import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, tourInteractiv
 // Self-hosted OTA bootstrap (App Store build, build plan §1/§3/§6). No-op on
 // web/PWA — isNativeIOS() (imported above) is false there, so this is dormant
 // outside the Capacitor iOS wrapper.
-import { checkForOtaUpdate } from "./nativeOta.js";
 import { nativeBiometricAvailable, nativeBiometricVerify } from "./nativeBiometric.js";
 // Program Builder (Phase C) — lazy like coach.jsx, so the doctrine text + Builder
 // UI download only when the Builder subtab actually opens.
@@ -3753,10 +3752,10 @@ function WilcoRoot() {
   // Install global error reporting once, on mount (before any early return so the
   // hook order stays stable). Captures uncaught errors + unhandled rejections.
   useEffect(()=>{ captureFirstTouch(); installErrorReporting(); installEngagementTracking(); },[]);
-  // Native-only, fire-and-forget: check /app-version.json and stage a newer
-  // single-file bundle for the NEXT launch if one exists. Never awaited, never
-  // blocks first paint — see src/nativeOta.js for the full fallback guarantee.
-  useEffect(()=>{ if(isNativeIOS()) checkForOtaUpdate().catch(()=>{}); },[]);
+  // The OTA freshness check used to live here as a boot effect. Moved to
+  // src/main.jsx (08-14): gated on React mounting, a bundle that crashed before
+  // first render could never stage its own replacement — TestFlight build 5
+  // bricked exactly that way. It now runs before this module is even imported.
   // Native-only (App Store build plan §5 #4): re-arm the badge-increment
   // listener on every launch (not just right after the athlete flips the push
   // toggle — a returning session with push already enabled needs it too), and

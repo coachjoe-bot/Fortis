@@ -101,7 +101,9 @@ test.describe("auto-show after signup + dismissal persistence — iOS Safari UA"
     await page.getByRole("button", { name: "Next →" }).click();
 
     // ── Step 6: height + weight ──
-    await page.getByPlaceholder("5", { exact: true }).fill("5");
+    // The feet field has NO placeholder since S1 (a greyed "5" read as already
+    // filled), so target it by its 3–8 ft range instead.
+    await page.locator('input[min="3"][max="8"]').fill("5");
     await page.getByPlaceholder("e.g. 185").fill("180");
     await page.getByRole("button", { name: "Next →" }).click();
 
@@ -124,11 +126,27 @@ test.describe("auto-show after signup + dismissal persistence — iOS Safari UA"
     await page.getByRole("button", { name: "Next →" }).click();
 
     // ── Consent: adult (18+) -> Terms then Privacy, no parental gate ──
+    // Since S2/S4 the agree box is DISABLED until the document has actually been
+    // scrolled to the end, so each step wheels the doc to the bottom first.
+    const scrollLegalToEnd = async () => {
+      await page.waitForFunction(() => {
+        const scrollers = [...document.querySelectorAll("div")]
+          .filter(d => d.scrollHeight > d.clientHeight + 24 && getComputedStyle(d).overflowY === "auto");
+        for (const d of scrollers) {
+          d.scrollTop = d.scrollHeight;
+          d.dispatchEvent(new Event("scroll"));
+        }
+        const box = document.querySelector('input[type="checkbox"]');
+        return !!box && !box.disabled;
+      });
+    };
     await expect(page.getByText("Terms of Service & Liability Waiver")).toBeVisible();
+    await scrollLegalToEnd();
     await page.getByText("I have read and agree to the Terms & Conditions.").click();
     await page.getByRole("button", { name: "Continue →", exact: true }).click();
 
     await expect(page.getByText("I have read and agree to the Privacy Policy.")).toBeVisible();
+    await scrollLegalToEnd();
     await page.getByText("I have read and agree to the Privacy Policy.").click();
     await page.getByRole("button", { name: "Create Account", exact: true }).click();
 
