@@ -164,7 +164,11 @@ const DRAFTING_LINES = [
   "Final pass, checking the details…",
 ];
 
-export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, workoutHistory = [], onSaveToProgram, onParked }) {
+// saveTarget: "program" (default) applies the finished draft to the athlete's
+// live program behind a line-diff confirm. "library" (coach Programs tab, G8)
+// hands the draft to onSaveToProgram with NO diff gate — a library save
+// replaces nothing, so there is nothing to review against.
+export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null, initialDraft = null, rebuildFrom = null, locked = false, workoutHistory = [], onSaveToProgram, onParked, saveTarget = "program" }) {
   // Individuals get ONE version — the full interview. short/quick are coach
   // tools (draft today's session / a one-week plan fast for a roster).
   const scopes = viewer === "coach" ? ["full", "short", "quick"] : ["full"];
@@ -454,7 +458,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   };
 
   const saveToProgram = async () => {
-    if (busy || !confirmSave) return;
+    if (busy || (saveTarget !== "library" && !confirmSave)) return;
     setBusy(true); setErr("");
     try {
       // The blueprint's timeline rides along so the save can stamp the new
@@ -652,7 +656,9 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       {phase === "saved" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ border: `1px solid ${CA.green}55`, background: `${CA.green}0d`, borderRadius: 12, padding: 16, color: CA.text, fontSize: 13, lineHeight: 1.7 }}>
-            ✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} . It drives every session from here. The old phase is archived under Phases.
+            {saveTarget === "library"
+              ? <>✅ Saved to your library. Put it on any athlete from the <b>Library</b> tab whenever you're ready.</>
+              : <>✅ Saved to {viewer === "coach" ? `${athlete.name}'s program` : "My Program"} . It drives every session from here. The old phase is archived under Phases.</>}
           </div>
           <div>
             <button onClick={resetAll} style={priBtn}>START A NEW PROGRAM</button>
@@ -713,10 +719,14 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
                   // intent explicit.
                   const st = parseTimeline(blueprint?.timeline?.value).start;
                   const future = st && st > todayStr();
-                  return future ? (
+                  return future && saveTarget !== "library" ? (
                     <button onClick={async () => { await park(blueprint, transcript, "draft", draftText); setPhase("scheduled"); }}
                       disabled={busy || !draftText.trim()} style={priBtn}>
                       📅 SCHEDULE FOR {st}
+                    </button>
+                  ) : saveTarget === "library" ? (
+                    <button onClick={saveToProgram} disabled={busy || !draftText.trim()} style={priBtn}>
+                      {busy ? "SAVING…" : "SAVE TO MY LIBRARY"}
                     </button>
                   ) : (
                     <button onClick={() => setConfirmSave(lineDiff(athlete.program_text || "", draftText).filter(x => x.type !== "same" || x.text.trim()))}

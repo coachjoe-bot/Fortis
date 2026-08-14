@@ -671,11 +671,35 @@ async function sbReadPaged(table, order = "created_at.desc", filter = "") {
 }
 
 // ─── COACH DASHBOARD ──────────────────────────────────────────────────────────
-// ─── SAVED PROGRAMS (G8) ──────────────────────────────────────────────────────
-// The coach's own library. Save a program once, put it on any athlete later. Rows
-// are coach-owned; api/data.js forces coach_id scoping on every read and write, so
-// a coach can never see or touch another coach's library.
-function CoachPrograms({coachId, athletes = [], onApplied}) {
+// ─── PROGRAMS TAB (G8 + 08-14) ────────────────────────────────────────────────
+// The coach's program workshop, at TEAM level — Will, 08-14: coaches write
+// programs for teams, not individuals, so Builder / Drafts / Phases live HERE
+// and not inside one athlete's detail view. Four sections:
+//   LIBRARY — saved programs (coach_programs, coach-owned; api/data.js forces
+//             coach_id scoping both ways). Put on any athlete from here.
+//   BUILDER — the same ProgramBuilderPane the athlete has, viewer="coach", but
+//             saveTarget="library": a finished draft lands in the library, not
+//             on anyone's program. The interview still needs ONE athlete's
+//             history/goals as context — the picker above it chooses whose.
+//   DRAFTS  — the coach's parked Builder sessions for the context athlete.
+//   PHASES  — the context athlete's block history (read-only).
+// Applies (library "Put on an athlete", a draft apply) go through applyProgram
+// = the dashboard's saveProgramFor, so the block-history snapshot and
+// parse-at-save ride along exactly like a save from the athlete detail view.
+function CoachPrograms({coachId, athletes = [], workouts = [], onApplied, applyProgram}) {
+  const [sub,setSub] = useState("library");
+  // Builder stays mounted (hidden) once visited — subtab hops must not reset
+  // the interview or kill an in-flight draft (same contract as athlete detail had).
+  const [builderMounted,setBuilderMounted] = useState(false);
+  useEffect(()=>{ if(sub==="builder") setBuilderMounted(true); },[sub]);
+  const [builderDraft,setBuilderDraft] = useState(null);
+  // Context athlete for Builder/Drafts/Phases — those panes are athlete-keyed
+  // (interview numbers, drafts rows, block history). Persisted per coach.
+  const ctxKey = `wilco_coach_progctx_${coachId}`;
+  const [ctxId,setCtxId] = useState(()=>{ try{ return localStorage.getItem(ctxKey)||""; }catch(_){ return ""; } });
+  const ctx = athletes.find(a=>String(a.id)===String(ctxId)) || athletes[0] || null;
+  const pickCtx = (id)=>{ setCtxId(id); setBuilderDraft(null); try{ localStorage.setItem(ctxKey,String(id)); }catch(_){ } };
+
   const [rows,setRows] = useState(null);
   const [err,setErr] = useState("");
   const [busy,setBusy] = useState(null);
@@ -684,6 +708,7 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
   const [saving,setSaving] = useState(false);
   const [applyFor,setApplyFor] = useState(null);   // program id awaiting an athlete pick
   const [confirmDel,setConfirmDel] = useState(null);
+  const [renaming,setRenaming] = useState(null);   // {id, value}
 
   const load = async () => {
     try{ setRows(await sbRead("coach_programs", `?select=*&order=created_at.desc&limit=200`)); }
@@ -700,6 +725,16 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
     setSaving(false);
   };
 
+  // Builder → library. The Builder's own "saved" screen confirms; the row gets a
+  // dated default name (renameable on its Library card) so the save is one tap.
+  const saveDraftToLibrary = async (draftText) => {
+    const t = (draftText||"").trim();
+    if(!t) return;
+    const stamp = new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    await sbInsert("coach_programs",{coach_id:coachId, name:`New program — ${stamp}`, program_text:t, source_athlete_id: ctx?.id||null});
+    await load();
+  };
+
   // Applying overwrites a real athlete's training, so it confirms first and says so.
   const applyTo = async (row, athleteId) => {
     const a = athletes.find(x=>String(x.id)===String(athleteId));
@@ -707,10 +742,18 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
     if(!window.confirm(`Put "${row.name}" on ${a.name}? This replaces the program they have now.`)) return;
     setBusy(row.id); setErr("");
     try{
-      await sbUpdate("athletes", a.id, {program_text: row.program_text});
+      await applyProgram(a.id, row.program_text, {forceNewBlock:true, source:"library"});
       setApplyFor(null);
       if(onApplied) await onApplied();
     }catch(e){ setErr(e.message||"Couldn't apply that program."); }
+    setBusy(null);
+  };
+
+  const rename = async () => {
+    if(!renaming || !renaming.value.trim()) return;
+    setBusy(renaming.id); setErr("");
+    try{ await sbUpdate("coach_programs", renaming.id, {name: renaming.value.trim()}); setRenaming(null); await load(); }
+    catch(e){ setErr(e.message||"Couldn't rename that program."); }
     setBusy(null);
   };
 
@@ -722,14 +765,74 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
   };
 
   const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:14,background:CA.navy2,marginBottom:12};
+  const needsCtx = sub!=="library";
   return (
     <div>
+      {/* Section strip — same shape the athlete detail's program tab used; the
+          three beta panes are one system and keep their badges. */}
+      <div style={{display:"flex",gap:2,borderBottom:`1px solid ${CA.border}`,marginBottom:16}}>
+        {[["library","LIBRARY"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
+          <button key={k} onClick={()=>setSub(k)}
+            style={{padding:"9px 14px",background:"none",border:"none",borderBottom:`2px solid ${sub===k?CA.accent:"transparent"}`,color:sub===k?CA.accent:CA.muted,cursor:"pointer",fontSize:11.5,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'Inter'",transition:"color 0.15s",display:"inline-flex",alignItems:"center",gap:5}}>
+            {label}
+            {k!=="library"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Context picker for the athlete-keyed panes. */}
+      {needsCtx&&(athletes.length ? (
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <span style={{color:CA.muted,fontSize:10.5,letterSpacing:1,fontWeight:600}}>ATHLETE CONTEXT</span>
+          <select value={ctx?.id||""} onChange={e=>pickCtx(e.target.value)} style={{...inpA({}),maxWidth:240}}>
+            {athletes.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <span style={{color:CA.faint,fontSize:11,lineHeight:1.4}}>
+            Joe reads their history and goals while you build. Save the result to your library, then put it on anyone.
+          </span>
+        </div>
+      ) : (
+        <div style={{color:CA.muted,fontSize:13,lineHeight:1.6,marginBottom:14}}>
+          No athletes on your roster yet — the Builder needs at least one for context.
+        </div>
+      ))}
+
+      {/* ── BUILDER ── */}
+      {ctx&&(builderMounted||sub==="builder")&&(
+        <div style={{minHeight:420,display:sub==="builder"?"flex":"none",flexDirection:"column"}}>
+          <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+            <ProgramBuilderPane key={`${ctx.id}-${builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"}`}
+              athlete={ctx} viewer="coach" coachId={coachId} saveTarget="library"
+              workoutHistory={workouts.filter(w=>w.athlete_id===ctx.id)}
+              initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
+              rebuildFrom={builderDraft?.__rebuildFrom||null}
+              onParked={()=>setSub("drafts")}
+              onSaveToProgram={saveDraftToLibrary}/>
+          </Suspense>
+        </div>
+      )}
+
+      {/* ── DRAFTS ── (a draft apply targets the context athlete, behind the
+          pane's own line-diff confirm — that flow is explicit about who.) */}
+      {ctx&&sub==="drafts"&&(
+        <ProgramDraftsPane key={ctx.id} athlete={ctx} viewer="coach"
+          onResume={(d)=>{ setBuilderDraft(d); setSub("builder"); }}
+          onSaveToProgram={(t,tl)=>applyProgram(ctx.id,(t||"").trim(),{forceNewBlock:true,source:"builder",startsAt:tl?.start?`${tl.start}T12:00:00Z`:null,endsAt:tl?.end?`${tl.end}T12:00:00Z`:null})}/>
+      )}
+
+      {/* ── PHASES ── */}
+      {ctx&&sub==="blocks"&&(
+        <ProgramBlocksPane key={ctx.id} athlete={ctx} viewer="coach"/>
+      )}
+
+      {/* ── LIBRARY ── */}
+      {sub==="library"&&(<>
       <div style={{...card}}>
         <div style={{...DISP,fontSize:14,letterSpacing:1.5,color:CA.text,marginBottom:8}}>SAVE A PROGRAM</div>
         <input value={name} onChange={e=>setName(e.target.value)} placeholder="Name it (e.g. Fall Base — Linemen)"
           style={{...inpA({}),marginBottom:8}}/>
         <textarea value={text} onChange={e=>setText(e.target.value)} rows={6}
-          placeholder="Paste or write the program here. Build one in an athlete's Program tab and paste it in to keep it."
+          placeholder="Paste or write the program here. Or build one with Joe in the Builder tab — it saves here."
           style={{...inpA({}),resize:"vertical",lineHeight:1.5}}/>
         <button onClick={save} disabled={!name.trim()||!text.trim()||saving}
           style={btn(name.trim()&&text.trim()&&!saving?CA_BTN:CA.navy3, name.trim()&&text.trim()&&!saving?CA.onAccent:CA.muted,{marginTop:10})}>
@@ -745,13 +848,23 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
       {rows===null&&<div style={{color:CA.muted,fontSize:13}}>Loading...</div>}
       {rows&&rows.length===0&&(
         <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>
-          Nothing saved yet. Build a program in an athlete's Program tab, then paste it above to keep it and reuse it on anyone.
+          Nothing saved yet. Build one with Joe in the Builder tab, or paste one above — then put it on anyone.
         </div>
       )}
       {rows&&rows.map(r=>(
         <div key={r.id} style={card}>
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
-            <span style={{color:CA.text,fontSize:14,fontWeight:700}}>{r.name}</span>
+            {renaming?.id===r.id ? (
+              <>
+                <input value={renaming.value} autoFocus onChange={e=>setRenaming({id:r.id,value:e.target.value})}
+                  onKeyDown={e=>{ if(e.key==="Enter") rename(); if(e.key==="Escape") setRenaming(null); }}
+                  style={{...inpA({}),maxWidth:280,padding:"5px 9px",fontSize:13}}/>
+                <button onClick={rename} disabled={!renaming.value.trim()||busy===r.id} style={btn("transparent",CA.accent,{border:`1px solid ${CA.accent}55`,padding:"5px 10px",fontSize:11.5})}>Save</button>
+                <button onClick={()=>setRenaming(null)} style={{background:"none",border:"none",color:CA.muted,fontSize:11.5,cursor:"pointer"}}>Cancel</button>
+              </>
+            ) : (
+              <span style={{color:CA.text,fontSize:14,fontWeight:700}}>{r.name}</span>
+            )}
             <span style={{marginLeft:"auto",color:CA.faint,fontSize:11}}>{fmtDateShort(r.created_at)}</span>
           </div>
           <div style={{color:CA.muted2,fontSize:12,lineHeight:1.5,whiteSpace:"pre-wrap",maxHeight:96,overflow:"hidden",marginBottom:10}}>
@@ -773,6 +886,9 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
                 {busy===r.id?"Working...":"Put on an athlete"}
               </button>
             )}
+            {renaming?.id!==r.id&&(
+              <button onClick={()=>setRenaming({id:r.id,value:r.name})} style={{background:"none",border:"none",color:CA.muted,fontSize:12,cursor:"pointer"}}>Rename</button>
+            )}
             {confirmDel===r.id ? (
               <>
                 <button onClick={()=>remove(r)} style={btn("transparent",CA.red,{border:`1px solid ${CA.red}55`,padding:"8px 12px",fontSize:12})}>Really delete</button>
@@ -784,6 +900,7 @@ function CoachPrograms({coachId, athletes = [], onApplied}) {
           </div>
         </div>
       ))}
+      </>)}
     </div>
   );
 }
@@ -1010,6 +1127,21 @@ function CoachDashboard({coach,onLogout}) {
     })();
     return ()=>{cancelled=true;};
   },[selected?.id]);
+
+  // The ONE gated program-write for any athlete on this roster: DB write +
+  // Phase B block-history snapshot + in-memory sync + parse-at-save. Lifted out
+  // of the AthleteDetail prop closure (08-14) so the coach Programs tab — the
+  // library's "Put on an athlete" and a draft apply — rides the identical path
+  // instead of a bare sbUpdate that would skip the block snapshot.
+  const saveProgramFor = async (athleteId, text, snapOpts) => {
+    await sbUpdate("athletes", athleteId, {program_text: text});
+    snapshotProgram(athleteId, text, snapOpts?.source||"coach_save", snapOpts||{});
+    setAthletes(prev=>prev.map(a=>a.id===athleteId?{...a,program_text:text}:a));
+    setSelected(prev=>prev&&prev.id===athleteId?{...prev,program_text:text}:prev);
+    parseAndCacheProgram(athleteId, text)
+      .then(row=>{ if(row) setPrescriptions(prev=>[...prev.filter(p=>p.athlete_id!==athleteId),row]); })
+      .catch(e=>console.error("parse-at-save",e));
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -1475,21 +1607,7 @@ function CoachDashboard({coach,onLogout}) {
                         await sbUpdate("program_change_requests",req.id,{status,resolved_at:new Date().toISOString()});
                         setChangeRequests(prev=>prev.filter(r=>r.id!==req.id));
                       }}
-                      onProgramSave={async (text, snapOpts)=>{
-                        await sbUpdate("athletes",selected.id,{program_text:text});
-                        // Program Builder Phase B: block-history snapshot on every
-                        // coach save (edit, merge apply, undo, restore — all land here).
-                        // Builder saves pass snapOpts {forceNewBlock, source, startsAt, endsAt}.
-                        snapshotProgram(selected.id,text,snapOpts?.source||"coach_save",snapOpts||{});
-                        setAthletes(prev=>prev.map(a=>a.id===selected.id?{...a,program_text:text}:a));
-                        setSelected(prev=>({...prev,program_text:text}));
-                        // parse-at-save: the program is gradeable immediately, no
-                        // "not parsed yet" window (fire-and-forget; backfill catches failures)
-                        const aid=selected.id;
-                        parseAndCacheProgram(aid,text)
-                          .then(row=>{ if(row) setPrescriptions(prev=>[...prev.filter(p=>p.athlete_id!==aid),row]); })
-                          .catch(e=>console.error("parse-at-save",e));
-                      }}
+                      onProgramSave={(text, snapOpts)=>saveProgramFor(selected.id, text, snapOpts)}
                       onAthleteDelete={(id)=>{
                         setAthletes(prev=>prev.filter(a=>a.id!==id));
                         // Their pending change requests are gone from the DB now; drop
@@ -1616,7 +1734,7 @@ function CoachDashboard({coach,onLogout}) {
                 coach-owned (coach_id) and reach the DB only through api/data.js,
                 which forces that scoping — see COACH_SELF_SCOPED there. */}
             {activeTab==="programs"&&(
-              <CoachPrograms coachId={coach?.id} athletes={athletes} onApplied={loadAll}/>
+              <CoachPrograms coachId={coach?.id} athletes={athletes} workouts={workouts} onApplied={loadAll} applyProgram={saveProgramFor}/>
             )}
 
             {/* ── SETTINGS TAB (notifications) ── */}
@@ -3676,25 +3794,9 @@ function collapseDiffForDisplay(diff){
 function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveRequest,onProgramSave,onAthleteDelete,onAthletePatched,prefill,onPrefillConsumed,coachContext=[],onLogDecision}) {
   const isMobile = useIsMobile();
   const [tab,setTab] = useState("overview");
-  // Program Builder Phase A: the program tab is itself three subtabs (My Program /
-  // Builder / Drafts). Deep links (staged edits, prefills) land on My Program.
-  const [progTab,setProgTab] = useState("program");
-  // Builder stays mounted (hidden) once visited — subtab hops must not reset
-  // the interview or kill an in-flight draft (same contract as the athlete modal).
-  const [builderMounted,setBuilderMounted] = useState(false);
-  useEffect(()=>{ if(progTab==="builder") setBuilderMounted(true); },[progTab]);
-  // Parked Builder session being resumed from the Drafts subtab (Phase C).
-  const [builderDraft,setBuilderDraft] = useState(null);
-  // Builder/Drafts apply: the same gated path as every other coach save —
-  // notification enqueue, parse-at-save, undo capture, and the Phase B history
-  // snapshot all live behind onProgramSave.
-  const applyBuilderDraft = async (text, tl)=>{
-    setProgramUndo({prev:athlete.program_text||"",at:Date.now()});
-    // A Builder save is always a new block; the blueprint timeline stamps the
-    // block's start (applied_at anchor) and planned end (ends_at).
-    await onProgramSave((text||"").trim(), {forceNewBlock:true, source:"builder", startsAt:tl?.start?`${tl.start}T12:00:00Z`:null, endsAt:tl?.end?`${tl.end}T12:00:00Z`:null});
-    setProgramText((text||"").trim());
-  };
+  // Builder / Drafts / Phases moved OUT of this view to the coach-level
+  // Programs tab (Will, 08-14): coaches write programs for teams, not
+  // individuals. This tab is the athlete's live program only.
   const [programText,setProgramText] = useState(athlete.program_text||"");
   const [programLocked,setProgramLocked] = useState(!!athlete.program_locked);
   const [programSaving,setProgramSaving] = useState(false);
@@ -4027,7 +4129,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               <button onClick={()=>onResolveRequest(r,"applied")}
                 style={{background:CA.green,color:CA.onAccent,border:"none",borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"'Inter'"}}>Looks good ✓</button>
-              <button onClick={()=>{setTab("program");setProgTab("program");}}
+              <button onClick={()=>setTab("program")}
                 style={{background:"transparent",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 13px",fontSize:11.5,fontWeight:700,cursor:"pointer",fontFamily:"'Inter'"}}>View program</button>
               <button onClick={async ()=>{
                   try{
@@ -4378,43 +4480,12 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
           </div>
         )}
 
-        {/* ── PROGRAM TAB ── */}
+        {/* ── PROGRAM TAB ──
+            The athlete's live program only. Builder / Drafts / Phases moved to
+            the coach-level Programs tab (Will, 08-14: programs are written for
+            teams, not inside one athlete's view). */}
         {tab==="program"&&(
           <div>
-            {/* Program Builder Phase A: subtabs. Staged edits + the live editor
-                stay under My Program; Builder is the Phase C slot; Drafts shows
-                the coach's own drafts for this athlete + the block history. */}
-            <div style={{display:"flex",gap:2,borderBottom:`1px solid ${CA.border}`,marginBottom:16}}>
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["drafts","DRAFTS"],["blocks","PHASES"]].map(([k,label])=>(
-                <button key={k} onClick={()=>setProgTab(k)}
-                  style={{padding:"9px 14px",background:"none",border:"none",borderBottom:`2px solid ${progTab===k?CA.accent:"transparent"}`,color:progTab===k?CA.accent:CA.muted,cursor:"pointer",fontSize:11.5,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'Inter'",transition:"color 0.15s",display:"inline-flex",alignItems:"center",gap:5}}>
-                  {label}
-                  {/* Builder / Drafts / Phases are all one beta system. */}
-                  {k!=="program"&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:7.5,letterSpacing:1,color:CA.amber,border:`1px solid ${CA.amber}88`,borderRadius:4,padding:"1px 4px"}}>BETA</span>}
-                </button>
-              ))}
-            </div>
-            {(builderMounted||progTab==="builder")&&(
-              <div style={{minHeight:420,display:progTab==="builder"?"flex":"none",flexDirection:"column"}}>
-                <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
-                  <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="coach" coachId={coachId}
-                    workoutHistory={workouts}
-                    initialDraft={builderDraft&&!builderDraft.__rebuildFrom?builderDraft:null}
-                    rebuildFrom={builderDraft?.__rebuildFrom||null}
-                    onParked={()=>setProgTab("drafts")}
-                    onSaveToProgram={applyBuilderDraft}/>
-                </Suspense>
-              </div>
-            )}
-            {progTab==="drafts"&&(
-              <ProgramDraftsPane athlete={athlete} viewer="coach"
-                onResume={(d)=>{ setBuilderDraft(d); setProgTab("builder"); }}
-                onSaveToProgram={applyBuilderDraft}/>
-            )}
-            {progTab==="blocks"&&(
-              <ProgramBlocksPane athlete={athlete} viewer="coach"/>
-            )}
-            {progTab==="program"&&(<>
             {/* ── Staged program change (request card / brief hand-off) ── */}
             {staged&&(
               <div style={{border:`1px solid ${CA.accent}55`,background:`${CA.accent}0d`,borderRadius:12,padding:14,marginBottom:16}}>
@@ -4541,7 +4612,6 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
               {!programSaved&&programText!==(athlete.program_text||"")&&!programSaving&&!programError&&<div style={{color:CA.muted,fontSize:12}}>Unsaved changes</div>}
               {programError&&<div style={{color:CA.red,fontSize:12,fontWeight:600}}>⚠ {programError}</div>}
             </div>
-            </>)}
           </div>
         )}
       </div>
