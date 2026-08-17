@@ -38,7 +38,7 @@ eq(epley1RM(100, 100), 150, "100-rep set can never mint a 953lb-class 1RM");
 
 // ── toLbs / getExerciseSets ───────────────────────────────────────────────────
 console.log("toLbs / getExerciseSets:");
-approx(toLbs(100, "kg"), 220.5, "kg → lbs at 2.205");
+approx(toLbs(100, "kg"), 220.462, "kg → lbs at LBS_PER_KG (2.20462)");
 eq(toLbs(100, "lbs"), 100, "lbs passthrough");
 {
   const sets = getExerciseSets({ weight: 200, reps: 5, sets: 3 });
@@ -68,7 +68,7 @@ eq(bestE1RMForExercise({
   name: "squat", unit: "lbs",
   set_details: [{ weight: 100, reps: 20 }, { weight: 80, reps: 10 }],
 }), 107, "mixed: 20-rep set dropped, 80x10 → 107");
-approx(bestE1RMForExercise({ name: "bench press", weight: 100, reps: 1, sets: 1, unit: "kg" }), 220.5, "kg single converts, unrounded (epley returns raw weight at reps<=1)");
+approx(bestE1RMForExercise({ name: "bench press", weight: 100, reps: 1, sets: 1, unit: "kg" }), 220.462, "kg single converts, unrounded (epley returns raw weight at reps<=1)");
 // bodyweight + added (pull-up/dip)
 eq(bestE1RMForExercise({ name: "Pull-Ups", unit: "bodyweight", added_weight: 45, reps: 5, sets: 1 }, 180), 263, "pull-up: (180bw + 45 added) x5 → epley(225,5)=263");
 eq(bestE1RMForExercise({ name: "Dips", unit: "bodyweight", reps: 1, sets: 1, assist_weight: 50 }, 180), 130, "dip with 50 assist → 130x1");
@@ -240,7 +240,7 @@ const W = (name, weight, reps, extra = {}) => ({
   const lower = computeGritSnapshot([W("Bench Press", 250, 1)], [{ exercise: "bench press", weight: 200, unit: "lbs" }], opts);
   eq(lower.rankedLifts[0].e1rm, 250, "manual below estimate never drags it down");
   const kg = computeGritSnapshot([], [{ exercise: "bench press", weight: 100, unit: "kg" }], opts);
-  approx(kg.rankedLifts[0].e1rm, 220.5, "manual kg converts to lbs");
+  approx(kg.rankedLifts[0].e1rm, 220.462, "manual kg converts to lbs");
   // Tie between two ids on ONE benchKey: actual wins the dedup.
   const tie = computeGritSnapshot(
     [W("romanian deadlift", 315, 1)],
@@ -305,7 +305,7 @@ console.log("sessionTonnage / sessionTopSet:");
   eq(sessionTonnage([{ name: "Push-ups", sets: 3, reps: 20, unit: "bodyweight" }]), 0, "bodyweight work adds no tonnage");
   eq(sessionTonnage([{ name: "Squat", sets: 3, reps: 5 }]), 0, "no weight logged = no tonnage");
   // kg must convert, or a kg lifter's session reads ~45% lighter than it was.
-  eq(sessionTonnage([{ name: "Squat", sets: 5, reps: 5, weight: 100, unit: "kg" }]), Math.round(100 * 2.205 * 25), "kg converts to lbs-equivalent");
+  eq(sessionTonnage([{ name: "Squat", sets: 5, reps: 5, weight: 100, unit: "kg" }]), Math.round(100 * 2.20462 * 25), "kg converts to lbs-equivalent");
   // Warm-ups: counting the empty bar toward "lbs moved" flatters every session.
   const warmed = { name: "Bench Press", unit: "lbs", set_details: [
     { weight: 45, reps: 10, warmup: true }, { weight: 135, reps: 5, warmup: true },

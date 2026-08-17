@@ -116,7 +116,7 @@ export const getExerciseSets = (ex) => {
 
 // Conversion lives in units.js (T55: single source, one constant). Imported for
 // local use and re-exported because grit.js is where most existing code gets it.
-import { toLbs, toKg, LBS_PER_KG } from "./units.js";
+import { toLbs, toKg, LBS_PER_KG, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 export { toLbs, toKg, LBS_PER_KG };
 
 // Load-bearing bodyweight movements — dips, pull-ups, chin-ups, muscle-ups — where
@@ -576,10 +576,13 @@ const resolveLiftUncached = (rawName, observedName) => {
 // total (bodyweight + added). Returns null when we can't split it (no bodyweight).
 export const bwLoadLabel = (e1rm, bodyweightLbs) => {
   if (!bodyweightLbs || bodyweightLbs <= 0) return null;
+  const du = getDisplayUnit();
+  const stat = (lbs) => roundStat(toDisplay(lbs, "lbs", du), du);
   const added = Math.round(e1rm - bodyweightLbs);
+  const u = du === "kg" ? "kg" : "lbs";
   return added > 0
-    ? `${Math.round(bodyweightLbs)} + ${added} lbs (bodyweight + added)`
-    : `${Math.round(bodyweightLbs)} lbs (bodyweight)`;
+    ? `${stat(bodyweightLbs)} + ${stat(added)} ${u} (bodyweight + added)`
+    : `${stat(bodyweightLbs)} ${u} (bodyweight)`;
 };
 
 // ─── PURE SNAPSHOT COMPUTATION ─────────────────────────────────────────────────

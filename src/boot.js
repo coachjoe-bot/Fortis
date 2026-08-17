@@ -25,6 +25,8 @@
 // part of the running build) and the document's script/preload/stylesheet tags.
 // Either alone would be enough in practice; together they survive a bundler
 // changing how the entry is referenced.
+import { LBS_PER_KG } from "./units.js";
+
 export function runningAssetPaths(doc, moduleUrl) {
   const out = new Set();
   const add = (u) => {
@@ -199,31 +201,39 @@ export function openerEligibleFor(a) {
 //   "@ ___"             -> unchanged
 // Bodyweight ("+25"), rep-only ("3x20") and timed ("3x60s") lines have no "@ N"
 // and pass through untouched.
-export function displayWeights(text) {
+export function displayWeights(text, unit = "lbs") {
   let out = String(text || "");
+  // T55: kg athletes get kg numbers. Program prescriptions are lbs unless a line
+  // says otherwise, so in kg mode every implied-lbs load converts ONCE from the
+  // program's number (working loads round to 2.5 kg — no decimal barbell math).
+  const kg = unit === "kg";
+  const cv = (w) => (kg ? String(Math.round((Number(w) / LBS_PER_KG) / 2.5) * 2.5) : String(w));
+  const u = kg ? "kg" : "lbs";
   // "@ N (source)": a %/RPE source leads; anything else (last time) trails.
   out = out.replace(/@\s*(\d+(?:\.\d+)?)\s*\(([^)]+)\)/g, (_m, w, source) => {
     const s = source.trim();
     const lead = /%/.test(s) || /^(rpe|rir)\b/i.test(s);
-    return lead ? `@ ${s} (${w} lbs)` : `@ ${w} lbs (${s})`;
+    return lead ? `@ ${s} (${cv(w)} ${u})` : `@ ${cv(w)} ${u} (${s})`;
   });
   // A bare "@ N" (program stated the pounds) gets a unit — but never a number that
   // already carries lbs/kg, a following paren, or a % sign (a just-led percentage).
   // The \b after the digits stops the engine backtracking to a PARTIAL number when
   // the lookahead fails (e.g. matching "13" of "135 lbs" and leaving "5 lbs").
-  out = out.replace(/@\s*(\d+(?:\.\d+)?)\b(?!\s*(?:lbs\b|kg\b|%|\())/gi, "@ $1 lbs");
+  out = out.replace(/@\s*(\d+(?:\.\d+)?)\b(?!\s*(?:lbs\b|kg\b|%|\())/gi, (_m, w) => `@ ${cv(w)} ${u}`);
+  // In kg mode, loads the program wrote explicitly as lbs convert too.
+  if (kg) out = out.replace(/@\s*(\d+(?:\.\d+)?)\s*lbs\b/gi, (_m, w) => `@ ${cv(w)} kg`);
   return out;
 }
 
 // Frame the resolved draft as a session to RUN, not a log to type. The draft's
 // first line is the program day label ("Day 5 – Push B"); we weave that into the
 // lead and show the exercises below it. A lapsed athlete still gets the nudge.
-export function buildTodayOpener({ name, dAgo, draft }) {
+export function buildTodayOpener({ name, dAgo, draft, unit = "lbs" }) {
   const d = String(draft || "").trim();
   if (!d) return "";
   const nl = d.indexOf("\n");
   const dayLabel = (nl >= 0 ? d.slice(0, nl) : d).trim();
-  const body = displayWeights((nl >= 0 ? d.slice(nl + 1) : "").trim());
+  const body = displayWeights((nl >= 0 ? d.slice(nl + 1) : "").trim(), unit);
   const label = dayLabel ? ` — ${dayLabel}` : "";
   const lead = (dAgo != null && dAgo >= 4)
     ? `${name}. ${dAgo} days since your last log — let's get back on it. Here's today${label}:`

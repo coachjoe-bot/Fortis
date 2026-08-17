@@ -66,6 +66,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
+import { fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -1260,8 +1261,21 @@ const withSetMods = (ex, base, hasWeight=false, warmupCount=0) => {
 // ("225/225/225" → "225") so uniform sets read cleanly; ramps still show each weight.
 const joinWeights = (arr) => arr.every(x=>x===arr[0]) ? String(arr[0]) : arr.join("/");
 
-export const formatSetDetails = (ex) => {
+export const formatSetDetails = (ex, {display=false} = {}) => {
   if(!ex) return "—";
+  // display:true = athlete-facing UI → convert this row into the display unit
+  // (raw pair → one conversion). Default (AI context, corrections) stays RAW with
+  // per-row labels so the model and the log-correction flow see what was typed.
+  if(display && ex.unit!=="bodyweight"){
+    const du = getDisplayUnit();
+    if((ex.unit==="kg"?"kg":"lbs")!==du){
+      const cv = (w)=> (w||w===0) ? roundStat(toDisplay(w, ex.unit, du), du) : w;
+      ex = {...ex, unit:du, weight:cv(ex.weight),
+        added_weight: ex.added_weight!=null?cv(ex.added_weight):ex.added_weight,
+        assist_weight: ex.assist_weight!=null?cv(ex.assist_weight):ex.assist_weight,
+        set_details: Array.isArray(ex.set_details)?ex.set_details.map(x=>({...x,weight:x.weight!=null?cv(x.weight):x.weight})):ex.set_details};
+    }
+  }
   const allSets = getExerciseSets(ex);
   const nSets = ex.sets || allSets.length || 1;
   // Time-based holds (planks, dead hangs, timed carries): sets × duration, no weight.
@@ -1298,15 +1312,18 @@ export const formatSetDetails = (ex) => {
   return withSetMods(ex, base, hasWeight, warmupCount);
 };
 
-// Format weight with correct unit label. Falls back to "lbs" for legacy data.
+// Format a raw stored (weight, unit) pair in the ATHLETE'S DISPLAY UNIT (T55).
+// This used to echo whatever unit the row carried, which is how "110kg" leaked
+// into an all-lbs experience (NEW MAX overlay, My Log, chat copy). Conversion is
+// one step from the raw pair, so lbs↔kg round trips never re-round.
 export const fmtWeight = (weight, unit) => {
   if(!weight) return "—";
-  const u = unit==="kg" ? "kg" : "lbs";
-  return `${weight}${u}`;
+  return fmtWeightIn(weight, unit);
 };
 
 // Normalize any weight to lbs-equivalent for cross-unit comparison.
-export const toLbs = (weight, unit) => (unit==="kg" ? weight*2.205 : weight);
+// T55: conversion is single-sourced in units.js; re-exported for legacy importers.
+export { toLbs } from "./units.js";
 
 // Crew PR moments only fire on a TIER change (a rank-up), never every PR (build
 // spec §8) — same tier ladder the Benchmarks power cells use (BENCH_THRESHOLDS/
@@ -5548,6 +5565,11 @@ function planOpener(a, snapshot){
 // ─── ATHLETE VIEW ─────────────────────────────────────────────────────────────
 function AthleteView({athlete: initialAthlete, onLogout}) {
   const [athlete,setAthlete] = useState(initialAthlete);
+  // T55: the Settings unit choice used to be a write-only column — persisted,
+  // read by NOTHING. Setting the registry during render (idempotent) means every
+  // formatter sees the athlete's unit from the first paint, and a toggle flip
+  // re-renders straight into the other unit.
+  setDisplayUnit(athlete.weight_unit||"lbs");
   // WARM REOPEN. The boot batch below is five gateway round-trips before the
   // header count, the week strip, MY LOG and the Proof tab have anything in them —
   // on gym cellular with cold functions that's 1-3s of shimmer on EVERY reopen,
@@ -6571,6 +6593,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
                 name: openerAthlete.name,
                 dAgo: lastLog ? daysBetween(lastLog.created_at) : null,
                 draft: res.draft,
+                unit: openerAthlete.weight_unit==="kg" ? "kg" : "lbs",
               });
               openerSave(openerAthlete.id, opener);
               // Prime the Quick Log sheet with the same session so it opens instantly.
@@ -7059,7 +7082,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // the same lift — a flagged lift is excluded from newPRs above.
       if(suspectJumps.length){
         const lines = suspectJumps.map(j=>
-          `${j.exercise} at ${fmtWeight(j.weight,j.unit)}${j.reps>1?` x${j.reps}`:""}, when your best on record is ${j.knownBest} lbs`
+          `${j.exercise} at ${fmtWeight(j.weight,j.unit)}${j.reps>1?` x${j.reps}`:""}, when your best on record is ${displayStat(j.knownBest)} ${unitLabel()}`
         ).join("\n");
         const one = suspectJumps.length===1;
         setTimeout(()=>setMessages(prev=>[...prev,{role:"assistant",content:
@@ -10257,7 +10280,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                       </div>
                       {(tonnage>0||topSet)&&(
                         <div style={{display:"flex",flexWrap:"wrap",gap:"2px 8px",justifyContent:"flex-end",marginTop:-4,marginBottom:8,color:CA.muted,fontSize:11,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>
-                          {tonnage>0&&<span>{tonnage.toLocaleString()} lbs</span>}
+                          {tonnage>0&&<span>{displayStat(tonnage).toLocaleString()} {unitLabel()}</span>}
                           {tonnage>0&&topSet&&<span style={{color:CA.faint}}>·</span>}
                           {topSet&&<span>top: {topSet.name} {fmtWeight(topSet.weight,topSet.unit)}×{topSet.reps}</span>}
                         </div>
@@ -10282,7 +10305,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                             {allExercises.map((e,j)=>(
                               <tr key={j}>
                                 <td style={{color:CA.text,fontWeight:600,padding:"5px 8px 5px 0",verticalAlign:"top"}}>{e.name}</td>
-                                <td style={{color:CA.muted2,padding:"5px 8px 5px 0",verticalAlign:"top"}}>{formatSetDetails(e)}</td>
+                                <td style={{color:CA.muted2,padding:"5px 8px 5px 0",verticalAlign:"top"}}>{formatSetDetails(e,{display:true})}</td>
                                 <td style={{color:e.feel==="easy"?CA.blue:e.feel==="hard"?CA.red:CA.muted,padding:"5px 0",verticalAlign:"top"}}>{e.feel||"—"}</td>
                               </tr>
                             ))}
@@ -11278,7 +11301,9 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
   const saveManual = async (row) => {
     const w = parseFloat(editVal);
     if(!w||w<=0) return;
-    const unit = row.unit==="kg"?"kg":"lbs";
+    // T55: the input's placeholder promises the DISPLAY unit, so store the typed
+    // number tagged with that unit (raw pair in, raw pair stored — lossless).
+    const unit = getDisplayUnit();
     setManualMsg("");
     try {
       if(row.manual){
@@ -11437,7 +11462,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                         ⬆ RANK UP
                       </button>
                     )}
-                    <span style={{marginLeft:"auto",...DISP,fontSize:16,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{Math.round(b.e1rm)}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small></span>
+                    <span style={{marginLeft:"auto",...DISP,fontSize:16,color:CA.led,fontVariantNumeric:"tabular-nums"}}>{displayStat(b.e1rm)}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>{unitLabel()}</small></span>
                   </div>
                   {IS_DARK ? (
                   <div className="htube">
@@ -11523,12 +11548,12 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                     <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:2}}>BEST EST. 1RM</div>
                     {/* e1rm is always a lbs-equivalent (toLbs in grit) — a kg logger's 100kg
                         bench used to read "221 kg" (A19). Always label lbs, like Benchmarks. */}
-                    <div style={{...DISP,fontSize:28,color:CA.accent,lineHeight:1}}>{Math.round(ex.e1rm)}<span style={{fontSize:11,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>lbs</span></div>
+                    <div style={{...DISP,fontSize:28,color:CA.accent,lineHeight:1}}>{displayStat(ex.e1rm)}<span style={{fontSize:11,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>{unitLabel()}</span></div>
                     {ex.bwLoaded&&bwLoadLabel(ex.e1rm,bodyweight)&&<div style={{color:CA.muted,fontSize:10,marginTop:3}}>{bwLoadLabel(ex.e1rm,bodyweight)}</div>}
                   </div>
                 </div>
                 {ex.entries.length>=2?(
-                  <LineChart data={ex.entries.map(e=>({label:fmtDateShort(e.date),y:e.e1rm}))} color={CA.cyan} palette={CA} unit="lbs"/>
+                  <LineChart data={ex.entries.map(e=>({label:fmtDateShort(e.date),y:displayStat(e.e1rm)}))} color={CA.cyan} palette={CA} unit={unitLabel()}/>
                 ):(
                   <div style={{background:CA.navy3,borderRadius:8,padding:"8px 12px",fontSize:12,color:CA.muted2}}>Log again to see a trend.</div>
                 )}
@@ -11580,15 +11605,15 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                   </div>
                   <div style={{textAlign:"right"}}>
                     {/* row.active is lbs-converted (toLbs) — always label lbs (A19) */}
-                    <div style={{...DISP,fontSize:28,color:CA.accent,lineHeight:1}}>{Math.round(row.active)}<span style={{fontSize:11,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>lbs</span></div>
+                    <div style={{...DISP,fontSize:28,color:CA.accent,lineHeight:1}}>{displayStat(row.active)}<span style={{fontSize:11,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>{unitLabel()}</span></div>
                     {row.bwLoaded&&bwLoadLabel(row.active,bodyweight)&&<div style={{color:CA.muted,fontSize:10,marginTop:2}}>{bwLoadLabel(row.active,bodyweight)}</div>}
-                    {row.manual&&row.estimated>0&&<div style={{color:CA.muted,fontSize:10,marginTop:2}}>est. {Math.round(row.estimated)}lbs</div>}
+                    {row.manual&&row.estimated>0&&<div style={{color:CA.muted,fontSize:10,marginTop:2}}>est. {displayStat(row.estimated)}{unitLabel()}</div>}
                   </div>
                 </div>
                 {editingKey===row.key?(
                   <div style={{marginTop:10}}>
                     <div style={{display:"flex",gap:8}}>
-                      <input autoFocus type="number" min={0} value={editVal} onChange={e=>setEditVal(e.target.value)} placeholder={`Actual 1RM (${row.unit==="kg"?"kg":"lbs"})`} style={inpA({padding:"8px 10px",fontSize:13,flex:1})}/>
+                      <input autoFocus type="number" min={0} value={editVal} onChange={e=>setEditVal(e.target.value)} placeholder={`Actual 1RM (${unitLabel()})`} style={inpA({padding:"8px 10px",fontSize:13,flex:1})}/>
                       <button onClick={()=>saveManual(row)} style={{background:CA.accent,border:"none",color:CA.navy,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:13,fontWeight:700}}>Save</button>
                       <button onClick={()=>{setEditingKey(null);setEditVal("");setManualMsg("");}} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:13}}>Cancel</button>
                     </div>
@@ -11703,7 +11728,7 @@ function momentSkin(m){
 // separately (in Bebas, on the card head), so these never repeat it.
 function momentBody(m){
   const p = m.payload||{};
-  if(m.type==="pr") return `${p.lift||"A lift"} is ${p.tier||"a new tier"} now${p.weight?` · ${p.weight}${p.unit||"lbs"}`:""}`;
+  if(m.type==="pr") return `${p.lift||"A lift"} is ${p.tier||"a new tier"} now${p.weight?` · ${fmtWeightIn(p.weight,p.unit||"lbs")}`:""}`;
   if(m.type==="week") return `Went ${p.done ?? "?"} for ${p.target ?? "?"} this week`;
   if(m.type==="milestone") return `Logged workout #${p.count ?? "?"}`;
   if(m.type==="goal") return `Hit their goal · ${p.goalText||p.lift||""}`;
@@ -11767,7 +11792,7 @@ function GoalGlance({goal, compact=false}){
               <span style={{fontSize:12.5,fontWeight:600,color:ink}}>{prettyLift(t.lift)}</span>
               {hit&&<span style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,fontWeight:700,letterSpacing:0.8,color:CA.green,border:`1px solid ${CA.green}`,borderRadius:4,padding:"1px 6px"}}>HIT IT</span>}
               <span style={{marginLeft:"auto",...DISP,fontSize:15,color:quiet?CA.muted:CA.led,fontVariantNumeric:"tabular-nums"}}>
-                {quiet?cur:tgt}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>lbs</small>
+                {displayStat(quiet?cur:tgt)}<small style={{fontFamily:"'Inter'",fontSize:9,color:CA.muted,marginLeft:2}}>{unitLabel()}</small>
               </span>
             </div>
             {!quiet&&(
@@ -12553,7 +12578,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
     const v = coachName.trim();
     if((v||null)!==(athlete.coach_name||null)) persistField({coach_name:v||null});
   };
-  const setUnit = (u) => { setWeightUnit(u); if(u!==(athlete.weight_unit||"lbs")) persistField({weight_unit:u}); };
+  const setUnit = (u) => { setWeightUnit(u); setDisplayUnit(u); if(u!==(athlete.weight_unit||"lbs")) persistField({weight_unit:u}); };
 
   // ── Proof Feed schedule (Phase 6) ──────────────────────────────────────────
   const [proofEnabled,setProofEnabled] = useState(athlete.proof_enabled!==false);
