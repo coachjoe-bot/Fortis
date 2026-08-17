@@ -248,7 +248,7 @@ console.log("digestWorkouts:");
     { created_at: "2026-07-03T18:00:00Z", parsed_data: { exercises: [{ name: "Back Squat", sets: 5, reps: 5, weight: 225 }, { name: "Pull-Up", sets: 3, reps: 10, weight: null }] } },
     { created_at: "2026-07-04T18:00:00Z", parsed_data: {} },
   ]);
-  ok(/2026-07-03: Back Squat 5x5 @225, Pull-Up 3x10/.test(d), `session line formatted (got "${d}")`);
+  ok(/2026-07-03: Back Squat 5x5 @225lbs, Pull-Up 3x10/.test(d), `session line formatted, lbs labeled (T55: kg AND lbs both carry labels now) (got "${d}")`);
   ok(!/2026-07-04/.test(d), "empty session omitted");
   ok(digestWorkouts([]) === "" && digestWorkouts(null) === "", "empty/garbage input → empty digest");
 }
