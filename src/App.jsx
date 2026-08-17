@@ -65,6 +65,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 // Coach change-request drafting/filing — single source of truth for the rule set
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
+import { FEATURE_INVENTORY } from "./features.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -1374,6 +1375,39 @@ export const askClaude = async (system, user, maxTokens=600, images=[], model="c
   try{ d = await r.json(); }
   catch(_){ throw new Error(`AI unavailable (${r.status})`); }
   if(d.error) throw new Error(typeof d.error==="string"?d.error:d.error.message);
+  const text = d.content?.[0]?.text||"";
+  AI_META.stopReason = d.stop_reason||null;
+  // T55: a max_tokens clip used to persist as a mid-sentence reply — stop_reason was
+  // read NOWHERE in the app. One automatic continuation (assistant prefill, so it
+  // works for prose and clipped JSON alike) finishes the thought. Never recurses.
+  if(d.stop_reason==="max_tokens" && text.trim()){
+    try{
+      const more = await aiContinue({model,maxTokens,sysDynamic,sysCached,content,partial:text,feature});
+      if(more) return text.trimEnd()+more;
+    }catch(_){/* keep the partial — same behavior as before, just detected */}
+  }
+  return text;
+};
+
+// Last call's terminal state, readable by any caller that wants to know whether the
+// reply it just got was clipped ("max_tokens") or finished clean ("end_turn").
+export const AI_META = { stopReason:null };
+
+// One continuation round: re-send the same request with the partial reply as an
+// assistant prefill; Anthropic continues from the exact cut. Shared by askClaude
+// and askClaudeStream so truncation handling lives in ONE place.
+const aiContinue = async ({model,maxTokens,sysDynamic,sysCached,content,partial,feature}) => {
+  const r = await fetch("/api/claude",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({auth:CURRENT_AUTH,model,max_tokens:maxTokens,system:sysDynamic,...(sysCached?{system_cached:sysCached}:{}),
+      messages:[{role:"user",content},{role:"assistant",content:partial.trimEnd()}],feature})
+  });
+  const ct = r.headers.get("content-type")||"";
+  if(!ct.includes("application/json")) return "";
+  const d = await r.json().catch(()=>null);
+  if(!d || d.error) return "";
+  AI_META.stopReason = d.stop_reason||null;
   return d.content?.[0]?.text||"";
 };
 
@@ -1401,6 +1435,7 @@ export const askClaudeStream = async (system, user, {maxTokens=600, model="claud
   if(!r.ok || !r.body) throw new Error(`stream failed (${r.status})`);
   const reader = r.body.getReader();
   const decoder = new TextDecoder();
+  AI_META.stopReason = null;
   let buf="", full="";
   for(;;){
     const {done,value} = await reader.read();
@@ -1416,9 +1451,18 @@ export const askClaudeStream = async (system, user, {maxTokens=600, model="claud
       if(evLine && evLine.includes("error")) throw new Error("stream_interrupted");
       let obj; try{ obj=JSON.parse(dataLine.slice(5).trim()); }catch{ continue; }
       if(obj && typeof obj.text==="string" && obj.text){ full+=obj.text; if(onDelta) onDelta(obj.text); }
+      if(obj && obj.stop_reason) AI_META.stopReason = obj.stop_reason;
     }
   }
   if(!full.trim()) throw new Error("empty stream");
+  // T55: clipped stream → one non-streaming continuation, appended through the same
+  // onDelta path so the UI renders it as part of the same reply.
+  if(AI_META.stopReason==="max_tokens"){
+    try{
+      const more = await aiContinue({model,maxTokens,sysDynamic,sysCached,content,partial:full,feature});
+      if(more){ full = full.trimEnd()+more; if(onDelta) onDelta(more); }
+    }catch(_){/* keep the partial */}
+  }
   return full;
 };
 
@@ -1679,12 +1723,14 @@ BANNED PHRASES:
 
 LOGGING IS AUTOMATIC: The app parses and saves every workout the athlete types, the logging happens on its own, and you never need "backend" or "account" access to record anything. NEVER tell the athlete you can't log something, that logging is "handled on the backend," or to contact whoever manages their account. If they say "log this," "make sure to log this," or "record this," they're just sharing the workout, acknowledge it and coach the numbers. Only decline things that are genuinely outside coaching (billing, account changes), never the workout itself.
 
+${FEATURE_INVENTORY}
+
 LOG CORRECTIONS: When the athlete says a PAST logged number was a mistake (mistype, misclick, wrong weight or reps, duplicate entry), the app pulls up the exact entry and shows them a confirm button to apply the fix, including recalculating any PRs or maxes the bad number created. This rule has TWO states and you must tell them apart by reading the transcript.
 BEFORE the athlete taps: your job is only to acknowledge briefly and point them to that confirmation ("Pulled it up, tap Apply fix below and I'll set the record straight."). Do not claim the log is already fixed and do not say you changed a number yourself, because at that point nothing has been written yet.
 AFTER the athlete taps: the transcript will contain a line from you beginning "Done, log corrected." That line is the app's record that the correction WAS written to the database. From then on it is a fact, so confirm it plainly if they ask ("Yeah, that one's gone, I pulled it and reset the max it created."). NEVER deny it, never say you lack the ability to change or remove logs, and never say you cannot confirm whether it happened. You DO have a log-correction tool and you just used it. Denying your own completed correction is the single worst answer you can give here, because it makes the athlete distrust their own training data.
 Either way, never treat the corrected number as a brand-new workout or PR.
 
-FOR NORMAL WORKOUT LOGS respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." -- then one specific observation. That's it.
+FOR WORKOUT LOGS (PR days included) respond with one of: "Good work." / "Solid session." / "Numbers are moving." / "Nice." (a new PR earns the Atta boy and the number) -- then ONE specific observation, then AT MOST one question, and only if the answer would change what you program next. Never answer a log with a list of questions or a multi-part breakdown; two short paragraphs is the ceiling. An athlete who just trained will not read a wall of text -- brevity is what gets read.
 
 WEIGHT vs TARGET: how to judge a load against what was programmed. Get this right before you comment on ANY weight:
 1. ROUND THE TARGET FIRST. A target you worked out from a percentage is an estimate, not a number to hit on the nose, barbells load in 5 lb steps and nobody owns 1 lb plates. Round every calculated target to the NEAREST 5 lbs before you compare or quote it. Never say "your 228lb target"; that target is 230.
@@ -1705,9 +1751,12 @@ RESERVED (only when situation genuinely matches):
 
 FORMATTING: PLAIN TEXT only -- no markdown (no **bold**, no # headers, no bullet asterisks). The chat UI does not render markdown, so any asterisks or hashes show up as literal characters on screen. Use plain sentences and numbered lists (1. 2. 3.) for structure instead. Never use an em dash (—); use a comma, colon, period, or parentheses instead.
 Use numbered lists for exercises/alternatives/steps. Never paragraph format for exercise lists.
-Match length to the question: a sentence or two for logs and simple asks; go longer only for genuinely technical or programming questions that need the detail. Thorough, never padded. Never cut off mid-thought; if you're running long, tighten the wording but finish the point. Use their name once naturally.
-Pain → suggest alternatives, and if they have a coach, support the app's offer to send that coach a structured change request (never tell them to email about it). Equipment unavailable → 2-3 specific alternatives, same coach-request offer if it keeps blocking a locked program.
-Locked program → you can't edit it yourself, but you can draft the request their coach reviews. Out of scope (billing, account access): "That's one for Coach Joe directly -- email support@trainwilco.com."
+Match length to the question: a sentence or two for logs and simple asks; go longer only for genuinely technical or programming questions that need the detail. Thorough, never padded. Ask AT MOST ONE question per reply, in any context -- if several things are unclear, ask only the one that matters most and let the rest wait. Never cut off mid-thought; if you're running long, tighten the wording but finish the point. Use their name once naturally.
+Pain → suggest alternatives and coach the safety side first. PROGRAM CHANGES route by the ACCOUNT FACTS line in the session context, never by assumption:
+- PROGRAM LOCKED: yes → you can't edit it yourself, but you can draft the request their coach reviews (the app offers to send it; never tell them to email about it).
+- PROGRAM LOCKED: no → the athlete owns their program. Offer to make the change together right here, or point them at Program > Builder for a bigger rework. NEVER route an unlocked athlete to a coach request, even if a coach is linked; at most mention they can loop the coach in if they want.
+- No ACCOUNT FACTS line in the context → treat the program as unlocked and offer the direct change; skip coach requests entirely.
+Equipment unavailable → 2-3 specific alternatives; only a LOCKED program blocked by equipment earns the coach-request offer. Out of scope (billing, account access): "That's one for Coach Joe directly -- email support@trainwilco.com."
 
 DIET, NUTRITION, SUPPLEMENTS: these are outside your scope of practice, and you say so FIRST, before anything else, every single time one comes up (meal plans, macros, calorie targets, cutting or bulking, fasting, supplements and doses). One short plain sentence in your own voice, e.g. "Straight up, nutrition is outside what I do as your strength coach, so take this as general info and run anything real past a dietitian." Then answer as you normally would. The warning is not optional and it is not a refusal: lead with it, then help. If the athlete is under 18 and the question is about losing weight, eating less, or cutting, also tell them to loop in a parent, guardian, or their athletic trainer before changing how they eat.
 
@@ -1886,7 +1935,9 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
   const sys = `TODAY'S DATE: ${todayStr}, ${timeStr}
 Athlete: ${athlete.name}, Sport: ${athlete.sport}${athlete.level?", Level: "+athlete.level:""}
 GOAL: ${JOEBOT_GOALS[athlete.goal||"strength"] || JOEBOT_GOALS.strength}
-SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
+SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}
+ACCOUNT FACTS: coach linked: ${athlete.coach_id?"yes":"no"} · program locked: ${athlete.program_locked?"yes":"no"} · display unit: ${athlete.weight_unit==="kg"?"kg":"lbs"}
+${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you say in kg (logged data below may carry lbs labels — convert exactly, 1 kg = 2.20462 lbs, and round working weights to 2.5 kg).":"This athlete works in LBS. If logged data below carries a kg label, that lift was performed in kg — convert to lbs when you talk about it (1 kg = 2.20462 lbs)."}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
 
   let goalsContext = "";
   if(athleteGoals?.length>0){
@@ -5905,6 +5956,30 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [athleteProgramMsg,setAthleteProgramMsg] = useState("");
   const [athletePhotoProcessing,setAthletePhotoProcessing] = useState(false);
   const bottomRef = useRef(null);
+  // ── T55 chat scroll system ──────────────────────────────────────────────────
+  // The old behavior was one unguarded bottomRef.scrollIntoView on every messages
+  // change: ~60x/s during streaming, it dragged the reader down faster than they
+  // could read, and scrollIntoView walks scrollable ANCESTORS — it scrolled the
+  // document too, sliding the header off-screen on iOS (the "vanishing header").
+  // New rules, all on the chat list container only (the document never moves):
+  //   • your own message sends → jump to bottom so you see it land
+  //   • a reply STARTS → its top is brought into view once, then following STOPS:
+  //     the reader stays at the top of the text and scrolls at their own pace
+  //   • mid-stream, following resumes only if the reader returns to the bottom
+  const chatListRef = useRef(null);
+  const chatPinnedRef = useRef(true);   // is the reader at the bottom right now?
+  const progScrollRef = useRef(0);      // timestamp of our own programmatic scrolls
+  const prevMsgCountRef = useRef(0);
+  const scrollChatBottom = () => {
+    const el = chatListRef.current; if(!el) return;
+    progScrollRef.current = Date.now();
+    el.scrollTop = el.scrollHeight;
+  };
+  const onChatScroll = () => {
+    const el = chatListRef.current; if(!el) return;
+    if(Date.now()-progScrollRef.current < 150) return;  // our scroll, not the reader's
+    chatPinnedRef.current = (el.scrollHeight - el.scrollTop - el.clientHeight) < 60;
+  };
   const videoInputRef = useRef(null);
   const athletePhotoRef = useRef(null);
   const isMobile = useIsMobile();
@@ -6223,9 +6298,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setAthletePhotoProcessing(false);
   };
 
-  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[messages,loading,videoLoading]);
+  useEffect(()=>{
+    const count = messages.length;
+    const grew = count > prevMsgCountRef.current;
+    prevMsgCountRef.current = count;
+    const last = messages[count-1];
+    if(grew && last?.role==="user"){ chatPinnedRef.current = true; scrollChatBottom(); return; }
+    if(grew && last?.role==="assistant"){
+      // Reply starts: show its top (it's one line tall right now, so bottom == its
+      // top), then stop following. The reader owns the scroll from here.
+      scrollChatBottom();
+      chatPinnedRef.current = false;
+      return;
+    }
+    if(chatPinnedRef.current) scrollChatBottom();
+  },[messages,loading,videoLoading]);
   // Tour's scripted bubbles land below the real transcript — keep them in view.
-  useEffect(()=>{if(tourChat.length||tourTyping)bottomRef.current?.scrollIntoView({behavior:"smooth"});},[tourChat,tourTyping]);
+  useEffect(()=>{if(tourChat.length||tourTyping)scrollChatBottom();},[tourChat,tourTyping]);
 
   // Persist the day's transcript — debounced. This effect used to stringify and
   // write the FULL transcript on every messages change, i.e. once per streamed
@@ -6943,25 +7032,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           const topPR=[...newPRs].sort((a,b)=>b.diff-a.diff)[0];
           if(topPR){ setPrStamp({exercise:topPR.exercise,weight:topPR.weight,unit:topPR.unit}); prStampClearsAt = Date.now()+2600; setTimeout(()=>setPrStamp(null),2600); }
         }
-        try {
-          const prCallout = newPRs.map(pr=>pr.isActual1RM
-            ? `${pr.exercise}: NEW ACTUAL 1RM ${fmtWeight(pr.weight,pr.unit)} (+${Math.round(pr.diff)}lbs-equiv over prev)`
-            : `${pr.exercise}: ${fmtWeight(pr.weight,pr.unit)} x${pr.reps} reps (est. 1RM: ${Math.round(pr.e1rm)}lbs-equiv, +${Math.round(pr.diff)}lbs-equiv over prev)`
-          ).join("\n");
-          const propagationNote = propagationLog.length>0 ? `\n\nI've updated your future ${propagationLog.map(l=>l.split(":")[0]).join(", ")} targets based on your new max.` : "";
-          const prReply = await askClaude(
-            "You are Coach Joe Thomas. An athlete just hit a new PR. Acknowledge it directly -- short, punchy, in Coach Joe's voice. Atta boy/girl is appropriate here.",
-            `Athlete: ${updatedAthlete.name} (${updatedAthlete.sport})\nNew PRs:\n${prCallout}`,150,[],"claude-sonnet-5","pr_ack"
-          );
-          haptic(60); // one strong buzz, synced to the PR congrats message
-          setMessages(prev=>[...prev,{role:"assistant",content:prReply+propagationNote}]);
-        } catch(e){
-          const propagationNote = propagationLog.length>0 ? `\n\nUpdated your future ${propagationLog.map(l=>l.split(":")[0]).join(", ")} targets based on your new max.` : "";
-          haptic(60); // one strong buzz, synced to the PR congrats message
-          setMessages(prev=>[...prev,{role:"assistant",content:newPRs.map(pr=>pr.isActual1RM
-            ? `New ACTUAL 1RM -- ${pr.exercise} at ${fmtWeight(pr.weight,pr.unit)}. +${Math.round(pr.diff)}lbs-equiv over previous best. That's what the work is for.`
-            : `New PR -- ${pr.exercise} at ${fmtWeight(pr.weight,pr.unit)} x${pr.reps} (est. 1RM: ${Math.round(pr.e1rm)}lbs-equiv). +${Math.round(pr.diff)}lbs-equiv over previous best. That's what the work is for.`
-          ).join("\n")+propagationNote}]);
+        // T55: no second "Atta boy" bubble. The main coaching reply (already on
+        // screen — finalizeWorkout runs after it settles) acknowledges the PR
+        // itself, so the old pr_ack call meant every PR of ANY size produced two
+        // back-to-back congratulations, and its 150-token cap clipped mid-sentence
+        // ("That's how you"). The NEW MAX stamp + haptic remain the celebration.
+        // The only text still owed is the propagation note — appended to the
+        // coaching reply, not posted as its own message.
+        haptic(60); // one strong buzz, synced to the NEW MAX stamp
+        if(propagationLog.length>0){
+          const propagationNote = `I've updated your future ${propagationLog.map(l=>l.split(":")[0]).join(", ")} targets based on your new max.`;
+          setMessages(prev=>{
+            const u=[...prev];
+            for(let i=u.length-1;i>=0;i--){
+              if(u[i].role==="assistant"){ u[i]={...u[i],content:(u[i].content||"")+"\n\n"+propagationNote}; return u; }
+            }
+            return [...u,{role:"assistant",content:propagationNote}];
+          });
         }
       }
 
@@ -8454,7 +8541,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           shell, the whole app scrolled, the header slid out of view and dead space
           opened under the composer. overscrollBehavior:contain stops a rubber-band at
           the end of the list from dragging the shell with it. */}
-      <div data-tour="chat" style={{flex:1,minHeight:0,overscrollBehavior:"contain",overflowY:"auto",padding:"16px 16px 8px"}}>
+      <div data-tour="chat" ref={chatListRef} onScroll={onChatScroll} style={{flex:1,minHeight:0,overscrollBehavior:"contain",overflowY:"auto",padding:"16px 16px 8px"}}>
         {/* The skeleton is now only for a TRUE cold start. A warm reopen already
             has the greeting (or today's transcript) painted from the device, so
             showing "Syncing feed" over it would be a step backwards. */}

@@ -304,8 +304,12 @@ export default async function handler(req, res) {
               usage.cache_creation_input_tokens = mu.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
             } else if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
               res.write(`data: ${JSON.stringify({ text: ev.delta.text || "" })}\n\n`);
-            } else if (ev.type === "message_delta" && ev.usage) {
-              usage.output_tokens = ev.usage.output_tokens ?? usage.output_tokens;
+            } else if (ev.type === "message_delta") {
+              if (ev.usage) usage.output_tokens = ev.usage.output_tokens ?? usage.output_tokens;
+              // T55: forward the stop reason so the client can detect a max_tokens
+              // clip — it was silently discarded before, and clipped replies
+              // persisted mid-sentence forever.
+              if (ev.delta?.stop_reason) { try { res.write(`data: ${JSON.stringify({ stop_reason: ev.delta.stop_reason })}\n\n`); } catch {} }
             }
           }
           if (aborted) { try { await reader.cancel(); } catch {} break; }
