@@ -6231,7 +6231,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // stamp, so the count stamp a real PR day shows never appeared here.
     setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
     await tourWait(2900); if(!tourRef.current){ setPrStamp(null); return; }
-    setLogStamp({n:TOUR_SCRIPT.session}); setTimeout(()=>setLogStamp(null),2200);
+    // T55: the tour used to hardcode "WORKOUT #1" — indistinguishable from the
+    // counter resetting when an athlete with real history replays the tour on a
+    // fresh install. Show what a real log WOULD stamp: their next number.
+    setLogStamp({n:Math.max(TOUR_SCRIPT.session, headerSessionCount+1)}); setTimeout(()=>setLogStamp(null),2200);
     await tourWait(2600); if(!tourRef.current){ setLogStamp(null); return; }
     const t = tourRef.current; if(!t) return;
     // "See that?…" is a TOUR CARD now, not a third chat bubble — the tutorial
@@ -6728,12 +6731,20 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           if(Number.isFinite(vc)) newCount = vc;
         } catch(_){}
         if(newCount==null){
-          // Fallback (view unreachable): recompute from the capped window, but floor it at
-          // the stored count so a partial window can only hold the number, never ratchet it
-          // down. prevCount already includes prior real sessions; a genuinely new session is
-          // captured because it lands in this window.
           const newRow = {athlete_id:updatedAthlete.id, parsed_data:parsedFinal, created_at:new Date().toISOString()};
-          newCount = Math.max(prevCount, groupIntoSessions([newRow, ...workoutHistory]).length);
+          if(prevCount===0 && workoutHistory.length===0){
+            // T55: stored count 0, local history empty, view unreachable — there is NO
+            // basis for a number. The old code computed 1 here, stamped "WORKOUT #1"
+            // over an account with 40 real sessions (native cold start with failed
+            // boot reads), and PERSISTED the 1. With no basis: no stamp, no write;
+            // the next log with the view reachable self-heals the count.
+            newCount = prevCount;
+          } else {
+            // Fallback (view unreachable): recompute from the capped window, but floor it
+            // at the stored count so a partial window can only hold the number, never
+            // ratchet it down.
+            newCount = Math.max(prevCount, groupIntoSessions([newRow, ...workoutHistory]).length);
+          }
         }
         const badgeAlreadyEarned = !!updatedAthlete.certified_badge_earned_at;
         // Most messages land in an EXISTING 3-hour session bucket, so the count is
@@ -9004,13 +9015,15 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 Both panes are unchanged, they just share a tab and get headers. */}
             {programTab==="phases"&&(
               <div style={{flex:1,overflowY:"auto",padding:"16px 18px"}}>
-                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>In progress</div>
+                {/* T55: no wrapper headings — both panes print their own section
+                    titles (DRAFTS & PARKED INTERVIEWS / CURRENT PHASE / PAST
+                    PHASES). The old "Finished" label here rendered as an orphan
+                    directly above the pane's own "Current phase" heading. */}
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
                   onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
                   onSaveToProgram={applyBuilderText}/>
                 <div style={{margin:"22px 0 16px",borderTop:`1px solid ${CA.border}`}}/>
-                <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:10}}>Finished</div>
                 <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
               </div>
             )}
@@ -10792,8 +10805,8 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
             <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
           </div>
           {d.status==="draft"&&(
-            <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.6,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:"0 0 10px",maxHeight:96,overflow:"hidden"}}>
-              {String(d.draft_text||"").split("\n").slice(0,4).join("\n")}
+            <pre style={{color:CA.muted2,fontSize:11.5,lineHeight:1.6,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",whiteSpace:"pre-wrap",overflowWrap:"anywhere",margin:"0 0 10px",display:"-webkit-box",WebkitBoxOrient:"vertical",WebkitLineClamp:5,overflow:"hidden"}}>
+              {String(d.draft_text||"").split("\n").slice(0,5).join("\n")}
             </pre>
           )}
           {d.status==="interview"&&(
@@ -10866,8 +10879,11 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
   useEffect(()=>{ load(); },[athlete.id]);
 
   // Backfill exactly once: current program exists but was never snapshotted.
+  // T55: the guard used to bail when ANY rows existed, so one failed snapshot
+  // left program_text live with no open phase FOREVER (chat coaching a program
+  // Phases said didn't exist). Bail only when an OPEN block exists.
   useEffect(()=>{
-    if(!loaded||blocks.length>0||backfilledRef.current) return;
+    if(!loaded||blocks.some(b=>!b.completed_at)||backfilledRef.current) return;
     const t=(athlete.program_text||"").trim();
     if(!t) return;
     backfilledRef.current=true;
@@ -10900,7 +10916,20 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
     return Math.max(1, Math.round((e-s)/6.048e8));
   };
   const weekChip = (b) => {
-    if(b.completed_at) return `${weeksOf(b)} week${weeksOf(b)!==1?"s":""}`;
+    if(b.completed_at){
+      // T55: the chip used to be pure wall-clock (Jul 30 → Aug 15 = "2 weeks")
+      // beside a summary calling the same block "3-week" — show the program's
+      // own declared length when it states one, with the actual run beside it.
+      try {
+        const pos = currentPosition({programText:b.program_text,startedOn:b.applied_at,sessions:[]});
+        if(pos.weekKnown&&pos.weekCount>0){
+          const ran = weeksOf(b);
+          return ran===pos.weekCount ? `${pos.weekCount} week${pos.weekCount!==1?"s":""}`
+                                     : `${pos.weekCount}-week block · ran ${ran}`;
+        }
+      } catch(_){}
+      return `ran ${weeksOf(b)} week${weeksOf(b)!==1?"s":""}`;
+    }
     try {
       const pos = currentPosition({programText:b.program_text,startedOn:b.applied_at,sessions:[]});
       if(pos.weekKnown&&pos.weekCount>0) return `week ${pos.week} of ${pos.weekCount}`;

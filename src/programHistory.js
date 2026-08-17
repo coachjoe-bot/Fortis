@@ -25,6 +25,7 @@
 // import back would be a cycle). React-free; block-decision logic unit tested by
 // scripts/test-program-history.mjs.
 import { lineDiff } from "./programDiff.js";
+import { currentPosition } from "./programPosition.js";
 
 // Fraction of the COMBINED line count that changed between two program texts.
 // 0 = identical, 1 = nothing in common. Exported for the test suite.
@@ -48,13 +49,17 @@ const SUMMARY_SYS =
 const RECAP_SYS =
   "You are Coach Joe writing the closing recap of a COMPLETED training block for an athlete's " +
   "block history. You get the program that was planned, the training actually logged during the " +
-  "block, and the goal that was attached to it. Write ONE tight plain-text paragraph — 3 to 6 " +
-  "sentences, hard limit, and always FINISH your final sentence: what the " +
-  "block focused on, what actually got trained (be honest about adherence — logged sessions vs " +
-  "the plan), what visibly moved (weights, reps, PRs), and where the goal stands — HIT, CLOSE, or " +
-  "STILL CHASING — so the next block can pick it up or retire it. Joe's voice: direct, warm, no " +
-  "hype, no markdown, no headers. If there are no logs, say the block has no logged training and " +
-  "leave it at that — never invent results.";
+  "block, the goal that was attached to it, and a BLOCK FACTS line computed by the app. Write ONE " +
+  "tight plain-text paragraph — 3 to 6 sentences, hard limit, and always FINISH your final " +
+  "sentence: what the block focused on, what actually got trained (be honest about adherence — " +
+  "logged sessions vs the plan), what visibly moved (weights, reps, PRs), and where the goal " +
+  "stands — HIT, CLOSE, or STILL CHASING — so the next block can pick it up or retire it. " +
+  "NUMBERS: the BLOCK FACTS line is computed by the app and is always right — use its dates, " +
+  "session count, and block length over anything you'd derive yourself. Every logged load carries " +
+  "its unit (kg or lbs) — keep each number in the unit it carries and NEVER quote a load without " +
+  "its unit; the program text may mix units, so restate any number you take from it with the unit " +
+  "written there. Joe's voice: direct, warm, no hype, no markdown, no headers. If there are no " +
+  "logs, say the block has no logged training and leave it at that — never invent results.";
 
 // Compact one-line-per-session digest of logged training inside a date range.
 // Pure formatting (exported for tests); the AI never sees raw rows.
@@ -96,10 +101,25 @@ async function closeBlock(athleteId, row, deps, completedAtOverride = null) {
     ]);
     const digest = digestWorkouts(logs);
     const goal = (Array.isArray(goals) && goals[0] && (goals[0].goal_text || goals[0].text)) || "";
+    // T55: hand the model code-computed facts instead of letting it derive dates,
+    // counts, or block length from mixed text (the source of the wrong past-block
+    // summaries). Same doctrine as the coach-brain fixes: compute in code, inject.
+    const ranDays = row.applied_at ? Math.max(1, Math.round((Date.parse(completedAt) - Date.parse(row.applied_at)) / 86400000)) : null;
+    let declaredWeeks = null;
+    try {
+      const pos = currentPosition({ programText: String(row.program_text || ""), startedOn: row.applied_at, sessions: [] });
+      if (pos.weekKnown && pos.weekCount > 0) declaredWeeks = pos.weekCount;
+    } catch (_) {}
+    const factBits = [
+      row.applied_at ? `ran ${String(row.applied_at).slice(0, 10)} → ${completedAt.slice(0, 10)}${ranDays ? ` (${ranDays} days)` : ""}` : null,
+      `${(Array.isArray(logs) ? logs.length : 0)} workout rows logged in the block`,
+      declaredWeeks ? `the program itself is a ${declaredWeeks}-week block` : null,
+    ].filter(Boolean).join(" · ");
     const user =
+      `BLOCK FACTS (computed by the app — authoritative): ${factBits}\n\n` +
       `PROGRAM THE BLOCK RAN:\n${String(row.program_text || "").slice(0, 2500)}\n\n` +
       `GOAL ATTACHED TO THIS BLOCK: ${goal || "(none on file)"}\n\n` +
-      `TRAINING LOGGED DURING THE BLOCK (${row.applied_at ? String(row.applied_at).slice(0, 10) : "?"} → ${completedAt.slice(0, 10)}):\n${digest || "(no logged sessions)"}`;
+      `TRAINING LOGGED DURING THE BLOCK:\n${digest || "(no logged sessions)"}`;
     const recap = await askClaude(RECAP_SYS, user, 600, [], "claude-sonnet-5", "program_summary");
     const text = (recap || "").trim();
     if (text) await sbUpdateWhere("program_history", `?id=eq.${row.id}`, { block_recap: text.slice(0, 1500) });
