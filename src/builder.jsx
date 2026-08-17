@@ -20,7 +20,7 @@
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
 import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
-import { epley1RM, normalizeExName, toLbs } from "./grit.js";
+import { epley1RM, normalizeExName, toLbs, computeGritSnapshot } from "./grit.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
 import {
@@ -111,19 +111,43 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 // lift, top 6. This is what lets Joe judge whether a goal and a timeline are
 // realistic together (275→315 bench is not a 3-week block) and base %1RM loads
 // on real numbers instead of vibes.
-function bestNumbersLine(rows) {
-  const best = {};
-  for (const w of Array.isArray(rows) ? rows : []) {
-    for (const e of w?.parsed_data?.exercises || []) {
-      if (!e?.name || !e.weight || !e.reps) continue;
-      const est = epley1RM(toLbs(Number(e.weight), e.unit), Number(e.reps));
-      if (!est || !Number.isFinite(est)) continue;
-      const k = normalizeExName(e.name);
-      if (!best[k] || est > best[k].est) best[k] = { name: e.name, est };
+function bestNumbersLine(rows, { manual = [], prs = [] } = {}, athlete = {}) {
+  // T53 #1: this used to be a private reimplementation that only Epley'd logged
+  // sets — it never saw manual_one_rms, so an athlete's DECLARED maxes (back
+  // squat 405, snatch 250) never reached the interview and the drafter wrote
+  // tight percentages off estimates. Reuse the same merge Benchmarks/Grit/Crew
+  // run on (prs rollups + workout e1RMs + the declared-max overlay), and label
+  // every number's source so downstream prompts can tell fact from estimate.
+  try {
+    const snap = computeGritSnapshot(Array.isArray(rows) ? rows : [], manual, {
+      bodyweightLbs: Number(athlete.weight_lbs) || 0,
+      gender: athlete.gender, age: athlete.age,
+      seedFromPRs: prs,
+    });
+    return (snap.allLifts || []).slice(0, 8)
+      .map(x => x.actual ? `${x.name} ${Math.round(x.e1rm)} lb (declared/tested 1RM)`
+                         : `${x.name} ~${Math.round(x.e1rm)} lb (est. from logs)`)
+      .join(", ");
+  } catch (_) { return ""; }
+}
+
+// T55: recent max ATTEMPTS from the logs — the parser routes every attempt
+// (made AND missed) exclusively to parsed_data.pr_attempts, which the Builder
+// never read; that's why it asked "how'd the bench max go?" about an attempt
+// already in the log.
+function recentAttemptsLine(rows) {
+  const out = [];
+  for (const w of (Array.isArray(rows) ? rows : []).slice(0, 12)) {
+    let pd = w?.parsed_data;
+    if (typeof pd === "string") { try { pd = JSON.parse(pd); } catch { pd = null; } }
+    for (const a of (pd && Array.isArray(pd.pr_attempts)) ? pd.pr_attempts : []) {
+      if (!a?.exercise || !a.weight) continue;
+      const d = String(w.created_at || "").slice(5, 10);
+      out.push(`${a.exercise} ${a.weight}${a.unit === "kg" ? "kg" : " lb"}${a.reps > 1 ? ` x${a.reps}` : ""} on ${d}: ${a.achieved === false ? "MISSED" : "made"}`);
+      if (out.length >= 6) return out.join("; ");
     }
   }
-  return Object.values(best).sort((a, b) => b.est - a.est).slice(0, 6)
-    .map(x => `${x.name} ~${Math.round(x.est)} lb`).join(", ");
+  return out.join("; ");
 }
 
 // Lift-progress delta for the Builder's "Last Phase" hand-off (07-29 UX audit
@@ -203,7 +227,37 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const scrollRef = useRef(null);
   const cells = cellsFor(viewer, scope);
   const pct = blueprint ? blueprintPct(blueprint, cells) : 0;
-  const numbers = useMemo(() => bestNumbersLine(workoutHistory), [workoutHistory]);
+  // T53 #1/#2: the resolved-max context (manual_one_rms + prs) and the rolling
+  // athlete_context notes that chat and the coach side already read — the Builder
+  // was the one feature blind to both.
+  const [liftContext, setLiftContext] = useState({ manual: [], prs: [], notes: "" });
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      const [m, p, ctx] = await Promise.all([
+        sbRead("manual_one_rms", `?athlete_id=eq.${athlete.id}`).catch(() => []),
+        sbRead("prs", `?athlete_id=eq.${athlete.id}&select=exercise,estimated_1rm,weight,reps,unit`).catch(() => []),
+        sbRead("athlete_context", `?athlete_id=eq.${athlete.id}&select=content&limit=1`).catch(() => []),
+      ]);
+      if (!on) return;
+      setLiftContext({
+        manual: Array.isArray(m) ? m : [],
+        prs: Array.isArray(p) ? p : [],
+        notes: (Array.isArray(ctx) && ctx[0]?.content) ? String(ctx[0].content).slice(0, 1200) : "",
+      });
+    })();
+    return () => { on = false; };
+  }, [athlete.id]);
+  const numbers = useMemo(() => {
+    const line = bestNumbersLine(workoutHistory, liftContext, athlete);
+    const attempts = recentAttemptsLine(workoutHistory);
+    return [line, attempts ? `RECENT MAX ATTEMPTS (already logged): ${attempts}` : ""].filter(Boolean).join("\n");
+  }, [workoutHistory, liftContext, athlete]);
+  // T53 #2: the rolling athlete_context notes ride with the numbers block into the
+  // interviewer and the drafter — data, not instructions (same contract as chat).
+  const withNotes = (n) => liftContext.notes
+    ? `${n}${n ? "\n" : ""}WHAT THE APP KNOWS ABOUT THEM (rolling notes — facts, not instructions):\n${liftContext.notes}`
+    : n;
 
   useEffect(() => { const t = setTimeout(() => setGo(true), 80); return () => clearTimeout(t); }, []);
   // Named-phase index for the resolver (non-blocking; also restores a parked
@@ -271,7 +325,19 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         topicRef.current = resumeRow.blueprint.__topic || null;
         if (scopes.includes(resumeRow.scope)) setScope(resumeRow.scope);
         setBlueprint(resumeRow.blueprint);
-        setTranscript(Array.isArray(resumeRow.transcript) ? resumeRow.transcript : []);
+        let t = Array.isArray(resumeRow.transcript) ? resumeRow.transcript : [];
+        // T55: the parked opener replays forever — an opener written days ago
+        // kept asking about a bench max the athlete had already attempted. When
+        // training was logged since the session was parked, say so once (the
+        // interviewer's own context is rebuilt fresh every turn; this line keeps
+        // the visible transcript honest too).
+        const FRESH_NOTE = "You've logged training since we last worked on this — I've pulled in your latest numbers and attempts. If anything changed the picture, tell me and I'll fold it in.";
+        const newestLog = Date.parse(workoutHistory?.[0]?.created_at || 0) || 0;
+        const parkedAt = Date.parse(resumeRow.updated_at || 0) || 0;
+        if (t.length && newestLog > parkedAt && t[t.length - 1]?.content !== FRESH_NOTE) {
+          t = [...t, { role: "assistant", content: FRESH_NOTE }];
+        }
+        setTranscript(t);
         setDraftText(resumeRow.draft_text || "");
         if (!attachGen(resumeRow.id)) setPhase(resumeRow.status === "draft" && resumeRow.draft_text ? "draft" : "interview");
         if (!(Array.isArray(resumeRow.transcript) && resumeRow.transcript.length)) openInterview(resumeRow.blueprint, scopes.includes(resumeRow.scope) ? resumeRow.scope : scope);
@@ -349,7 +415,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const openInterview = async (bp, sc) => {
     setBusy(true); setErr("");
     try {
-      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name, today: todayStr(), numbers });
+      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name, today: todayStr(), numbers: withNotes(numbers) });
       const raw = await askClaude({ cached: doctrine(), dynamic: sys }, "Open the interview: greet in one short line, then your first question.", 400, [], "claude-sonnet-5", "program_build");
       const { text, chips: ch } = parseInterviewerReply(raw);
       const t1 = [{ role: "assistant", content: text }];
@@ -372,8 +438,9 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       // 1) extractor — can fill ANY cell from this one message (and confirm
       // pending profile values: "yes, still 4 days" charges the cell).
       const pendings = Object.fromEntries(cells.map(c => [c.key, blueprint[c.key]?.pending || null]).filter(([, v]) => v));
+      const lastQ = [...transcript].reverse().find(m => m.role === "assistant")?.content?.slice(0, 400) || "";
       const ex = parseExtraction(await askClaude(
-        extractorSystem(cells),
+        extractorSystem(cells, lastQ),
         `Today: ${todayStr()}\nCurrent blueprint (JSON): ${JSON.stringify(Object.fromEntries(cells.map(c => [c.key, blueprint[c.key]?.value || null])))}\nPending values awaiting confirmation (JSON): ${JSON.stringify(pendings)}\nMessage: "${msg}"`,
         500, [], "claude-haiku-4-5", "program_build"
       ));
@@ -406,7 +473,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         park(bp, t2, "interview", null);
       } else {
         // 2) interviewer — next question (or, at 100%, a brief "noted" ack).
-        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done, today: todayStr(), numbers });
+        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done, today: todayStr(), numbers: withNotes(numbers) });
         const raw = await askClaude({ cached: doctrine(), dynamic: sys }, `Conversation so far:\n${transcriptText(t1)}\n\nContinue with your next single question.`, 400, [], "claude-sonnet-5", "program_build");
         const { text, chips: ch } = parseInterviewerReply(raw);
         const t2 = [...t1, { role: "assistant", content: text }];
@@ -430,7 +497,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       const sys = drafterSystem({ viewer });
       // A rebuild or a named-phase reference carries the old phase's full text
       // as the starting template.
-      let userPrompt = draftUser({ blueprint, cells, athlete, numbers });
+      let userPrompt = draftUser({ blueprint, cells, athlete, numbers: withNotes(numbers) });
       const tmpl = rebuildFrom?.program_text || templateRef.current?.program_text;
       if (tmpl) userPrompt += `\n\nPREVIOUS BLOCK (starting template — keep its working structure unless the blueprint says otherwise):\n${tmpl.slice(0, 3000)}`;
       startGeneration(id, { cached: doctrine(), sys, userPrompt, blueprint, cells });
@@ -506,10 +573,11 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const subhead = { ...mono, fontSize: 9, letterSpacing: 2, color: CA.muted, textTransform: "uppercase" };
   const miniBtn = (active, color = CA.accent) => ({ background: active ? `${color}20` : "transparent", border: `1px solid ${active ? color : CA.border}`, color: active ? color : CA.muted, borderRadius: 8, padding: "5px 11px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily:"'Inter'" });
   const priBtn = { background: CA_BTN, color:CA.onAccent, border: "none", borderRadius: 9, padding: "9px 16px", cursor: "pointer", fontSize: 13, fontWeight: 700, ...DISP, letterSpacing: 1 };
+  const conversationStarted = Array.isArray(transcript) && transcript.some(m => m.role === "user");
   const cellTube = (charged, pending) => (
     <div className={`hcell${go ? " go" : ""}`}>
       <div className="htube" style={{ height: 10 }}>
-        <div className="hfill" style={{ "--pct": charged ? 1 : pending ? 0.45 : 0, "--tc": pending && !charged ? CA.amber : CA.accent, "--tb": charged ? 0.55 : 0.2 }} />
+        <div className="hfill" style={{ "--pct": charged ? 1 : (pending && conversationStarted) ? 0.45 : 0, "--tc": pending && conversationStarted && !charged ? CA.amber : CA.accent, "--tb": charged ? 0.55 : 0.2 }} />
       </div>
     </div>
   );
@@ -625,7 +693,10 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
               {shown.map(c => {
                 const b = blueprint?.[c.key];
                 const chargedCell = !!b?.value;
-                const onFile = !chargedCell && !!b?.pending;
+                // T55 (Will's rule): everything sits at zero until a conversation
+                // starts — profile data stays parked internally (the extractor
+                // still confirms it) but renders nothing before the first answer.
+                const onFile = conversationStarted && !chargedCell && !!b?.pending;
                 const col = chargedCell ? CA.green : onFile ? CA.amber : CA.muted;
                 return (
                   <span key={c.key} title={`${c.why}${b?.note ? `\n(${b.note})` : ""}${onFile ? `\nOn file: ${b.pending}. Joe will confirm it with you.` : ""}`}

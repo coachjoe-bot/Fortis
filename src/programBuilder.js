@@ -134,9 +134,11 @@ export function pickTopic({ blueprint = {}, athlete = {}, viewer = "athlete", sc
 }
 
 // ── Extractor (Haiku): fill ANY cell from ANY message ────────────────────────
-export function extractorSystem(cells) {
+export function extractorSystem(cells, lastQuestion = "") {
   return `You extract training-interview facts into blueprint cells. Cells:
 ${cells.map(c => `- ${c.key}: ${c.label} — ${c.hint}`).join("\n")}
+${lastQuestion ? `THE QUESTION JUST ASKED (the message is an answer to THIS): "${lastQuestion}"
+A bare confirmation or short directive ("yes", "sounds good", "split evenly", "do that") answers ONLY this question — fill ONLY the cell this question is about, updated with any detail they gave; if the question maps to no cell, fill NOTHING from such a message. Never let a short answer to one question fill a different cell.` : ""}
 Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>"}
 The timeline cell value MUST be formatted 'YYYY-MM-DD to YYYY-MM-DD' (start to end). Resolve relative dates ("3 weeks from now", "last week of August", "starting Monday") against the Today date given with the message; fill timeline only when the message actually pins the dates down.
 Rules: fill EVERY cell this message gives real information for (an expert dumping a full spec can fill many at once); omit cells the message says nothing about; "none"/"no injuries" style answers DO fill their cell with "None"; never invent facts; keep values short and operational. Some cells arrive PENDING — values from the user's profile awaiting confirmation. When the message CONFIRMS a pending value ("yes", "still true", "same as before", or confirms it with a correction), emit that cell with the pending value, updated with any correction they gave. When it REJECTS a pending value, emit the replacement they state (or omit if they gave none yet). goal_smart judges only the goal: ok=true requires specific + measurable (a number) + timebound (a date/timeframe). Include goal_smart ONLY when the message speaks to the goal. Use "notes" sparingly for real facts only (preferences, context the program should honor) — never restate cell values there.`;
@@ -168,7 +170,8 @@ export function interviewerSystem({ cells, blueprint, scope, viewer, name = "", 
     return `- ${c.key} (${c.label}): ${st}\n  guidance: ${c.hint}`;
   }).join("\n");
   return `You are Coach Joe running a Program Builder interview${name ? ` with ${name}` : ""}${viewer === "coach" ? " (the user is a COACH building for their athlete/team)" : ""}. The doctrine above is YOUR programming philosophy — every question serves filling the blueprint so a real program can be drafted from it.
-${today ? `\nToday is ${today}. Every date you propose or accept must be a real calendar date reasoned from today.` : ""}${numbers ? `\nCURRENT NUMBERS (best estimated 1RMs from their actual logs — use these to judge whether a goal and a timeline are realistic together): ${numbers}` : ""}
+${today ? `\nToday is ${today}. Every date you propose or accept must be a real calendar date reasoned from today.` : ""}${numbers ? `\nCURRENT NUMBERS (from their logs and declared maxes, WITH SOURCES): ${numbers}
+Treat these as the athlete's real state: a "declared/tested 1RM" is a fact; an "est. from logs" is an estimate, never quote it as tested. If a RECENT MAX ATTEMPTS line is present, those attempts already happened — react to their outcomes, never ask how an attempt went when the log already says.` : ""}
 
 You are building their NEXT block — the program that comes AFTER whatever they're running now. Never assume it exists to serve the current block's goals: goals get hit, schedules change, focuses shift between blocks. Treat the last/current block as finished context (what worked, what to carry, what to retire). If it's genuinely unclear whether this replaces the current program now or starts when it ends, ask once.
 
@@ -208,6 +211,7 @@ House format:
 - Number of training days per week MUST match the schedule cell exactly.
 - Respect every red flag (train around it per doctrine), every non-negotiable, and the equipment list — never program gear they don't have (substitution hierarchy: barbell → machine → dumbbell/kettlebell → bodyweight).
 - Sequence and volume per doctrine (block phase from weeks-to-season; strength 10-15 sets/muscle-group/week @ RPE 7-9; in-season = maintenance, RPE 6-7 ceiling).
+- LOADING LANGUAGE BY SOURCE: a lift whose current number is marked "declared/tested 1RM" can take tight %1RM prescriptions. A lift marked "est. from logs" gets RPE (or a conservative % band) — never a tight percentage off an estimate, and never prescribe reps at or above a tested 1RM as if it were submaximal.
 ${viewer === "coach" ? "- This is a TEAM program: one shared program scaled per athlete by %1RM/RPE with substitutions for equipment bottlenecks — never separate tracks. Respect max 4 athletes per rack and the weekly_reality cell." : ""}
 - 3-6 weeks of content: write week 1 fully, then progression notes per week ("Week 2: +5 lbs on mains", deload trigger per doctrine).`;
 }
@@ -243,6 +247,25 @@ export function validateDraft(text, { blueprint = {}, cells = [] } = {}) {
   const equip = (blueprint.equipment?.value || "").toLowerCase();
   if (/(bodyweight only|no barbell|no gym|dumbbells? only)/.test(equip) && hasBarbellWork(t)) {
     problems.push("barbell work programmed for a no-barbell blueprint");
+  }
+  // T53 #5: assert the athlete's stated non-negotiables. prescribes() existed for
+  // exactly this and only the eval harness called it — which is how WEIGHTED DIPS
+  // vanished from a draft with zero validation errors. Must-keeps must appear as
+  // real prescriptions; hard-nos must not.
+  const nn = (blueprint.non_negotiables?.value || "").trim();
+  if (nn && !/^none\b/i.test(nn)) {
+    for (const raw of nn.split(/[,;·\n]+/)) {
+      const phrase = raw.trim();
+      if (phrase.length < 4) continue;
+      const isBan = /^(no|never|hard no|avoid|skip|don'?t|not?\s)/i.test(phrase);
+      const lift = phrase.replace(/^(keep|must(?: keep| include| have)?|always|no|never|hard no|avoid|skip|don'?t(?: want| do)?|loves?|wants?)\s+/i, "").trim();
+      if (lift.length < 4 || !/[a-z]/i.test(lift)) continue;
+      const words = lift.split(/\s+/).slice(0, 3).join(" ");
+      let re; try { re = new RegExp(words.replace(/[.*+?^$()|[\]{}\\]/g, "\\$&"), "i"); } catch { continue; }
+      const present = prescribes(t, re);
+      if (isBan && present) problems.push(`hard-no "${words}" is prescribed in the draft`);
+      if (!isBan && !present) problems.push(`non-negotiable "${words}" is missing from the draft`);
+    }
   }
   return { ok: problems.length === 0, problems };
 }

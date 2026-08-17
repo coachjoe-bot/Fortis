@@ -719,6 +719,12 @@ export function computeGritSnapshot(workouts, manualRMs, opts = {}) {
 
   return {
     rankedLifts: rankedLifts.map((b) => ({ key: b.key, name: b.name, benchKey: b.benchKey, e1rm: b.e1rm, tierIdx: tierIdxOf(b) })),
+    // T55/T53: EVERY tracked lift from the same merge (prs rollups + workout
+    // e1RMs + the manual_one_rms overlay), not just benchmarked ones — with the
+    // actual flag so consumers can tell a declared/tested 1RM from an estimate.
+    // The Builder reads this instead of reimplementing max resolution.
+    allLifts: Object.values(byEx).sort((a, b) => b.e1rm - a.e1rm)
+      .map((x) => ({ key: x.key, name: x.name, e1rm: x.e1rm, actual: !!x.actual })),
     strengthScore,
     topTierIdx,
     topTierName: topTierIdx >= 0 ? TIER_NAMES[topTierIdx] : null,
