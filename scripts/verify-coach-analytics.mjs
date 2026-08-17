@@ -96,11 +96,11 @@ function oracleOverview(athletes, workouts) {
     const thisWk = pcGroup(wo.filter(w => inWin(w, weekAgo, wk.end)));
     const lastWk = pcGroup(wo.filter(w => inWin(w, twoWk, weekAgo)));
     const twL = buildLiftHistory(thisWk), lwL = buildLiftHistory(lastWk);
-    const lifts = Object.entries(twL).map(([lift, entries]) => { const best = entries.reduce((x, y) => y.e1rm > x.e1rm ? y : x); const lw = lwL[lift]; let delta = null; if (lw) { const lb = lw.reduce((x, y) => y.e1rm > x.e1rm ? y : x); delta = best.e1rm - lb.e1rm; } return { lift, deltaVsLastWeek: delta }; });
+    const lifts = Object.entries(twL).map(([lift, entries]) => { const best = entries.reduce((x, y) => y.e1rm > x.e1rm ? y : x); const lw = lwL[lift]; let delta = null; if (lw) { const lb = lw.reduce((x, y) => y.e1rm > x.e1rm ? y : x); delta = best.e1rm - lb.e1rm; } return { lift, deltaVsLastWeek_lbs: delta }; });
     return { lifts };
   });
   const dlt = {};
-  rows.forEach(r => (r.lifts || []).forEach(l => { if (l.deltaVsLastWeek != null) (dlt[l.lift] = dlt[l.lift] || []).push(l.deltaVsLastWeek); }));
+  rows.forEach(r => (r.lifts || []).forEach(l => { if (l.deltaVsLastWeek_lbs != null) (dlt[l.lift] = dlt[l.lift] || []).push(l.deltaVsLastWeek_lbs); }));
   const movers = Object.entries(dlt).map(([lift, ds]) => ({ lift, avg: +(ds.reduce((a, b) => a + b, 0) / ds.length).toFixed(1), n: ds.length })).filter(m => m.avg > 0).sort((a, b) => b.avg - a.avg);
 
   const feelCounts = { great: 0, good: 0, average: 0, rough: 0 }; let feelTotal = 0;

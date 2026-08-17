@@ -114,7 +114,10 @@ export const getExerciseSets = (ex) => {
   return Array.from({ length: n }, () => ({ weight: ex.weight ?? 0, reps: ex.reps || 1 }));
 };
 
-export const toLbs = (weight, unit) => (unit === "kg" ? weight * 2.205 : weight);
+// Conversion lives in units.js (T55: single source, one constant). Imported for
+// local use and re-exported because grit.js is where most existing code gets it.
+import { toLbs, toKg, LBS_PER_KG } from "./units.js";
+export { toLbs, toKg, LBS_PER_KG };
 
 // Load-bearing bodyweight movements — dips, pull-ups, chin-ups, muscle-ups — where
 // the athlete's own bodyweight IS the resistance. Given bodyweight we can estimate

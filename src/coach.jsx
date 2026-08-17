@@ -4461,14 +4461,14 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
                     <div style={{textAlign:"right"}}>
                       <div style={{color:CA.muted,fontSize:10,letterSpacing:1,marginBottom:2}}>LIFETIME BEST EST. 1RM</div>
                       <div style={{...DISP,fontSize:30,color:CA.accent,lineHeight:1}}>
-                        {ex.best}<span style={{fontSize:13,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>{ex.unit==="kg"?"kg":"lbs"}</span>
+                        {ex.best}<span style={{fontSize:13,color:CA.muted,fontFamily:"'Inter'",marginLeft:2}}>lbs</span>
                       </div>
                       <div style={{color:CA.muted,fontSize:10,marginTop:2}}>{fmtWeight(ex.bestEntry.weight,ex.unit)} × {ex.bestEntry.reps} rep{ex.bestEntry.reps!==1?"s":""}</div>
                     </div>
                   </div>
                   {/* Chart or single-entry note */}
                   {ex.entries.length>=2?(
-                    <LineChart data={ex.entries.map(e=>({label:fmtDateShort(e.date),y:e.e1rm}))} color={CA.cyan} unit={ex.unit==="kg"?"kg":"lbs"} palette={CA}/>
+                    <LineChart data={ex.entries.map(e=>({label:fmtDateShort(e.date),y:e.e1rm}))} color={CA.cyan} unit="lbs" palette={CA}/>
                   ):(
                     <div style={{background:CA.navy2,borderRadius:8,padding:"8px 12px",fontSize:12,color:CA.muted2}}>
                       Logged once, log again to see a trend line.

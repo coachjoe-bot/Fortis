@@ -66,7 +66,7 @@ export function digestWorkouts(rows) {
     const parts = exs.slice(0, 8).map((e) => {
       if (!e || !e.name) return null;
       const sr = e.sets && e.reps ? ` ${e.sets}x${e.reps}` : "";
-      const wt = e.weight ? ` @${e.weight}${e.unit === "kg" ? "kg" : ""}` : "";
+      const wt = e.weight ? ` @${e.weight}${e.unit === "kg" ? "kg" : "lbs"}` : "";
       return `${e.name}${sr}${wt}`;
     }).filter(Boolean);
     if (parts.length) lines.push(`${d}: ${parts.join(", ")}`);

@@ -75,7 +75,8 @@ export const groupIntoSessions = (workouts) => {
 // which re-exports this module).
 export { epley1RM };
 
-const toLbs = (w, unit) => (unit === "kg" ? w * 2.205 : w);
+// T55: conversion comes from the single-source units module.
+import { toLbs } from "./units.js";
 
 // Working sets of a logged exercise: prefer set_details (excluding warm-ups), else the
 // flat sets/reps/weight. Mirrors the client so the digest, plateau flags, volume, and
@@ -107,7 +108,7 @@ export const buildLiftHistory = (sessions) => {
       }
       const k = ex.name.toLowerCase().trim();
       if (!byLift[k]) byLift[k] = [];
-      byLift[k].push({ date, e1rm, weight: top.weight, reps: top.reps || 1, sets: sets.length });
+      byLift[k].push({ date, e1rm, weight: top.weight, reps: top.reps || 1, sets: sets.length, unit: ex.unit === "kg" ? "kg" : "lbs" });
     }
   }
   return byLift;
@@ -233,7 +234,7 @@ export function compareProgramVsActual(parsed, thisWeekSessions, oneRMs = {}) {
   const hist = buildLiftHistory(thisWeekSessions);
   for (const [lift, entries] of Object.entries(hist)) {
     let sets = 0, reps = 0, topLoad = 0;
-    for (const e of entries) { sets += e.sets || 1; reps = Math.max(reps, e.reps || 0); topLoad = Math.max(topLoad, toLbs(e.weight, "lbs")); }
+    for (const e of entries) { sets += e.sets || 1; reps = Math.max(reps, e.reps || 0); topLoad = Math.max(topLoad, toLbs(e.weight, e.unit)); }
     actual[lift] = { sets, reps, topLoad };
   }
 
@@ -364,7 +365,7 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
     const lw = lastWeekLifts[lift];
     let delta = null;
     if (lw) { const lb = lw.reduce((a, b) => (b.e1rm > a.e1rm ? b : a)); delta = best.e1rm - lb.e1rm; }
-    lifts.push({ lift, topWeight: best.weight, e1rm: best.e1rm, deltaVsLastWeek: delta });
+    lifts.push({ lift, topWeight: best.weight, topWeightUnit: best.unit, e1rm_lbs: Math.round(best.e1rm), deltaVsLastWeek_lbs: delta == null ? null : Math.round(delta) });
   }
 
   const allHist = buildLiftHistory([...lastWeekSessions, ...thisWeekSessions]);
@@ -374,7 +375,7 @@ export function buildBrief({ athlete, thisWeekSessions, lastWeekSessions, monthS
   const windowStart = (windowType === "monthly" ? 28 : 7) * 24 * 3600 * 1000;
   const cutoff = Date.now() - windowStart;
   const recentPRs = (prs || []).filter((p) => p.date && new Date(p.date).getTime() >= cutoff)
-    .map((p) => ({ exercise: p.exercise, weight: p.weight, reps: p.reps, e1rm: p.estimated_1rm }));
+    .map((p) => ({ exercise: p.exercise, weight: p.weight, unit: p.unit === "kg" ? "kg" : "lbs", reps: p.reps, e1rm_lbs: p.estimated_1rm }));
 
   const goalLines = (goals || []).slice(0, 4).map((g) => ({
     goal: g.goal_text, target_metric: g.target_metric, target_value: g.target_value, target_date: g.target_date,
@@ -477,7 +478,7 @@ export function athleteArchetype(a) {
 // Pure/deterministic (zero tokens); the AI only turns these numbers into voice.
 //
 // `perAthlete`: [{ athlete, brief, adherence, snap, score, hasProgram }]
-//   • brief      = buildBrief(...) output (sessions, lifts w/ deltaVsLastWeek, prs,
+//   • brief      = buildBrief(...) output (sessions, lifts w/ deltaVsLastWeek_lbs, prs,
 //                  injuries{active,recurring}, volumeTrend)
 //   • adherence  = compareProgramVsActual(...) | null
 //   • snap       = computeGritSnapshot(...) { rankedLifts:[{name,benchKey,tierIdx}], … }
@@ -550,7 +551,7 @@ export function buildCoachTeamBrief(perAthlete) {
   const deltaByLift = {};
   for (const r of rows) {
     for (const l of r.brief.lifts || []) {
-      if (l.deltaVsLastWeek != null) (deltaByLift[l.lift] = deltaByLift[l.lift] || []).push(l.deltaVsLastWeek);
+      if ((l.deltaVsLastWeek_lbs ?? l.deltaVsLastWeek) != null) (deltaByLift[l.lift] = deltaByLift[l.lift] || []).push(l.deltaVsLastWeek_lbs ?? l.deltaVsLastWeek);
     }
   }
   const strengthMovement = Object.entries(deltaByLift)

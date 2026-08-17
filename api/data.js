@@ -21,6 +21,7 @@
 //       schools are master-only, and coaches-table writes are admin-only (own school).
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
+import { toLbs as toLbsShared } from "./_units.js";
 import { crewPeerIds, resolveCrewOrg, crewAllowedFor, composeGoalGlance, goalTargets, bestE1rmLbsForLift, orderedPair, withinWindow, withinTierPct, compareStateFor, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
@@ -612,7 +613,8 @@ const getPD = (r) => {
 // coach's big-PR alert would silently never fire for those lifts. Imported
 // lazily alongside the sender so the hot path doesn't pay for it.
 const epley = (w, r) => (!w || w <= 0) ? 0 : Math.round(w * (1 + (r || 1) / 30));
-const toLbsSrv = (w, unit) => (unit === "kg" ? Math.round(Number(w || 0) * 2.20462) : Number(w || 0));
+// T55: conversion from the single-source units module (no rounding at conversion).
+const toLbsSrv = (w, unit) => toLbsShared(Number(w || 0), unit);
 
 // Which of `rows` beat the athlete's existing best for the SAME canonical lift?
 // Pure (resolveLift injected) so scripts/test-coach-alerts.mjs can exercise it
@@ -667,7 +669,7 @@ async function prepCoachAlert(caller, table, data) {
     const extra = improved.length > 1 ? ` (+${improved.length - 1} more)` : "";
     return {
       coachId: athlete.coach_id, prefKey: "big_pr",
-      msg: { title: "WILCO", body: `${athlete.name} just hit a new ${top.exercise} PR: ${top.weight} × ${top.reps || 1}.${extra}`, url: "/", type: "coach_pr" },
+      msg: { title: "WILCO", body: `${athlete.name} just hit a new ${top.exercise} PR: ${top.weight}${top.unit === "kg" ? "kg" : " lbs"} × ${top.reps || 1}.${extra}`, url: "/", type: "coach_pr" },
     };
   }
 
