@@ -19,9 +19,10 @@
 //   after the pane unmounts and parks the finished draft straight to the DB, so
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, track } from "./App.jsx";
+import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, sbUpsert, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs, computeGritSnapshot, ratioLimitersLine } from "./grit.js";
-import { normalizePrefs, prefsPromptLines } from "./trainingPrefs.js";
+import { normalizePrefs, prefsPromptLines, validatePref, describePref } from "./trainingPrefs.js";
+import { campaignLine, parseBlockInfo } from "./programContract.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
 import {
@@ -186,6 +187,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const [phase, setPhase] = useState(initialDraft?.status === "draft" ? "draft" : initialDraft ? "interview" : "boot"); // boot|interview|drafting|draft|saved
   const [draftText, setDraftText] = useState(initialDraft?.draft_text || "");
   const [chips, setChips] = useState([]);
+  const [prefOffer, setPrefOffer] = useState(null); // {field,value} — durable-preference proposal; persists only on the explicit tap (T53 #3)
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -361,6 +363,15 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       if (!on) return;
       bootRef.current = { goals, lastBlock: rebuildFrom ? null : lastBlock };
       const bp = precharge({ athlete, goals, lastBlock, viewer, liftProgress: liftDeltaLine(workoutHistory, lastBlock?.applied_at) });
+      // T53 #8: the finished block's own header knows the campaign — open the
+      // next interview stating which block comes next instead of starting cold.
+      try {
+        const info = parseBlockInfo(lastBlock?.program_text);
+        const cur = info.campaign?.find(b => b.current);
+        const next = cur && info.campaign.find(b => b.n === cur.n + 1);
+        if (next) bp.handoff = { value: "", source: "known",
+          pending: `${bp.handoff?.pending || bp.handoff?.value || ""}${bp.handoff ? " · " : ""}Campaign on file: next up is Block ${next.n}${next.weeks ? ` (${next.weeks} wk)` : ""} — ${next.emphasis}${next.checkpoint ? `, checkpoint: ${next.checkpoint}` : ""}` };
+      } catch (_) {}
       if (rebuildFrom) {
         const name = rebuildFrom.block_summary || (rebuildFrom.program_text || "").split("\n").find(l => l.trim()) || "a previous block";
         bp.handoff = { value: `REBUILD of a past block: ${name}. Its full text is the starting template. Keep what worked, change what the interview surfaces.`, source: "known" };
@@ -475,6 +486,14 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         }
       }
       if (ex.notes) bp.__notes = [...(Array.isArray(bp.__notes) ? bp.__notes : []), ex.notes].slice(-12);
+      // T53 #8: a confirmed multi-block plan replaces the whole campaign (the
+      // extractor emits every block, so partial edits can't strand stale ones).
+      if (ex.campaign) bp.__campaign = ex.campaign;
+      if (ex.pref) {
+        const v = validatePref(ex.pref.field, ex.pref.value);
+        const cur = liftContext.prefs ? liftContext.prefs[ex.pref.field] : undefined;
+        if (v !== undefined && cur !== v) setPrefOffer({ field: ex.pref.field, value: v });
+      }
       // Named-phase resolver: mentioning a past phase by name loads it as the
       // hand-off + draft template. Deterministic substring match — no AI guessing.
       const named = phasesRef.current.find(p => msg.toLowerCase().includes(p.block_name.toLowerCase()));
@@ -508,6 +527,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const READBACK_OK = "All correct — lock it in";
   const readbackText = (bp) => {
     const lines = cells.map(c => `${c.label}: ${bp[c.key]?.value?.trim() || "—"}`);
+    if (bp.__campaign?.length) lines.push(`Campaign: ${campaignLine(bp.__campaign, 1)} (drafting Block 1 now)`);
     return `Before I write a rep, read this back — it's exactly what I'll draft from:
 
 ${lines.join("\n")}
@@ -869,6 +889,19 @@ Anything wrong is a one-word fix now and a wasted week later. Good to build?`;
           {chips.length > 0 && !busy && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flexShrink: 0 }}>
               {chips.map((c, i) => <button key={i} onClick={() => send(c)} style={miniBtn(true, CA.accent)}>{c}</button>)}
+            </div>
+          )}
+          {prefOffer && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", padding: "2px 0" }}>
+              <span style={{ fontSize: 11, color: CA.muted2 }}>Standing setup — {describePref(prefOffer.field, prefOffer.value)}?</span>
+              <button style={miniBtn(true, CA.accent)} onClick={async () => {
+                const p = prefOffer; setPrefOffer(null);
+                try {
+                  await sbUpsert("athlete_training_prefs", { athlete_id: athlete.id, [p.field]: p.value, source: "builder", confirmed_at: nowIso(), updated_at: nowIso() }, "athlete_id");
+                  setLiftContext(lc => ({ ...lc, prefs: normalizePrefs({ ...(lc.prefs || {}), [p.field]: p.value }) }));
+                } catch (_) {}
+              }}>Make it standing</button>
+              <button style={miniBtn(false)} onClick={() => setPrefOffer(null)}>Just this block</button>
             </div>
           )}
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>

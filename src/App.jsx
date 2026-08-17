@@ -68,6 +68,7 @@ import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeReq
 import { FEATURE_INVENTORY } from "./features.js";
 import { fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 import { validatePref, normalizePrefs, describePref, prefsPromptLines } from "./trainingPrefs.js";
+import { parseBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -9169,6 +9170,24 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   REQUEST A CHANGE
                 </button>
                 <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+                  {/* T53 #8/#9: campaign strip — programs drafted under the BLOCK INFO
+                      contract carry their own campaign; pre-contract programs parse to
+                      found:false and render exactly as before. */}
+                  {(()=>{
+                    const info = parseBlockInfo(athlete.program_text);
+                    if(!info.found || !info.campaign?.length) return null;
+                    return (
+                      <div className="no-sb" style={{display:"flex",gap:6,overflowX:"auto",marginBottom:12,paddingBottom:2}}>
+                        {info.campaign.map(b=>(
+                          <div key={b.n} style={{flexShrink:0,border:`1px solid ${b.current?CA.accent:CA.border}`,background:b.current?`${CA.accent}14`:CA.navy2,borderRadius:9,padding:"7px 11px"}}>
+                            <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:b.current?CA.accent:CA.muted,textTransform:"uppercase"}}>Block {b.n}{b.of?` / ${b.of}`:""}{b.current?" · NOW":""}</div>
+                            <div style={{fontSize:11.5,fontWeight:600,color:b.current?CA.text:CA.muted2,marginTop:2}}>{b.emphasis}{b.weeks?` · ${b.weeks} wk`:""}</div>
+                            {b.checkpoint&&<div style={{fontSize:10,color:CA.muted,marginTop:1}}>gate: {b.checkpoint}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <pre style={{color:CA.text,fontSize:12.5,lineHeight:1.8,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0}}>
                     {athlete.program_text}
                   </pre>

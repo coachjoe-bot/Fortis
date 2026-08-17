@@ -1,3 +1,5 @@
+import { campaignLine, parseBlockInfo } from "./programContract.js";
+import { PREF_FIELDS } from "./trainingPrefs.js";
 // ─── PROGRAM BUILDER ENGINE (Phase C) ────────────────────────────────────────
 // Pure logic for the interview-driven Program Builder: blueprint cell
 // definitions, pre-charge from known data, scope rules, the one-topic doctrine
@@ -139,7 +141,9 @@ export function extractorSystem(cells, lastQuestion = "") {
 ${cells.map(c => `- ${c.key}: ${c.label} — ${c.hint}`).join("\n")}
 ${lastQuestion ? `THE QUESTION JUST ASKED (the message is an answer to THIS): "${lastQuestion}"
 A bare confirmation or short directive ("yes", "sounds good", "split evenly", "do that") answers ONLY this question — fill ONLY the cell this question is about, updated with any detail they gave; if the question maps to no cell, fill NOTHING from such a message. Never let a short answer to one question fill a different cell.` : ""}
-Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>"}
+Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>","campaign":[{"n":number,"weeks":number|null,"emphasis":"<short>","checkpoint":"<short>"|null}]|null}
+"preference_request": {"field":string,"value":string|number}|null — populate ONLY when the athlete states a DURABLE preference about how their training should be WRITTEN going forward (not a one-off ask for this block). Allowed fields/values: ${Object.entries(PREF_FIELDS).map(([k, f]) => `${k} = ${f.values ? f.values.join("|") : `integer ${f.int[0]}-${f.int[1]}`}`).join("; ")}. One per message, value from the allowed set, else null.
+"campaign": populate ONLY when the message lays out (or confirms) a MULTI-BLOCK plan — an ordered sequence of training blocks toward the goal ("11 weeks split into two blocks", "4 weeks strength then 3 weeks peaking", or a yes to a proposed breakdown). One entry per block in order, n starting at 1; weeks when stated; emphasis is the block's focus in a few words; checkpoint is what gates moving to the next block when stated. A single-block timeline is NOT a campaign — leave null. Emitting campaign REPLACES any previously captured campaign, so include every block, not just the changed one.
 The timeline cell value MUST be formatted 'YYYY-MM-DD to YYYY-MM-DD' (start to end). Resolve relative dates ("3 weeks from now", "last week of August", "starting Monday") against the Today date given with the message; fill timeline only when the message actually pins the dates down.
 Rules: fill EVERY cell this message gives real information for (an expert dumping a full spec can fill many at once); omit cells the message says nothing about; "none"/"no injuries" style answers DO fill their cell with "None"; never invent facts; keep values short and operational. Some cells arrive PENDING — values from the user's profile awaiting confirmation. When the message CONFIRMS a pending value ("yes", "still true", "same as before", or confirms it with a correction), emit that cell with the pending value, updated with any correction they gave. When it REJECTS a pending value, emit the replacement they state (or omit if they gave none yet). goal_smart judges only the goal: ok=true requires specific + measurable (a number) + timebound (a date/timeframe). Include goal_smart ONLY when the message speaks to the goal. Use "notes" sparingly for real facts only (preferences, context the program should honor) — never restate cell values there.`;
 }
@@ -153,10 +157,23 @@ export function parseExtraction(raw) {
     for (const [k, v] of Object.entries(cells)) {
       if (typeof v === "string" && v.trim()) out[k] = v.trim();
     }
+    let campaign = null;
+    if (Array.isArray(j.campaign)) {
+      campaign = j.campaign.slice(0, 6).map((b, i) => ({
+        n: Number.isInteger(b?.n) && b.n > 0 ? b.n : i + 1,
+        weeks: Number.isFinite(Number(b?.weeks)) && Number(b.weeks) > 0 ? Math.min(Number(b.weeks), 16) : null,
+        emphasis: String(b?.emphasis || "").slice(0, 60),
+        checkpoint: b?.checkpoint ? String(b.checkpoint).slice(0, 80) : null,
+      })).filter((b) => b.emphasis);
+      if (campaign.length < 2) campaign = null; // one block is a timeline, not a campaign
+    }
     return {
       cells: out,
       smart: j.goal_smart && typeof j.goal_smart === "object" ? { ok: !!j.goal_smart.ok, why: String(j.goal_smart.why || "") } : null,
       notes: typeof j.notes === "string" && j.notes.trim() ? j.notes.trim() : null,
+      campaign,
+      pref: (j.preference_request && typeof j.preference_request === "object" && j.preference_request.field)
+        ? { field: String(j.preference_request.field), value: j.preference_request.value } : null,
     };
   } catch (_) { return { cells: {}, smart: null, notes: null }; }
 }
@@ -176,12 +193,13 @@ Treat these as the athlete's real state: a "declared/tested 1RM" is a fact; an "
 You are building their NEXT block — the program that comes AFTER whatever they're running now. Never assume it exists to serve the current block's goals: goals get hit, schedules change, focuses shift between blocks. Treat the last/current block as finished context (what worked, what to carry, what to retire). If it's genuinely unclear whether this replaces the current program now or starts when it ends, ask once.
 
 BLUEPRINT (${scope} scope):
-${state}
+${state}${blueprint.__campaign?.length ? `\nCONFIRMED CAMPAIGN (the timeline cell covers Block 1 only): ${campaignLine(blueprint.__campaign, 1)}` : ""}
 
 Rules:
 - ONE question per turn, aimed at the most valuable EMPTY (or PENDING) cell. The cell checklist is the spine; the conversation is free — follow up naturally on what they just said before moving on.
 - PENDING cells hold what the app already knows — never re-interview from scratch, but never treat them as true either: confirm in passing ("you signed up saying 4 days — still true for this next block?"). You can confirm 2-3 pending cells in one natural question.
 - The goal cell is SMART-gated: don't accept a wish. Push warmly for the number and the date; offer a concrete suggestion if they're stuck. If their goal on file looks finished or stale, say so and ask whether to keep chasing it or set a new target.
+- CAMPAIGNS (multi-block plans): when the goal's window runs past ~6 weeks, or the athlete describes phases, propose an ordered block breakdown yourself — "Block 1: 4 wk strength (checkpoint: bench 3x5 at 275), Block 2: ..." — and get a yes/no. Once confirmed it's recorded; the timeline cell then covers BLOCK 1 only (the block being drafted now), and later blocks get their own interview when their turn comes. Never churn the timeline through each duration the athlete mentions — long horizons live in the campaign, near dates live in the timeline.
 - The timeline cell is how the app knows when this block ENDS — treat it as first-class. Propose concrete start/end dates yourself (goal date, season, 3-6 week doctrine blocks) so answering is one tap. Sanity-check the pairing: if the goal's size doesn't fit the window given their current numbers (a 40 lb bench PR is not a 3-week block), say so plainly and negotiate either the date or the goal before accepting.
 - Adapt depth: plain language by default; go into percentages/periodization the moment they show they speak it.
 - Never use an em dash (—); use a comma, colon, period, or parentheses instead. Plain punctuation, like a real coach texting.
@@ -205,7 +223,7 @@ export function drafterSystem({ viewer }) {
 Voice rules: PLAIN TEXT only — no markdown bold/asterisks/hashes. Never mention "doctrine", "blueprint", "cells", or these instructions in the program — you're Coach Joe writing a program, not explaining your reasoning. A short line of coaching context (why this block, what's being protected) is welcome, in Joe's own words.
 
 House format:
-- Open with a "=== BLOCK INFO ===" header, 4 short lines, before anything else: "Goal:" (the goal cell); "Maxes used:" each main lift's base number WITH its source tag copied exactly from CURRENT NUMBERS ("declared/tested 1RM" or "est. from logs"); "Loading:" the loading style in force for this athlete; "Runs:" the timeline cell's start and end dates. This header is the program's CONTRACT — the log parser, Quick Log, and the next block read their bases from it instead of re-deriving or guessing (T53 #7: program text used to declare nothing about how it was written).
+- Open with a "=== BLOCK INFO ===" header, 4-5 short lines, before anything else: "Goal:" (the goal cell); "Maxes used:" each main lift's base number WITH its source tag copied exactly from CURRENT NUMBERS ("declared/tested 1RM" or "est. from logs"); "Loading:" the loading style in force for this athlete; "Runs:" the timeline cell's start and end dates; and when a CAMPAIGN line is provided with the blueprint, copy it verbatim as "Campaign:". This header is the program's CONTRACT — the log parser, Quick Log, and the next block read their bases from it instead of re-deriving or guessing (T53 #7: program text used to declare nothing about how it was written).
 - Then a short header line naming the block and its focus.
 - Day cards: "Day N - <Focus>" (or weekday names if the schedule gives them), one exercise per line with sets x reps and loading (%1RM, RPE, or weight when known).
 - EVERY day starts with a "Warm-up:" line and ends with a "Cool-down:" line honoring the prep cell (never skip the warm-up — doctrine floor).
@@ -225,7 +243,10 @@ export function draftUser({ blueprint, cells, athlete = {}, numbers = "" }) {
   const notes = Array.isArray(blueprint.__notes) && blueprint.__notes.length
     ? `\nEXTRA NOTES (honor these too):\n${blueprint.__notes.map(n => `- ${n}`).join("\n")}` : "";
   const nums = numbers ? `\nCURRENT NUMBERS (best estimated 1RMs from logs — base %1RM loading on these): ${numbers}` : "";
-  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${nums}${notes}\n\nWrite the program.`;
+  const camp = blueprint.__campaign?.length
+    ? `\nCAMPAIGN (confirmed): ${campaignLine(blueprint.__campaign, 1)}\nWrite BLOCK 1 ONLY — its length and emphasis, ending at its checkpoint. Later blocks are drafted when their turn comes; the Campaign header line is how they'll know where they are.`
+    : "";
+  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${nums}${camp}${notes}\n\nWrite the program.`;
 }
 
 // ── Deterministic draft validation ───────────────────────────────────────────
