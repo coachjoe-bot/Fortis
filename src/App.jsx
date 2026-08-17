@@ -67,6 +67,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
 import { fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
+import { validatePref, normalizePrefs, describePref, prefsPromptLines } from "./trainingPrefs.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -372,20 +373,22 @@ const dataApi = async (op,table,{data,id,params}={}) => {
 // resolved position Quick Log uses instead of re-deriving the day itself.
 // Cached per athlete; busted at the sb* write choke point below so a max
 // declared mid-chat is visible to the very next message.
-let joeCtxCache = { athleteId:null, manualRMs:[], programStartedOn:null, at:0 };
-const bustJoeCtxCache = (table) => { if(table==="manual_one_rms"||table==="program_history") joeCtxCache.at = 0; };
+let joeCtxCache = { athleteId:null, manualRMs:[], programStartedOn:null, prefs:null, at:0 };
+const bustJoeCtxCache = (table) => { if(table==="manual_one_rms"||table==="program_history"||table==="athlete_training_prefs") joeCtxCache.at = 0; };
 const getJoeCtx = async (athleteId) => {
   if(joeCtxCache.athleteId===athleteId && Date.now()-joeCtxCache.at < 5*60*1000) return joeCtxCache;
-  let manualRMs = [], programStartedOn = null;
+  let manualRMs = [], programStartedOn = null, prefs = null;
   try {
-    const [rms, hist] = await Promise.all([
+    const [rms, hist, pf] = await Promise.all([
       sbRead("manual_one_rms",`?athlete_id=eq.${athleteId}`),
       sbRead("program_history",`?athlete_id=eq.${athleteId}&select=applied_at&order=applied_at.desc&limit=1`),
+      sbRead("athlete_training_prefs",`?athlete_id=eq.${athleteId}&limit=1`).catch(()=>[]),
     ]);
     manualRMs = Array.isArray(rms)?rms:[];
     programStartedOn = (Array.isArray(hist)&&hist[0]?.applied_at)||null;
+    prefs = (Array.isArray(pf)&&pf[0]) ? normalizePrefs(pf[0]) : null;
   } catch(_){ /* chat degrades to history-only, same as before this cache existed */ }
-  joeCtxCache = { athleteId, manualRMs, programStartedOn, at:Date.now() };
+  joeCtxCache = { athleteId, manualRMs, programStartedOn, prefs, at:Date.now() };
   return joeCtxCache;
 };
 export const sbInsert = async (table,data) => {
@@ -1538,7 +1541,8 @@ const parseWorkout = async (message, name, sport, knownNames = []) => {
   "program_position_claim":{"week":number|null,"day":number|null}|null,
   "program_block_span":{"weeks":number|null,"end_date":string|null,"repeating":boolean|null}|null,
   "log_correction":{"is_mistake_fix":boolean,"details":string}|null,
-  "coach_flag":"pain"|"plateau"|"equipment"|null
+  "coach_flag":"pain"|"plateau"|"equipment"|null,
+  "preference_request":{"field":"loading_language"|"max_update_policy"|"testing_style"|"session_minutes_cap"|"movements_per_day_cap"|"accessory_load","value":string|number}|null
 }
 Rules:
 - "log_correction": populate when the athlete is CORRECTING data they ALREADY LOGGED — a mistype/misclick ("that was 115 not 155", "I typed the wrong weight", "fat-fingered that"), a wrong past entry ("yesterday's squat should be 225"), a duplicate ("that logged twice"), or a removal ("delete that last entry", "I didn't actually do the dips"). Set is_mistake_fix:true and details to a concise restatement of what needs fixing. When is_mistake_fix is true: leave "exercises" EMPTY, "run_data" and "practice_data" null, and "pr_attempts" EMPTY — the corrected numbers are NOT a new workout; the app's correction flow rewrites the original entry instead. A normal log, a program change, or genuinely new workout info is NOT a correction — leave log_correction null. If one message BOTH logs new work AND corrects an old entry, treat it as a correction (is_mistake_fix:true) so nothing double-logs. SAME-MESSAGE REVISIONS ARE NOT CORRECTIONS: when the athlete states a number and then changes their mind about it INSIDE THIS SAME MESSAGE ("I hit 225x5 on bench. wait no, that was 215.", "squat 3x5 at 315 today, actually 305", "bench 185, sorry 175"), nothing has been logged yet, so there is nothing to correct. Leave log_correction null and log it normally using the FINAL stated value only. Only reach for is_mistake_fix when the athlete is pointing at a PREVIOUS message or a past session.
@@ -1584,7 +1588,8 @@ Rules:
 - "log_date": set this ONLY when the athlete clearly states this session happened on a PAST day rather than today — e.g. "this was Monday's workout", "did this yesterday", "logging Saturday's lift", "from two days ago", "did legs on Tuesday". Resolve their words to a concrete calendar date in "YYYY-MM-DD" form using TODAY'S DATE given above, ALWAYS choosing the MOST RECENT PAST occurrence: a weekday name = the most recent already-passed date with that weekday (never a future one, and if today IS that weekday it means LAST week's, not today); "yesterday" = one day before today; "two days ago" = two days before today. Only look back up to 14 days — if the intended past day is ambiguous, more than 14 days ago, today, or in the future, leave log_date null. A normal log with no explicit past-day language is TODAY: leave log_date null. A forward-looking PROGRAM (is_program_update / program_append) is never dated: leave log_date null. Never invent a date the athlete didn't imply.
 - "pr_attempts": include an entry with reps:1 and achieved:true whenever the athlete reports an ACTUAL (not estimated) 1-rep max for a lift — either because they just performed a true 1RM single in this session, OR because they are simply telling you their current actual max for a lift (e.g. "my real squat max is 405", "current bench 1RM is 275", "just hit a 315 deadlift max"). This applies even if no other exercises were logged in the message. If they describe a failed attempt at a 1RM, set achieved:false.
 - FAILED / MISSED ATTEMPTS (critical): a weight the athlete FAILED, MISSED, or didn't complete ("attempted 285 and missed", "failed 315", "couldn't lock out 225", "no-lifted the third attempt") is NOT a performed set. Record it ONLY as a pr_attempts entry with achieved:false — NEVER as an entry or set in "exercises", never in set_details, never as the top-set weight. Completed work in the same message still logs normally (e.g. "hit 275, then missed 285" → the 275 single goes in exercises AND pr_attempts achieved:true; the 285 appears ONLY in pr_attempts achieved:false). A failed weight must never appear anywhere that reads as work performed.
-- "coach_flag": set "pain" when the message reports CURRENT physical pain/discomfort/a tweak tied to training — not normal post-workout soreness/fatigue. Set "plateau" when they say a specific lift has been stuck/stalled for weeks despite real effort — not a single off day. Set "equipment" when equipment required for their programmed work is unavailable/broken and it's actually blocking that work — not just a passing mention. Otherwise leave null. At most one value; pick the one that best matches.`;
+- "coach_flag": set "pain" when the message reports CURRENT physical pain/discomfort/a tweak tied to training — not normal post-workout soreness/fatigue. Set "plateau" when they say a specific lift has been stuck/stalled for weeks despite real effort — not a single off day. Set "equipment" when equipment required for their programmed work is unavailable/broken and it's actually blocking that work — not just a passing mention. Otherwise leave null. At most one value; pick the one that best matches.
+- "preference_request": populate ONLY when the athlete states a DURABLE preference about how their training should be written going forward — not a one-off request for today. Allowed values by field: loading_language = "percent+rpe"|"percent"|"rpe"|"climb_singles"|"fixed_weight" ("stop giving me RPE, just percentages" → {"field":"loading_language","value":"percent"}; "I'd rather work up to a heavy single than chase percentages" → "climb_singles"). max_update_policy = "infer"|"declared_only"|"pr_single_only" ("only change my max when I actually hit a single" → "pr_single_only"). testing_style = "final_week"|"test_day"|"retest_cycle". session_minutes_cap = integer 15-240 ("keep my workouts under an hour" → 60). movements_per_day_cap = integer 2-15. accessory_load = "programmed"|"athlete_choice" ("let me pick my own accessory weights" → "athlete_choice"). ONE field per message (pick the clearest); the value MUST be from the allowed set or null. This is a proposal the app confirms with the athlete — populate it even if phrased casually, but never from a question or a hypothetical.`;
   const nowD = new Date();
   const todayLabel = nowD.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const known = knownNames.length ? `\nKNOWN EXERCISE NAMES (reuse the exact spelling when it's the same movement — see NAME REUSE rule): ${knownNames.join(" | ")}` : "";
@@ -1888,7 +1893,7 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
   // estimate), and it's what keeps one contaminated e1RM from outranking a real
   // declared max. History-only was how 70% snatch resolved off ~200 with an actual
   // 250 on file: chat simply never saw the 250.
-  const { manualRMs, programStartedOn } = await getJoeCtx(athlete.id);
+  const { manualRMs, programStartedOn, prefs } = await getJoeCtx(athlete.id);
   let maxContext = "";
   {
     const bw = athlete.weight_lbs;
@@ -1954,7 +1959,7 @@ Athlete: ${athlete.name}, Sport: ${athlete.sport}${athlete.level?", Level: "+ath
 GOAL: ${JOEBOT_GOALS[athlete.goal||"strength"] || JOEBOT_GOALS.strength}
 SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}
 ACCOUNT FACTS: coach linked: ${athlete.coach_id?"yes":"no"} · program locked: ${athlete.program_locked?"yes":"no"} · display unit: ${athlete.weight_unit==="kg"?"kg":"lbs"}
-${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you say in kg (logged data below may carry lbs labels — convert exactly, 1 kg = 2.20462 lbs, and round working weights to 2.5 kg).":"This athlete works in LBS. If logged data below carries a kg label, that lift was performed in kg — convert to lbs when you talk about it (1 kg = 2.20462 lbs)."}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
+${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you say in kg (logged data below may carry lbs labels — convert exactly, 1 kg = 2.20462 lbs, and round working weights to 2.5 kg).":"This athlete works in LBS. If logged data below carries a kg label, that lift was performed in kg — convert to lbs when you talk about it (1 kg = 2.20462 lbs)."}${prefs&&prefsPromptLines(prefs)?"\n"+prefsPromptLines(prefs):""}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
 
   let goalsContext = "";
   if(athleteGoals?.length>0){
@@ -5629,6 +5634,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // Lock-screen session card offer chips (T40): true while "Put it on my lock
   // screen?" is waiting for the athlete's yes/no. One offer per day max.
   const [sessionCardPending,setSessionCardPending] = useState(false);
+  const [prefPending,setPrefPending] = useState(null); // {field,value} — typed training-preference proposal awaiting the athlete's explicit yes (T53)
   // T40: yesterday's (or a >3h-stale) pinned card comes down at boot — the web
   // platform has no self-expiring notifications, so expiry is enforced here.
   useEffect(()=>{ expireSessionCardIfStale(athlete.id); },[athlete.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -7625,6 +7631,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // Typing over the lock-screen offer = not now (but NOT declined-for-the-day:
     // only an explicit "No thanks" burns the daily offer).
     if(sessionCardPending) setSessionCardPending(false);
+    if(prefPending) setPrefPending(null);
 
     // T40: "take it off my lock screen" — the card's one explicit exit besides
     // logging the session. Deterministic (no AI turn), and only when a card is
@@ -8056,6 +8063,20 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             : `If the gear keeps being a problem, the program should stop asking for it. Here's what I'd change:\n\n"${draft.suggestion}"\n\nWant me to make that change?`;
           followUp(offerCopy);
         } catch(e){}
+      }
+
+      // ── T53: typed preference proposal — propose, never assume ────────────
+      // The parser emits an enum-pinned candidate; validatePref re-checks it
+      // app-side, the gateway re-checks it server-side, and nothing persists
+      // until the athlete taps yes.
+      if(parsed.preference_request && !chipSetThisSend){
+        const { field, value } = parsed.preference_request || {};
+        const v = validatePref(field, value);
+        const cur = (await getJoeCtx(updatedAthlete.id)).prefs;
+        if(v!==undefined && (!cur || cur[field]!==v)){
+          setPrefPending({field, value:v}); chipSetThisSend = true;
+          followUp(`Want me to make that your standing setup? From here on: ${describePref(field, v)}. You can change it any time by telling me.`);
+        }
       }
 
       // ── T40: lock-screen session card — offer + follow ────────────────────
@@ -8767,6 +8788,27 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <button onClick={()=>confirmChangeRequest(false)}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Don't send
+          </button>
+        </div>
+      ):prefPending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={async()=>{
+            const p = prefPending; setPrefPending(null);
+            try {
+              await sbUpsert("athlete_training_prefs",{athlete_id:athlete.id,[p.field]:p.value,source:"chat",confirmed_at:new Date().toISOString(),updated_at:new Date().toISOString()},"athlete_id");
+              track("pref_confirmed","ai");
+              setMessages(prev=>[...prev,{role:"assistant",content:`Locked in. ${describePref(p.field,p.value).replace(/^./,c=>c.toUpperCase())} from here on out.`}]);
+            } catch(_){
+              setMessages(prev=>[...prev,{role:"assistant",content:"Couldn't save that just now — tell me again in a bit and I'll set it."}]);
+            }
+          }}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Make it standing
+          </button>
+          <button onClick={()=>{setPrefPending(null); setMessages(prev=>[...prev,{role:"assistant",content:"No problem — nothing saved, this session only."}]);}}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Just this once
           </button>
         </div>
       ):sessionCardPending?(

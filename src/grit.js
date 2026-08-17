@@ -819,3 +819,77 @@ export const groupIntoSessions = (workouts, gapMs = 3*60*60*1000) => {
   });
   return sessions;
 };
+
+// ─── STRENGTH RATIOS + RATE OF PROGRESS (T53 #4) ─────────────────────────────
+// Pure arithmetic over resolved maxes — zero AI calls. The ratio sheet turns a
+// number dump into a coaching read (ranked limiters vs published strength-ratio
+// bands); the rate sheet answers "is this goal reachable by this date" from the
+// athlete's own observed trend. Both feed the Builder's interview context.
+// Bands are classic S&C reference ratios (Stone/NSCA-style, wide on purpose —
+// they flag LIMITERS, they don't diagnose); Will tunes them here, one place.
+export const RATIO_STANDARDS = [
+  { num: "front squat", den: "back squat", lo: 0.80, hi: 0.90, label: "Front squat vs back squat" },
+  { num: "deadlift", den: "back squat", lo: 1.05, hi: 1.25, label: "Deadlift vs back squat" },
+  { num: "bench press", den: "back squat", lo: 0.60, hi: 0.75, label: "Bench vs back squat" },
+  { num: "overhead press", den: "bench press", lo: 0.60, hi: 0.70, label: "Overhead press vs bench" },
+  { num: "snatch", den: "back squat", lo: 0.58, hi: 0.66, label: "Snatch vs back squat" },
+  { num: "clean and jerk", den: "back squat", lo: 0.72, hi: 0.82, label: "Clean & jerk vs back squat" },
+  { num: "snatch", den: "clean and jerk", lo: 0.78, hi: 0.86, label: "Snatch vs clean & jerk" },
+];
+
+// allLifts = computeGritSnapshot(...).allLifts. Returns ratios the athlete has
+// both numbers for, flagged low/high/in-band, sorted worst-first (limiters lead).
+export function strengthRatios(allLifts) {
+  const by = {};
+  for (const l of allLifts || []) if (l?.key && l.e1rm > 0) by[l.key] = l.e1rm;
+  const out = [];
+  for (const r of RATIO_STANDARDS) {
+    const n = by[r.num], d = by[r.den];
+    if (!n || !d) continue;
+    const ratio = n / d;
+    const flag = ratio < r.lo ? "low" : ratio > r.hi ? "high" : "in-band";
+    // Distance outside the band, as a fraction — 0 when in-band; sorts limiters.
+    const off = ratio < r.lo ? (r.lo - ratio) / r.lo : ratio > r.hi ? (ratio - r.hi) / r.hi : 0;
+    out.push({ ...r, ratio: Math.round(ratio * 100) / 100, flag, off });
+  }
+  return out.sort((a, b) => b.off - a.off);
+}
+
+// One prompt-ready line naming the ranked limiters (empty when nothing flags).
+export function ratioLimitersLine(allLifts) {
+  const flagged = strengthRatios(allLifts).filter((r) => r.flag !== "in-band").slice(0, 3);
+  if (!flagged.length) return "";
+  return flagged.map((r) =>
+    `${r.label} is ${r.ratio} (${r.flag === "low" ? "below" : "above"} the ${r.lo}-${r.hi} band — ${r.flag === "low" ? `${r.num} is the limiter` : `${r.den} is lagging`})`
+  ).join("; ");
+}
+
+// Observed rate of progress for one lift from logged history (lbs/week of e1RM
+// trend, first-vs-best over the actual time span), vs the rate the goal needs.
+// rows = workout rows (any order); lift = free-text name (resolved internally).
+export function rateOfProgress(rows, lift, goalLbs, goalDateIso, { minWeeks = 2 } = {}) {
+  const id = resolveLift(lift).id;
+  const points = [];
+  for (const w of Array.isArray(rows) ? rows : []) {
+    let pd = w?.parsed_data;
+    if (typeof pd === "string") { try { pd = JSON.parse(pd); } catch { pd = null; } }
+    for (const ex of pd?.exercises || []) {
+      if (!ex?.name || resolveLift(ex.name).id !== id) continue;
+      const e = bestE1RMForExercise(ex);
+      if (e > 0) points.push({ t: effectiveDate(w).getTime(), e });
+    }
+  }
+  if (points.length < 2) return { known: false };
+  points.sort((a, b) => a.t - b.t);
+  const first = points[0], best = points.reduce((a, b) => (b.e > a.e ? b : a));
+  const weeks = Math.max(minWeeks, (best.t - first.t) / 6.048e8);
+  const observedPerWeek = (best.e - first.e) / weeks;
+  const out = { known: true, current: Math.round(best.e), observedPerWeek: Math.round(observedPerWeek * 10) / 10 };
+  if (goalLbs > 0 && goalDateIso) {
+    const weeksLeft = Math.max(0.5, (Date.parse(goalDateIso) - Date.now()) / 6.048e8);
+    out.requiredPerWeek = Math.round(((goalLbs - best.e) / weeksLeft) * 10) / 10;
+    out.weeksLeft = Math.round(weeksLeft * 10) / 10;
+    out.feasible = out.requiredPerWeek <= Math.max(observedPerWeek * 1.5, 1);
+  }
+  return out;
+}

@@ -205,7 +205,8 @@ export function drafterSystem({ viewer }) {
 Voice rules: PLAIN TEXT only — no markdown bold/asterisks/hashes. Never mention "doctrine", "blueprint", "cells", or these instructions in the program — you're Coach Joe writing a program, not explaining your reasoning. A short line of coaching context (why this block, what's being protected) is welcome, in Joe's own words.
 
 House format:
-- A short header line naming the block and its focus.
+- Open with a "=== BLOCK INFO ===" header, 4 short lines, before anything else: "Goal:" (the goal cell); "Maxes used:" each main lift's base number WITH its source tag copied exactly from CURRENT NUMBERS ("declared/tested 1RM" or "est. from logs"); "Loading:" the loading style in force for this athlete; "Runs:" the timeline cell's start and end dates. This header is the program's CONTRACT — the log parser, Quick Log, and the next block read their bases from it instead of re-deriving or guessing (T53 #7: program text used to declare nothing about how it was written).
+- Then a short header line naming the block and its focus.
 - Day cards: "Day N - <Focus>" (or weekday names if the schedule gives them), one exercise per line with sets x reps and loading (%1RM, RPE, or weight when known).
 - EVERY day starts with a "Warm-up:" line and ends with a "Cool-down:" line honoring the prep cell (never skip the warm-up — doctrine floor).
 - Number of training days per week MUST match the schedule cell exactly.
@@ -213,7 +214,8 @@ House format:
 - Sequence and volume per doctrine (block phase from weeks-to-season; strength 10-15 sets/muscle-group/week @ RPE 7-9; in-season = maintenance, RPE 6-7 ceiling).
 - LOADING LANGUAGE BY SOURCE: a lift whose current number is marked "declared/tested 1RM" can take tight %1RM prescriptions. A lift marked "est. from logs" gets RPE (or a conservative % band) — never a tight percentage off an estimate, and never prescribe reps at or above a tested 1RM as if it were submaximal.
 ${viewer === "coach" ? "- This is a TEAM program: one shared program scaled per athlete by %1RM/RPE with substitutions for equipment bottlenecks — never separate tracks. Respect max 4 athletes per rack and the weekly_reality cell." : ""}
-- 3-6 weeks of content: write week 1 fully, then progression notes per week ("Week 2: +5 lbs on mains", deload trigger per doctrine).`;
+- 3-6 weeks of content: write week 1 fully, then progression notes per week ("Week 2: +5 lbs on mains", deload trigger per doctrine). If the blueprint's timeline states its own length, THAT length wins over this default — never stretch a stated 3-week block to 4.
+- JUDGMENT CALLS (T53 #5): if you deviate from ANYTHING the blueprint states — a swapped movement, trimmed volume, a moved day — end the program with a short "Coach's calls:" list, one line per deviation: what changed, why, and the strict alternative. Never silently drop or alter a stated item, and a non-negotiable is not yours to cut at all — if it truly can't fit, keep it and flag the conflict in Coach's calls instead.`;
 }
 
 export function draftUser({ blueprint, cells, athlete = {}, numbers = "" }) {
@@ -266,6 +268,18 @@ export function validateDraft(text, { blueprint = {}, cells = [] } = {}) {
       if (isBan && present) problems.push(`hard-no "${words}" is prescribed in the draft`);
       if (!isBan && !present) problems.push(`non-negotiable "${words}" is missing from the draft`);
     }
+  }
+  // T53 #7 (partial): loading-language conformance, both directions. The prefs
+  // record is enum-typed (trainingPrefs.js) and rides on blueprint.__prefs.
+  const prefs = blueprint.__prefs || null;
+  if (prefs) {
+    const presc = t.split("\n").filter(l => /\d\s*[x×]\s*\d|@\s*\d|\bRPE\s*\d|\d+\s*%/.test(l)).join("\n");
+    if (prefs.loading_language === "rpe" && /\d+\s*%/.test(presc))
+      problems.push("athlete opted out of percentages but the draft prescribes %1RM loading");
+    if (prefs.loading_language === "percent" && /\bRPE\s*\d/i.test(presc))
+      problems.push("athlete opted out of RPE but the draft prescribes RPE loading");
+    if (prefs.loading_language === "fixed_weight" && (/\d+\s*%/.test(presc) || /\bRPE\s*\d/i.test(presc)))
+      problems.push("athlete asked for fixed weights but the draft prescribes %/RPE loading");
   }
   return { ok: problems.length === 0, problems };
 }

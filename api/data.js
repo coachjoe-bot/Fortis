@@ -48,6 +48,8 @@ const WRITABLE = new Set([
   "coach_context", "coach_push_subscriptions", "program_change_requests",
   // Saved Programs library (G8). Coach-owned; scoping is coach_id, same as coach_context.
   "coach_programs",
+  // T53: typed training preferences — athlete-owned, enum-pinned below.
+  "athlete_training_prefs",
   // Parsed-program cache: the coach dashboard parses missing/stale programs on
   // demand (Haiku via api/claude.js, hash-keyed) and upserts the result here —
   // same row shape parseProgramIfNeeded writes on the proof cron. Ownership-scoped
@@ -115,6 +117,8 @@ const READ_OWN_COL = {
   // NOTE this list is a FOURTH registration point beyond the three the G8 commit
   // named — reads die loudly ("Table not readable") without it while writes land.
   coach_programs: "coach_id",
+  // T53: typed training preferences (athlete reads own; coach reads roster's).
+  athlete_training_prefs: "athlete_id",
 };
 
 // Tables read/written by COACH callers scoped to their OWN coach_id (not their
@@ -158,6 +162,8 @@ const ATHLETE_OWN_COL = {
   // are handled ONLY by the dedicated `crew` op above and stay unreachable here
   // (no entry below → the generic path 403s them, see the WRITABLE comment).
   crew_moments: "athlete_id",
+  // T53: typed training preferences — column/value-pinned in ATHLETE_COL_ALLOW.
+  athlete_training_prefs: "athlete_id",
 };
 
 // ── Per-COLUMN allowlist for athlete writes to sensitive tables ───────────────
@@ -218,6 +224,25 @@ const ATHLETE_COL_ALLOW = {
       owner_type: (v) => v === "athlete",
       status: (v) => ["interview", "draft", "applied"].includes(v),
       scope: (v) => ["full", "short", "quick"].includes(v),
+    },
+  },
+  // T53: typed training preferences. The payload originates from an AI extraction
+  // of free-text chat, so both columns and VALUES are pinned to the enums — a
+  // sentence can carry an injection, an enum can't. Caps are integers in range.
+  athlete_training_prefs: {
+    cols: new Set([
+      "loading_language", "max_update_policy", "testing_style",
+      "session_minutes_cap", "movements_per_day_cap", "accessory_load",
+      "source", "confirmed_at", "updated_at",
+    ]),
+    values: {
+      loading_language: (v) => ["percent+rpe", "percent", "rpe", "climb_singles", "fixed_weight"].includes(v),
+      max_update_policy: (v) => ["infer", "declared_only", "pr_single_only"].includes(v),
+      testing_style: (v) => ["final_week", "test_day", "retest_cycle"].includes(v),
+      accessory_load: (v) => ["programmed", "athlete_choice"].includes(v),
+      source: (v) => ["chat", "builder", "settings"].includes(v),
+      session_minutes_cap: (v) => v == null || (Number.isInteger(v) && v >= 15 && v <= 240),
+      movements_per_day_cap: (v) => v == null || (Number.isInteger(v) && v >= 2 && v <= 15),
     },
   },
   // Block-history snapshots (src/programHistory.js). source names the save path
