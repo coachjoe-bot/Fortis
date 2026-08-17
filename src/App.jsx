@@ -50,7 +50,7 @@ import {
 // Lock-screen session card (T40): today's session pinned as a notification. The
 // card is a projection of the Quick Log draft — never model chat text.
 import {
-  asksTodaysWorkout, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
+  asksTodaysWorkout, asksLockScreenCard, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
   repinSessionCard, clearSessionCard, activeSessionCard, expireSessionCardIfStale,
   sessionCardDeclinedToday, markSessionCardDeclined,
 } from "./sessionCard.js";
@@ -3303,15 +3303,17 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     if(reaction===NONE || reaction.includes(NONE)) reaction = "";
 
     // Coach-loop-in offer: an injury-kind answer that reports ACTIVE pain, for an
-    // athlete who has a coach. Gated on coach_id ONLY (not program_locked) — a
-    // school athlete's coach owns the training relationship whether or not the
-    // program is technically locked, and the whole point is the coach hearing
-    // about a health issue that should reshape the work. Joe's normal reaction
-    // (eased volume, exercise swaps) shows first; this is a follow-up interstitial,
-    // never a replacement for it. One offer per check-in, and it never auto-files —
+    // athlete whose program is LOCKED by a coach. T55 (Will 08-17): this used to
+    // gate on coach_id alone, which routed athletes who OWN their program into a
+    // coach request they never wanted — the same misroute as the chat branch. The
+    // rule now matches changeRequest.js's single-source table: locked → coach
+    // request; unlocked → the athlete self-serves (chat offers that path). Pain
+    // still reaches a linked coach through the injury notification. Joe's normal
+    // reaction (eased volume, exercise swaps) shows first; this is a follow-up
+    // interstitial, never a replacement. One offer per check-in, never auto-filed —
     // the athlete must tap "Send to coach".
     const offerCoach = q.kind==="injury" && !offeredCoachRef.current
-      && !!athlete.coach_id && reportsActivePain(msg);
+      && !!athlete.coach_id && !!athlete.program_locked && reportsActivePain(msg);
     if(offerCoach){
       offeredCoachRef.current = true;
       if(reaction) setMessages(prev=>[...prev,{role:"assistant",content:reaction}]);
@@ -7980,14 +7982,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // never touches the program-write branches above. Skips entirely if the
       // locked-program branch just above already offered a change request for THIS
       // message (wantsProgramWrite && locked). Exactly one of the two branches below
-      // can fire per message — full routing table lives in the COACH REQUEST RULE SET
-      // comment in changeRequest.js:
-      //   locked program            → coach request (any flag)
-      //   unlocked + coached + pain → coach request (coach should hear about pain
-      //                               even though Joe COULD adapt the program himself)
-      //   everything else unlocked  → athlete self-apply staged offer (plateau/
-      //   (plateau/equipment any-    equipment for anyone, pain for an uncoached
-      //    one, pain if uncoached)   athlete)
+      // can fire per message — the routing table lives ONLY in the COACH REQUEST
+      // RULE SET comment in changeRequest.js (T55: locked → coach request; unlocked
+      // → self-serve for every flag, pain included — Will's call 08-17 after Joe
+      // routed his unlocked program to a coach request).
       // One offer per flag per session (coachFlagOfferedRef, shared across both
       // branches), and never stacked on top of another pending confirm chip.
       const lockedBranchFired = wantsProgramWrite && updatedAthlete.program_locked;
@@ -7996,7 +7994,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // squats" typed over a Replace chip never got its coach-request offer).
       const noOtherOfferPending = !chipSetThisSend;
       if(!lockedBranchFired && parsed.coach_flag && updatedAthlete.coach_id
-         && (parsed.coach_flag==="pain" || updatedAthlete.program_locked)
+         && updatedAthlete.program_locked
          && !coachFlagOfferedRef.current[parsed.coach_flag]
          && noOtherOfferPending){
         coachFlagOfferedRef.current[parsed.coach_flag] = true;
@@ -8004,7 +8002,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           const draft = await draftChangeRequest({athlete: updatedAthlete, message: msg, programText: updatedAthlete.program_text||"", sourceHint: flagToSource(parsed.coach_flag), askClaude});
           setChangeRequestPending({suggestion: draft.suggestion, lift: draft.lift, current: draft.current, why: draft.why, source: draft.source, athleteMsg: msg});
           const offerCopy = parsed.coach_flag==="pain"
-            ? `That's worth getting in front of your coach. Here's the request I'd send:\n\n"${draft.suggestion}"\n\nWant me to send it?`
+            ? `Your program's locked by your coach, so this change goes through them. Here's the request I'd send:\n\n"${draft.suggestion}"\n\nWant me to send it?`
             : parsed.coach_flag==="plateau"
             ? `You've been stuck there long enough that it's worth a program change, and your coach has your program locked. Here's what I'd ask for:\n\n"${draft.suggestion}"\n\nWant me to send it?`
             : `If that equipment keeps being a problem, the fix belongs in the program. Here's the request I'd send your coach:\n\n"${draft.suggestion}"\n\nWant me to send it?`;
@@ -8012,8 +8010,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } catch(e){}
       } else if(!lockedBranchFired && hasProgram && !updatedAthlete.program_locked && parsed.coach_flag
          && !coachFlagOfferedRef.current[parsed.coach_flag]
-         && noOtherOfferPending
-         && !(parsed.coach_flag==="pain" && updatedAthlete.coach_id)){
+         && noOtherOfferPending){
         coachFlagOfferedRef.current[parsed.coach_flag] = true;
         try {
           const draft = await draftChangeRequest({athlete: updatedAthlete, message: msg, programText: updatedAthlete.program_text||"", sourceHint: flagToSource(parsed.coach_flag), askClaude});
@@ -8032,11 +8029,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // the model's reply — nothing for the model to get wrong. One offer per
       // day, never stacked on another pending chip, only when there's a program
       // to card.
-      if(asksTodaysWorkout(msg) && !chipSetThisSend && sessionCardSupported()
+      if((asksTodaysWorkout(msg) || asksLockScreenCard(msg)) && !chipSetThisSend && sessionCardSupported()
          && hasProgram && !activeSessionCard(updatedAthlete.id)
          && !sessionCardDeclinedToday(updatedAthlete.id)){
         setSessionCardPending(true); chipSetThisSend = true;
-        followUp("Want today's session on your lock screen while you train? It clears itself when you log.");
+        // A direct lock-screen ask gets a direct yes (T55 — Joe once denied this);
+        // the what's-today phrasing keeps the softer offer.
+        followUp(asksLockScreenCard(msg)
+          ? "Can do. I'll pin today's session to your lock screen — if notifications are off you'll get the allow prompt first. It clears itself when you log."
+          : "Want today's session on your lock screen while you train? It clears itself when you log.");
       }
       // An in-chat swap while a card is pinned re-renders it — "subbed dips for
       // pushdowns" must reach the lock screen in real time. The position-claim

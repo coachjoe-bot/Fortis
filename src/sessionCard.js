@@ -38,6 +38,19 @@ export const TODAYS_WORKOUT_RE =
   /what(?:'|’)?s?\s+(?:my|the|on|today)(?:[a-z'’ ]{0,12})?\s*(?:workout|session|training|lift(?:ing)?|program)?\s*(?:for\s+)?today|what\s+am\s+i\s+(?:doing|lifting|training)\s+today|show\s+me\s+today(?:'|’)?s?\s+(?:workout|session)|today(?:'|’)?s?\s+(?:workout|session)\b|start\s+(?:my|the|today(?:'|’)?s?)\s+workout/i;
 export const asksTodaysWorkout = (msg) => TODAYS_WORKOUT_RE.test(String(msg || ""));
 
+// T55: the direct ask — "put my program/workout on my lock screen", "pin it to my
+// lock screen", "add today's session to the lock screen", "lock screen widget".
+// Joe DENIED this exact request in TestFlight because only the what's-today
+// phrasings above triggered the offer, and his prompt had no feature inventory to
+// know better. Any lock-screen mention aimed at the program/workout now offers
+// the card through the same deterministic path.
+export const LOCKSCREEN_RE =
+  /lock\s*screen|lockscreen/i;
+export const asksLockScreenCard = (msg) => {
+  const t = String(msg || "");
+  return LOCKSCREEN_RE.test(t) && /\b(put|pin|add|show|get|keep|throw|set|program|workout|session|card|widget)\b/i.test(t);
+};
+
 // ── card content, from the draft ─────────────────────────────────────────────
 // Input is the Quick Log draft's log text: first line = day label, then one
 // exercise per line "Name SETSxREPS @ WEIGHT (source)". The card shows real

@@ -8,14 +8,15 @@
 // - Program LOCKED by a coach: always a coach request (any flag — pain, plateau,
 //   equipment, or an explicit program-change ask). Joe can't touch a locked
 //   program, so the coach has to.
-// - Program UNLOCKED + athlete has a coach (coach_id set) + PAIN: still a coach
-//   request. The coach should hear about pain even though Joe could adapt the
-//   program himself right now.
-// - Everything else with the program UNLOCKED (plateau or equipment for anyone,
-//   or pain for an UNCOACHED athlete): Joe stages the change himself and the
-//   athlete applies it — draft → Apply/Edit/Skip → surgical AI merge → diff
-//   review → explicit save (App.jsx selfChangePending; same merge/guard code
-//   path as the coach-side edit in coach.jsx, via programDiff.js).
+// - Program UNLOCKED: ALWAYS self-serve, for EVERY flag, pain included — Joe
+//   stages the change himself and the athlete applies it — draft →
+//   Apply/Edit/Skip → surgical AI merge → diff review → explicit save (App.jsx
+//   selfChangePending; same merge/guard code path as the coach-side edit in
+//   coach.jsx, via programDiff.js). A linked coach never overrides this: an
+//   athlete who owns their program edits their program. (T55, Will 08-17 —
+//   the old "unlocked+coached+pain → coach request" rule sent a founder's own
+//   knee tweak to a coach request he never wanted. Pain still reaches the coach
+//   through the injury notification path; the CHANGE stays with the athlete.)
 // - Explicit program-change ask while the program is locked: always a coach
 //   request (covered by the first rule above).
 // - One offer per topic per session either way. The athlete always confirms via
