@@ -291,9 +291,17 @@ const REPEATING_RE = /\b(?:repeat(?:s|ing|ed)?\s+(?:weekly|each week|every week|
 // "Duration: 4 Weeks", "4-week block", "6 week cycle", "over 8 weeks".
 const DURATION_RE = /(?:duration\s*[:—-]?\s*(\d{1,2})\s*weeks?)|(\d{1,2})\s*[-–\s]\s*week\s+(?:block|program|cycle|phase|wave)|(?:over|across)\s+(\d{1,2})\s+weeks?/i;
 
+// The BLOCK INFO contract's own dates ("Runs: 2026-08-17 to 2026-09-13") — the
+// drafter states the block's span outright, so a contract program is never
+// unknown and must never be asked about (T57). A single date reads as the END,
+// mirroring parseTimeline.
+const RUNS_RE = /^\s*Runs\s*:\s*.*?(\d{4}-\d{2}-\d{2})(?:\s*(?:to|through|–|—|-)\s*(\d{4}-\d{2}-\d{2}))?/im;
+
 export const parseBlockSpan = (programText) => {
   const text = String(programText || "");
   if (!text.trim()) return { known: false, repeating: false, weeks: null, source: "none" };
+  const runs = text.match(RUNS_RE);
+  if (runs) return { known: true, repeating: false, weeks: null, endDate: runs[2] || runs[1], source: "text_runs" };
   // An explicit "this repeats" beats a week count — a 4-week wave the athlete runs on
   // loop is repeating, and treating it as finite would end it every fourth week.
   if (REPEATING_RE.test(text)) return { known: true, repeating: true, weeks: null, source: "text_repeating" };
@@ -324,7 +332,8 @@ export const resolveBlockSpan = ({ programText, endsAt, answer } = {}) => {
     if (answer.endsAt) return { known: true, repeating: false, weeks: null, endsAt: new Date(answer.endsAt), source: "athlete_date" };
     if (answer.weeks) return { known: true, repeating: false, weeks: answer.weeks, endsAt: null, source: "athlete_weeks" };
   }
-  return { ...parseBlockSpan(programText), endsAt: null };
+  const parsed = parseBlockSpan(programText);
+  return { ...parsed, endsAt: parsed.endDate ? new Date(`${parsed.endDate}T12:00:00Z`) : null };
 };
 
 // ─── THE WEEK AHEAD ──────────────────────────────────────────────────────────

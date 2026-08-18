@@ -1746,6 +1746,7 @@ const JOEBOT_STATIC_SYS = `You are Coach Joe Thomas -- high school strength coac
 
 DECIDE BEFORE YOU WRITE. Work everything out BEFORE the first word; the athlete only ever sees a finished answer. Never think out loud, never narrate your reasoning, never correct yourself mid-message: no "wait", no "let me clarify", no "actually, scratch that", no walking back something you said two sentences ago. If you notice a mistake while writing, start the sentence over in your head and write only the corrected version. One message must never contradict itself.
 CONTEXT BEATS TRANSCRIPT: the session context below (position, history, 1RMs) is computed fresh by the app for THIS message. When it conflicts with anything earlier in the conversation — including your own previous replies — the context is right and the transcript is stale. Use the fresh answer directly; do not mention, reconcile, or apologize for the discrepancy, and do not ask the athlete to resolve it for you.
+THE ATHLETE'S NAME: the session context states the athlete's name. When you address them, use EXACTLY that name (or its natural first word) — never substitute, normalize, or invent a different one, even if theirs reads oddly (a test label, a handle, initials, a company name). If the name feels unusable, address them with no name at all. Calling an athlete by a name that isn't theirs is an instant trust-killer.
 
 BANNED PHRASES:
 - "Atta boy/girl": BANNED except when athlete explicitly hits a NEW PR.
@@ -5743,6 +5744,26 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           stamp("scheduled");
           setBlockPrompt({kind:"scheduled",draft,start:schedStart});
         } else if(open&&!open.ends_at){
+          // Self-heal before ever asking (T57): the program's own contract
+          // (BLOCK INFO "Runs:") or the athlete's recorded program_block_span
+          // already answer this — write ends_at silently instead of prompting.
+          const fromText=parseBlockSpan(athlete.program_text);
+          const sp=athlete.program_block_span;
+          const spWeeks=Number(sp?.weeks);
+          const spEndRaw=sp?.endsAt||sp?.end_date||null;
+          const healEnd=dateToIso(fromText.endDate)||(spEndRaw?(dateToIso(spEndRaw)||spEndRaw):null);
+          if(healEnd){
+            const ok=await setBlockEnd({athleteId:athlete.id,endsAt:healEnd},{sbRead,sbInsert,sbUpdateWhere,askClaude}).catch(()=>false);
+            if(!on) return;
+            if(ok){
+              const state=blockPromptState({endsAt:healEnd});
+              if(state&&last!==`${state}:${today}`){ stamp(state); setBlockPrompt({kind:state,endsAt:healEnd,draft,extendOpen:false}); }
+              return;
+            }
+          }
+          // Repeating (from the text) or an answered span (repeating/weeks) —
+          // the question is answered; asking again is friction, not diligence.
+          if(fromText.repeating||(sp&&(sp.repeating===true||(Number.isFinite(spWeeks)&&spWeeks>=1)))) return;
           if(last.startsWith("backfill:")&&(Date.parse(today)-Date.parse(last.slice(9)))<3*86400000) return;
           let est=null;
           try{
@@ -5964,17 +5985,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     [workoutHistory, athlete.total_sessions_logged]
   );
   const trainedThisWeek = useMemo(()=>{
+    // Sunday-start — the athlete's week is the PROGRAM week, and doctrine turns
+    // it every Sunday (programPosition: "The week runs Sunday to Saturday").
+    // T57 find: this counted Mon-start, so a Sunday session showed WK 0 all week.
     const now=new Date();
-    const dow=(now.getDay()+6)%7;                       // Mon=0 .. Sun=6
-    const monday=new Date(now); monday.setHours(0,0,0,0); monday.setDate(now.getDate()-dow);
+    const weekStart=new Date(now); weekStart.setHours(0,0,0,0); weekStart.setDate(now.getDate()-now.getDay());
     const trained=new Set();
     // Only a REAL logged session lights a day — a row with actual exercises or a
     // run. Chat messages / form-review rows (empty exercises) must NOT count.
     workoutHistory.forEach(w=>{
-      const d=effectiveDate(w); if(d<monday) return;   // backdated logs light their real day
+      const d=effectiveDate(w); if(d<weekStart) return;   // backdated logs light their real day
       const pd=typeof w.parsed_data==="string"?(()=>{try{return JSON.parse(w.parsed_data);}catch{return{};}})():(w.parsed_data||{});
       const hasWork=(Array.isArray(pd.exercises)&&pd.exercises.length>0)||!!pd.run_data;
-      if(hasWork) trained.add((d.getDay()+6)%7);
+      if(hasWork) trained.add(d.getDay());               // Sun=0 .. Sat=6
     });
     return trained;
   },[workoutHistory]);
@@ -6814,19 +6837,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           crewMoments.push({type:"milestone", payload:{count:crossed}});
         }
         // Crew "week" moment — fires once when THIS log crosses the athlete's
-        // weekly training-day target (Mon-Sun, real sessions only — same rule as
-        // the header's trainedThisWeek strip). Gated on an actual CROSSING so it
+        // weekly training-day target (Sun-Sat, real sessions only — same rule as
+        // the header's trainedThisWeek strip; the program week turns Sunday).
+        // Gated on an actual CROSSING so it
         // fires once per week, not on every session after the target is already met.
         try {
           const target = updatedAthlete.training_days_per_week;
           if(target>0){
-            const dowOf = (d)=>(d.getDay()+6)%7;
+            const dowOf = (d)=>d.getDay();               // Sun=0 .. Sat=6
             const nowD = new Date();
-            const dow = dowOf(nowD);
-            const monday = new Date(nowD); monday.setHours(0,0,0,0); monday.setDate(nowD.getDate()-dow);
+            const weekStart = new Date(nowD); weekStart.setHours(0,0,0,0); weekStart.setDate(nowD.getDate()-nowD.getDay());
             const trainedBefore = new Set();
             workoutHistory.forEach(w=>{
-              const d = effectiveDate(w); if(d<monday) return;
+              const d = effectiveDate(w); if(d<weekStart) return;
               const pd = typeof w.parsed_data==="string"?(()=>{try{return JSON.parse(w.parsed_data);}catch{return{};}})():(w.parsed_data||{});
               if((Array.isArray(pd.exercises)&&pd.exercises.length>0)||!!pd.run_data) trainedBefore.add(dowOf(d));
             });
@@ -8993,8 +9016,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       ):(
         <div style={{padding:"0 0 5px",overflow:"hidden",flexShrink:0,WebkitMaskImage:"linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)",maskImage:"linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)"}}>
           <div className="a-ticker" style={{alignItems:"center"}}>
+            {/* Second copy exists only for the seamless -50% marquee loop —
+                hidden from screen readers so nothing reads twice (T57). */}
             {[...quick,...quick].map((p,idx)=>(
-              <span key={idx} onClick={()=>setInput(p)} title="Tap to use" style={{display:"inline-flex",alignItems:"center",cursor:"pointer",whiteSpace:"nowrap"}}>
+              <span key={idx} aria-hidden={idx>=quick.length||undefined} onClick={()=>setInput(p)} title="Tap to use" style={{display:"inline-flex",alignItems:"center",cursor:"pointer",whiteSpace:"nowrap"}}>
                 <span style={{color:CA.muted2,fontSize:12.5,padding:"0 14px",fontWeight:500}}>{p}</span>
                 <span aria-hidden style={{width:1,height:12,background:CA.cyan,boxShadow:`0 0 6px ${CA.cyan}`,flexShrink:0}}/>
               </span>

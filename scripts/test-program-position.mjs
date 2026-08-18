@@ -10,8 +10,8 @@
 // All dates are LOCAL and deliberately anchored to real 2026 calendar weeks:
 //   Sun Jul 26 · Mon Jul 27 … Sat Aug 1 · Sun Aug 2 · Sun Aug 9
 
-const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock, weekAheadFor, parseBlockSpan }
-  = await import("../src/programPosition.js");
+const posmod = await import("../src/programPosition.js");
+const { parseProgramShape, sundayOnOrBefore, weeksTurnedOver, currentPosition, positionBlock, weekAheadFor, parseBlockSpan } = posmod;
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`  ✗ ${name}`); } };
@@ -357,6 +357,20 @@ check("'repeats weekly' in the text is an answer", parseBlockSpan("Push/Pull/Leg
 // An explicit repeat beats a week count — a 4-week wave run on loop must not end.
 check("explicit repeat outranks a week count", parseBlockSpan(WEEK_COLUMNS + "\nRun this on repeat.").repeating === true);
 check("Will's own program declares its length", parseBlockSpan(WILLARD).known === true && parseBlockSpan(WILLARD).weeks === 4);
+// The BLOCK INFO contract states the block's dates outright (T57): a contract
+// program is never unknown and its Runs end date feeds resolveBlockSpan.endsAt.
+const CONTRACT = "=== BLOCK INFO ===\nGoal: Bench 315\nLoading: rpe\nRuns: 2026-08-17 to 2026-09-13\n\nDay 1 - Push\nBench 3x5 @ 245";
+check("a contract Runs line is a known span", (() => {
+  const s = parseBlockSpan(CONTRACT);
+  return s.known === true && s.source === "text_runs" && s.endDate === "2026-09-13";
+})());
+check("a single Runs date reads as the end", parseBlockSpan("=== BLOCK INFO ===\nRuns: 2026-09-13\n\nDay 1\nBench 3x5 @ 245").endDate === "2026-09-13");
+check("'Runs:' without dates is not a span", parseBlockSpan("Conditioning\nRuns: 3x400m hard\nDay 1\nBench 3x5 @ 245").known === false);
+check("the contract end date reaches resolveBlockSpan", (() => {
+  const { resolveBlockSpan } = posmod;
+  const r = resolveBlockSpan({ programText: CONTRACT });
+  return r.known === true && r.endsAt instanceof Date && r.endsAt.toISOString().slice(0, 10) === "2026-09-13";
+})());
 // …but his START is unknown, so the week still has to be asked before previewing.
 check("known span + unknown week still withholds", (() => {
   const w = weekAheadFor({ programText: WILLARD, sessions: [], now: at("2026-07-28T09:00:00") });
