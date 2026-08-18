@@ -1242,8 +1242,11 @@ const TECHNIQUE_LABEL = { drop:"drop set", rest_pause:"rest-pause", cluster:"clu
 const withSetMods = (ex, base, hasWeight=false, warmupCount=0) => {
   let s = base;
   // Added / assisted bodyweight load (weighted pull-ups, assisted dips).
-  if(ex.added_weight) s += ` +${ex.added_weight}lbs`;
-  else if(ex.assist_weight) s += ` −${ex.assist_weight}lbs (assisted)`;
+  // Raw added/assist weights are ALWAYS lbs (parser convention); the display
+  // path converts them and stamps __wu with the display unit (T57).
+  const wu = ex.__wu || "lbs";
+  if(ex.added_weight) s += ` +${ex.added_weight}${wu}`;
+  else if(ex.assist_weight) s += ` −${ex.assist_weight}${wu} (assisted)`;
   // Bands / chains (resistance not on the bar).
   if(ex.resistance) s += ` w/ ${ex.resistance}`;
   // Dumbbell per-hand clarity — only meaningful when a weight is shown.
@@ -1279,10 +1282,23 @@ export const formatSetDetails = (ex, {display=false} = {}) => {
     const du = getDisplayUnit();
     if((ex.unit==="kg"?"kg":"lbs")!==du){
       const cv = (w)=> (w||w===0) ? roundStat(toDisplay(w, ex.unit, du), du) : w;
-      ex = {...ex, unit:du, weight:cv(ex.weight),
-        added_weight: ex.added_weight!=null?cv(ex.added_weight):ex.added_weight,
-        assist_weight: ex.assist_weight!=null?cv(ex.assist_weight):ex.assist_weight,
+      // Added/assist weights are stored in lbs regardless of the row's unit
+      // (parser convention), so they convert FROM lbs, not from ex.unit.
+      const cvAdd = (w)=> (w||w===0) ? roundStat(toDisplay(w, "lbs", du), du) : w;
+      ex = {...ex, unit:du, __wu:du, weight:cv(ex.weight),
+        added_weight: ex.added_weight!=null?cvAdd(ex.added_weight):ex.added_weight,
+        assist_weight: ex.assist_weight!=null?cvAdd(ex.assist_weight):ex.assist_weight,
         set_details: Array.isArray(ex.set_details)?ex.set_details.map(x=>({...x,weight:x.weight!=null?cv(x.weight):x.weight})):ex.set_details};
+    }
+  } else if(display && ex.unit==="bodyweight" && (ex.added_weight!=null||ex.assist_weight!=null)){
+    // Weighted/assisted bodyweight rows never entered the block above, so a kg
+    // athlete saw "+45lbs" on an otherwise all-kg screen (T57).
+    const du = getDisplayUnit();
+    if(du==="kg"){
+      const cvAdd = (w)=> (w||w===0) ? roundStat(toDisplay(w, "lbs", du), du) : w;
+      ex = {...ex, __wu:du,
+        added_weight: ex.added_weight!=null?cvAdd(ex.added_weight):ex.added_weight,
+        assist_weight: ex.assist_weight!=null?cvAdd(ex.assist_weight):ex.assist_weight};
     }
   }
   const allSets = getExerciseSets(ex);
@@ -10872,7 +10888,10 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     if(d){ autoConfirmedRef.current=true; startConfirm(d); }
   },[loaded,autoConfirmId,drafts]);
 
-  const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+  // Bare YYYY-MM-DD dates pin to noon UTC first — new Date("2026-08-19") is UTC
+  // midnight, which renders a day early in US timezones (T57: the drafts card
+  // said "planned for Aug 18" on a draft scheduled for the 19th).
+  const fmtD = (d) => { if(!d) return ""; const s=/^\d{4}-\d{2}-\d{2}$/.test(String(d))?`${d}T12:00:00Z`:d; return new Date(s).toLocaleDateString("en-US",{month:"short",day:"numeric"}); };
 
   const startConfirm = (d) => {
     const diff = lineDiff(athlete.program_text||"", d.draft_text||"").filter(x=>x.type!=="same"||x.text.trim());
@@ -11052,7 +11071,10 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
     })();
   },[loaded,blocks.length,athlete.id]);
 
-  const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+  // Bare YYYY-MM-DD dates pin to noon UTC first — new Date("2026-08-19") is UTC
+  // midnight, which renders a day early in US timezones (T57: the drafts card
+  // said "planned for Aug 18" on a draft scheduled for the 19th).
+  const fmtD = (d) => { if(!d) return ""; const s=/^\d{4}-\d{2}-\d{2}$/.test(String(d))?`${d}T12:00:00Z`:d; return new Date(s).toLocaleDateString("en-US",{month:"short",day:"numeric"}); };
   const firstLine = (t) => (String(t||"").split("\n").find(l=>l.trim())||"").slice(0,80);
   const sub = {fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:2,color:CA.muted,textTransform:"uppercase",marginBottom:8};
   const card = {border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10};
@@ -11354,8 +11376,10 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
       if(!lift.tracked) return;
       const lbs=toLbs(m.weight, m.unit);
       if(!(lbs>0)) return;
-      if(!byEx[lift.id]) byEx[lift.id]={key:lift.id,name:lift.name,e1rm:lbs,unit:"lbs",actual:true,benchKey:lift.benchKey,bwLoaded:lift.bwLoaded};
-      else if(lbs>=byEx[lift.id].e1rm){ byEx[lift.id].e1rm=lbs; byEx[lift.id].actual=true; }
+      if(!byEx[lift.id]) byEx[lift.id]={key:lift.id,name:lift.name,e1rm:lbs,unit:"lbs",actual:true,estRaw:0,benchKey:lift.benchKey,bwLoaded:lift.bwLoaded};
+      // Keep the pre-overlay estimate around: the PR tab's "est." contrast line
+      // must show the log-derived number, not echo the actual back (T57).
+      else if(lbs>=byEx[lift.id].e1rm){ if(!byEx[lift.id].actual) byEx[lift.id].estRaw=byEx[lift.id].e1rm; byEx[lift.id].e1rm=lbs; byEx[lift.id].actual=true; }
     });
 
     // Benchmark lifts the athlete has logged (or has an actual 1RM for). benchKey is
@@ -11408,7 +11432,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
 
     // PR tab — manual (actual) 1RM takes precedence over the estimated 1RM above.
     const prMap = {};
-    Object.entries(byEx).forEach(([k,ex])=>{ prMap[k]={key:k,name:ex.name,unit:ex.unit,estimated:ex.e1rm,manual:null,bwLoaded:ex.bwLoaded}; });
+    Object.entries(byEx).forEach(([k,ex])=>{ prMap[k]={key:k,name:ex.name,unit:ex.unit,estimated:ex.actual?(ex.estRaw||0):ex.e1rm,manual:null,bwLoaded:ex.bwLoaded}; });
     manualRMs.forEach(m=>{
       // Resolve to the current canonical id so manual 1RMs saved before a taxonomy
       // update (e.g. under "bench" or "weighted sit up") still land on the merged lift.
@@ -11592,7 +11616,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                 <span style={{fontSize:18}}>⚠</span>
                 <div>
                   <div style={{color:CA.accent,fontSize:12,fontWeight:600}}>Add your weight to see benchmarks</div>
-                  <div style={{color:CA.muted2,fontSize:11,marginTop:2}}>Go to Settings to add your weight in lbs.</div>
+                  <div style={{color:CA.muted2,fontSize:11,marginTop:2}}>Go to Settings to add your weight in {unitLabel()}.</div>
                 </div>
               </div>
             )}
@@ -11704,7 +11728,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
                   <div style={{fontFamily:"ui-monospace,Menlo,monospace",fontSize:8.5,color:pending?CA.cyan:CA.faint,marginTop:5,letterSpacing:0.3}}>
                     {pending
                       ? <>TAP RANK UP TO CLAIM {TIER_NAMES[computedTier]}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>
-                      : <>{isTop ? "TRULY INCREDIBLE 🏆" : `${toNext} ${toNext===1?"LB":"LBS"} TO ${TIER_NAMES[tierIdx+1]}`}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>}
+                      : <>{isTop ? "TRULY INCREDIBLE 🏆" : `${displayStat(toNext)} ${unitLabel()==="kg"?"KG":displayStat(toNext)===1?"LB":"LBS"} TO ${TIER_NAMES[tierIdx+1]}`}<span style={{color:CA.steel}}>{"  ·  "+bwSub}</span></>}
                   </div>
                 </div>
               );

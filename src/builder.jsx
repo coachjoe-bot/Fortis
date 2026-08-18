@@ -124,7 +124,10 @@ function recentAttemptsLine(rows) {
     if (typeof pd === "string") { try { pd = JSON.parse(pd); } catch { pd = null; } }
     for (const a of (pd && Array.isArray(pd.pr_attempts)) ? pd.pr_attempts : []) {
       if (!a?.exercise || !a.weight) continue;
-      const d = String(w.created_at || "").slice(5, 10);
+      // Full weekday+date computed HERE — a bare "08-16" made the interviewer
+      // derive the weekday itself and it called a Sunday attempt "Tuesday" (T57).
+      const dt = new Date(w.created_at || 0);
+      const d = isNaN(dt.getTime()) ? "" : dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
       out.push(`${a.exercise} ${a.weight}${a.unit === "kg" ? "kg" : " lb"}${a.reps > 1 ? ` x${a.reps}` : ""} on ${d}: ${a.achieved === false ? "MISSED" : "made"}`);
       if (out.length >= 6) return out.join("; ");
     }
