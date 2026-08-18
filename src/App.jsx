@@ -66,7 +66,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 // governing when Joe offers to loop the human coach in (see file header).
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
-import { fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
+import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -1322,8 +1322,11 @@ export const fmtWeight = (weight, unit) => {
 };
 
 // Normalize any weight to lbs-equivalent for cross-unit comparison.
-// T55: conversion is single-sourced in units.js; re-exported for legacy importers.
-export { toLbs } from "./units.js";
+// T55: conversion is single-sourced in units.js; imported above (App.jsx uses it
+// in 21 places) and re-exported for legacy importers. A bare `export {x} from`
+// creates NO local binding — that exact mistake shipped a prod ReferenceError
+// ("Can't find variable: toLbs") that broke workout logging on 08-17.
+export { toLbs };
 
 // Crew PR moments only fire on a TIER change (a rank-up), never every PR (build
 // spec §8) — same tier ladder the Benchmarks power cells use (BENCH_THRESHOLDS/
