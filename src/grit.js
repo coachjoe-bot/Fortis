@@ -879,12 +879,13 @@ export function rateOfProgress(rows, lift, goalLbs, goalDateIso, { minWeeks = 2 
       if (e > 0) points.push({ t: effectiveDate(w).getTime(), e });
     }
   }
-  if (points.length < 2) return { known: false };
+  if (points.length < 2) return { known: false, points: points.length };
   points.sort((a, b) => a.t - b.t);
   const first = points[0], best = points.reduce((a, b) => (b.e > a.e ? b : a));
   const weeks = Math.max(minWeeks, (best.t - first.t) / 6.048e8);
   const observedPerWeek = (best.e - first.e) / weeks;
-  const out = { known: true, current: Math.round(best.e), observedPerWeek: Math.round(observedPerWeek * 10) / 10 };
+  const out = { known: true, current: Math.round(best.e), observedPerWeek: Math.round(observedPerWeek * 10) / 10,
+    points: points.length, spanDays: Math.round((points[points.length - 1].t - first.t) / 86400000) };
   if (goalLbs > 0 && goalDateIso) {
     const weeksLeft = Math.max(0.5, (Date.parse(goalDateIso) - Date.now()) / 6.048e8);
     out.requiredPerWeek = Math.round(((goalLbs - best.e) / weeksLeft) * 10) / 10;
@@ -892,4 +893,80 @@ export function rateOfProgress(rows, lift, goalLbs, goalDateIso, { minWeeks = 2 
     out.feasible = out.requiredPerWeek <= Math.max(observedPerWeek * 1.5, 1);
   }
   return out;
+}
+
+// ─── FEASIBILITY ARGUMENT (W39.5, Will-blessed 08-17) ─────────────────────────
+// History-gated: an athlete with a real logged trend on the goal lift gets the
+// full code-computed argument; below the gate the model is TOLD there is no
+// trend and forbidden from claiming one. Never blocks a goal — it informs the
+// Builder's timeline negotiation, once.
+export const FEASIBILITY_GATE = { points: 6, spanDays: 21 };
+
+// Find the benchmark lift a free-text goal names ("Bench 315 by Dec 25" → bench
+// press; "Front squat 275" → front squat, not back squat). resolveLift is fuzzy
+// — "bench by december" still resolves benchKey "bench press" — so every n-gram
+// match is TRIMMED to its core: drop edge words while the benchKey holds, and a
+// dropped word that yields a DIFFERENT benchKey (front|squat) stops the trim.
+// Longest core wins, so "front squat" beats the bare "squat" inside it.
+export function goalLiftFromText(goalText) {
+  const words = String(goalText || "").toLowerCase().replace(/[^a-z&\s]/g, " ").split(/\s+/).filter(Boolean);
+  const cores = new Map(); // core phrase -> resolved lift
+  for (let n = Math.min(3, words.length); n >= 1; n--) {
+    for (let i = 0; i + n <= words.length; i++) {
+      let seg = words.slice(i, i + n);
+      const key = resolveLift(seg.join(" ")).benchKey;
+      if (!key) continue;
+      const bk = (arr) => resolveLift(arr.join(" ")).benchKey;
+      let moved = true;
+      while (moved && seg.length > 1) {
+        moved = false;
+        if (bk(seg.slice(1)) === key) { seg = seg.slice(1); moved = true; continue; }
+        if (bk(seg.slice(0, -1)) === key) { seg = seg.slice(0, -1); moved = true; }
+      }
+      const core = seg.join(" ");
+      if (!cores.has(core)) cores.set(core, resolveLift(core));
+    }
+  }
+  let best = null, bestLen = 0;
+  for (const [core, lift] of cores) {
+    if (core.split(" ").length > bestLen) { best = lift; bestLen = core.split(" ").length; }
+  }
+  return best;
+}
+
+// The goal's target load in lbs (kg converts; date-like small numbers ignored).
+export function goalTargetLbs(goalText) {
+  let best = 0;
+  for (const m of String(goalText || "").matchAll(/(\d{2,4}(?:\.\d+)?)\s*(kg|lbs?|lb)?/gi)) {
+    const n = Number(m[1]);
+    if (!n) continue;
+    const lbs = /kg/i.test(m[2] || "") ? toLbs(n, "kg") : n;
+    if (lbs >= 45 && lbs <= 1200 && lbs > best) best = lbs;
+  }
+  return best || null;
+}
+
+// One prompt-ready line. rows = workout rows; timelineText = the timeline cell
+// ("YYYY-MM-DD to YYYY-MM-DD") whose end date anchors the required rate.
+export function feasibilityLine(rows, goalText, timelineText) {
+  const lift = goalLiftFromText(goalText);
+  const target = goalTargetLbs(goalText);
+  if (!lift || !target) return "";
+  const endM = String(timelineText || "").match(/(\d{4}-\d{2}-\d{2})\s*$/);
+  const rp = rateOfProgress(rows, lift.id, target, endM ? endM[1] : null);
+  const full = rp.known && rp.points >= FEASIBILITY_GATE.points && rp.spanDays >= FEASIBILITY_GATE.spanDays;
+  if (!full) {
+    return `FEASIBILITY (code-computed): not enough logged ${lift.name} history for a trend (${rp.points || 0} sessions). Pace the timeline by doctrine — make NO claims about what their data shows.`;
+  }
+  let line = `FEASIBILITY (code-computed): ${lift.name} trend ${rp.observedPerWeek >= 0 ? "+" : ""}${rp.observedPerWeek} lb/wk over ${rp.spanDays} days (${rp.points} sessions), current est ${rp.current} lb; goal ${Math.round(target)} lb`;
+  if (rp.requiredPerWeek != null) {
+    const verdict = rp.requiredPerWeek <= 0 ? "ALREADY THERE — retest and retire or raise the goal"
+      : rp.requiredPerWeek <= Math.max(rp.observedPerWeek, 0) * 1.1 + 0.25 ? "ON TRACK"
+      : rp.requiredPerWeek <= Math.max(rp.observedPerWeek, 0) * 1.5 + 1 ? "TIGHT — say what has to be true"
+      : "UNREALISTIC IN THIS WINDOW — negotiate the date or the number, or set a block gate";
+    line += ` needs ${rp.requiredPerWeek} lb/wk over the ${rp.weeksLeft} wk left — ${verdict}.`;
+  } else {
+    line += `; no end date pinned yet — use this trend when proposing one.`;
+  }
+  return line;
 }

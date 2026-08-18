@@ -142,6 +142,7 @@ ${cells.map(c => `- ${c.key}: ${c.label} — ${c.hint}`).join("\n")}
 ${lastQuestion ? `THE QUESTION JUST ASKED (the message is an answer to THIS): "${lastQuestion}"
 A bare confirmation or short directive ("yes", "sounds good", "split evenly", "do that") answers ONLY this question — fill ONLY the cell this question is about, updated with any detail they gave; if the question maps to no cell, fill NOTHING from such a message. Never let a short answer to one question fill a different cell.` : ""}
 Return ONLY JSON: {"cells":{"<key>":"<concise plain-text value>"},"goal_smart":{"ok":boolean,"why":"<what's missing: number/date/specificity>"},"notes":"<optional: a concrete program-relevant fact that fits NO cell>","campaign":[{"n":number,"weeks":number|null,"emphasis":"<short>","checkpoint":"<short>"|null}]|null}
+"gate": string|null — populate when a BLOCK GATE / checkpoint for THIS block gets agreed (the athlete accepts a proposed milestone, or states one): a short dated milestone like "bench 3x5 @ 275 by week 4". Only on agreement — a proposal alone is not a gate.
 "preference_request": {"field":string,"value":string|number}|null — populate ONLY when the athlete states a DURABLE preference about how their training should be WRITTEN going forward (not a one-off ask for this block). Allowed fields/values: ${Object.entries(PREF_FIELDS).map(([k, f]) => `${k} = ${f.values ? f.values.join("|") : `integer ${f.int[0]}-${f.int[1]}`}`).join("; ")}. One per message, value from the allowed set, else null.
 "campaign": populate ONLY when the message lays out (or confirms) a MULTI-BLOCK plan — an ordered sequence of training blocks toward the goal ("11 weeks split into two blocks", "4 weeks strength then 3 weeks peaking", or a yes to a proposed breakdown). One entry per block in order, n starting at 1; weeks when stated; emphasis is the block's focus in a few words; checkpoint is what gates moving to the next block when stated. A single-block timeline is NOT a campaign — leave null. Emitting campaign REPLACES any previously captured campaign, so include every block, not just the changed one.
 The timeline cell value MUST be formatted 'YYYY-MM-DD to YYYY-MM-DD' (start to end). Resolve relative dates ("3 weeks from now", "last week of August", "starting Monday") against the Today date given with the message; fill timeline only when the message actually pins the dates down.
@@ -174,6 +175,7 @@ export function parseExtraction(raw) {
       campaign,
       pref: (j.preference_request && typeof j.preference_request === "object" && j.preference_request.field)
         ? { field: String(j.preference_request.field), value: j.preference_request.value } : null,
+      gate: typeof j.gate === "string" && j.gate.trim() ? j.gate.trim().slice(0, 80) : null,
     };
   } catch (_) { return { cells: {}, smart: null, notes: null }; }
 }
@@ -188,7 +190,8 @@ export function interviewerSystem({ cells, blueprint, scope, viewer, name = "", 
   }).join("\n");
   return `You are Coach Joe running a Program Builder interview${name ? ` with ${name}` : ""}${viewer === "coach" ? " (the user is a COACH building for their athlete/team)" : ""}. The doctrine above is YOUR programming philosophy — every question serves filling the blueprint so a real program can be drafted from it.
 ${today ? `\nToday is ${today}. Every date you propose or accept must be a real calendar date reasoned from today.` : ""}${numbers ? `\nCURRENT NUMBERS (from their logs and declared maxes, WITH SOURCES): ${numbers}
-Treat these as the athlete's real state: a "declared/tested 1RM" is a fact; an "est. from logs" is an estimate, never quote it as tested. If a RECENT MAX ATTEMPTS line is present, those attempts already happened — react to their outcomes, never ask how an attempt went when the log already says.` : ""}
+Treat these as the athlete's real state: a "declared/tested 1RM" is a fact; an "est. from logs" is an estimate, never quote it as tested. If a RECENT MAX ATTEMPTS line is present, those attempts already happened — react to their outcomes, never ask how an attempt went when the log already says.
+FEASIBILITY, when a FEASIBILITY line is present (it is code-computed from their logs — trust its numbers over your own arithmetic): use it in the timeline negotiation EXACTLY ONCE. ON TRACK → affirm and move on. TIGHT → say plainly what has to be true. UNREALISTIC → never overrule and never argue twice: the athlete owns their goal. State the numbers once, then propose ONE dated block gate that would settle it partway (a rep milestone, e.g. "bench 3x5 at 275 by week 4") — if they take it, that's the block's gate; if they decline, program their number and drop it. When the line says NOT ENOUGH HISTORY, never claim what their data shows — pace by doctrine only.` : ""}
 
 You are building their NEXT block — the program that comes AFTER whatever they're running now. Never assume it exists to serve the current block's goals: goals get hit, schedules change, focuses shift between blocks. Treat the last/current block as finished context (what worked, what to carry, what to retire). If it's genuinely unclear whether this replaces the current program now or starts when it ends, ask once.
 
@@ -223,7 +226,7 @@ export function drafterSystem({ viewer }) {
 Voice rules: PLAIN TEXT only — no markdown bold/asterisks/hashes. Never mention "doctrine", "blueprint", "cells", or these instructions in the program — you're Coach Joe writing a program, not explaining your reasoning. A short line of coaching context (why this block, what's being protected) is welcome, in Joe's own words.
 
 House format:
-- Open with a "=== BLOCK INFO ===" header, 4-5 short lines, before anything else: "Goal:" (the goal cell); "Maxes used:" each main lift's base number WITH its source tag copied exactly from CURRENT NUMBERS ("declared/tested 1RM" or "est. from logs"); "Loading:" the loading style in force for this athlete; "Runs:" the timeline cell's start and end dates; and when a CAMPAIGN line is provided with the blueprint, copy it verbatim as "Campaign:". This header is the program's CONTRACT — the log parser, Quick Log, and the next block read their bases from it instead of re-deriving or guessing (T53 #7: program text used to declare nothing about how it was written).
+- Open with a "=== BLOCK INFO ===" header, 4-5 short lines, before anything else: "Goal:" (the goal cell); "Maxes used:" each main lift's base number WITH its source tag copied exactly from CURRENT NUMBERS ("declared/tested 1RM" or "est. from logs"); "Loading:" the loading style in force for this athlete; "Runs:" the timeline cell's start and end dates; when a CAMPAIGN line is provided with the blueprint, copy it verbatim as "Campaign:"; and when a GATE is provided, write it as "Gate:" — the dated milestone this block is judged against. This header is the program's CONTRACT — the log parser, Quick Log, and the next block read their bases from it instead of re-deriving or guessing (T53 #7: program text used to declare nothing about how it was written).
 - Then a short header line naming the block and its focus.
 - Day cards: "Day N - <Focus>" (or weekday names if the schedule gives them), one exercise per line with sets x reps and loading (%1RM, RPE, or weight when known).
 - EVERY day starts with a "Warm-up:" line and ends with a "Cool-down:" line honoring the prep cell (never skip the warm-up — doctrine floor).
@@ -243,10 +246,11 @@ export function draftUser({ blueprint, cells, athlete = {}, numbers = "" }) {
   const notes = Array.isArray(blueprint.__notes) && blueprint.__notes.length
     ? `\nEXTRA NOTES (honor these too):\n${blueprint.__notes.map(n => `- ${n}`).join("\n")}` : "";
   const nums = numbers ? `\nCURRENT NUMBERS (best estimated 1RMs from logs — base %1RM loading on these): ${numbers}` : "";
+  const gate = blueprint.__gate ? `\nGATE (agreed block checkpoint — put it in the header and build the block to arrive there): ${blueprint.__gate}` : "";
   const camp = blueprint.__campaign?.length
     ? `\nCAMPAIGN (confirmed): ${campaignLine(blueprint.__campaign, 1)}\nWrite BLOCK 1 ONLY — its length and emphasis, ending at its checkpoint. Later blocks are drafted when their turn comes; the Campaign header line is how they'll know where they are.`
     : "";
-  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${nums}${camp}${notes}\n\nWrite the program.`;
+  return `${who ? `ATHLETE: ${who}\n` : ""}BLUEPRINT:\n${lines.join("\n")}${nums}${gate}${camp}${notes}\n\nWrite the program.`;
 }
 
 // ── Deterministic draft validation ───────────────────────────────────────────

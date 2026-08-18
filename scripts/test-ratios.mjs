@@ -53,5 +53,23 @@ ok(rateOfProgress([mk("2026-08-16T12:00:00Z", 300, 1)], "bench").known === false
   ok(!("loading_language=percent" in cleared), "explicit decline zeroes the counter");
 }
 
+// ── W39.5 feasibility engine ──
+{
+  const { goalLiftFromText, goalTargetLbs, feasibilityLine } = await import("../src/grit.js");
+  ok(goalLiftFromText("Bench 315 by December 25")?.id === "bench press", "goal lift: bench (date words trimmed)");
+  ok(goalLiftFromText("Front squat 275 by October")?.id === "front squat", "goal lift: front squat beats bare squat");
+  ok(goalLiftFromText("get generally stronger") === null, "no lift → null");
+  ok(goalTargetLbs("Bench 315 by December 25") === 315, "target ignores the date's 25");
+  ok(Math.abs(goalTargetLbs("snatch 120kg") - 264.55) < 0.1, "kg target converts");
+  const gen = (iso, w, r) => ({ created_at: iso, parsed_data: { exercises: [{ name: "Bench Press", weight: w, reps: r, unit: "lbs", sets: 1 }] } });
+  const hist = [gen("2026-06-20T12:00:00Z", 245, 3), gen("2026-07-01T12:00:00Z", 250, 3), gen("2026-07-10T12:00:00Z", 255, 2),
+                gen("2026-07-20T12:00:00Z", 255, 3), gen("2026-08-01T12:00:00Z", 260, 2), gen("2026-08-15T12:00:00Z", 265, 2)];
+  const full = feasibilityLine(hist, "Bench 315 by December 25", "2026-08-18 to 2026-12-25");
+  ok(/trend \+/.test(full) && /UNREALISTIC|TIGHT|ON TRACK/.test(full), `full argument with verdict (got "${full.slice(0, 80)}…")`);
+  const light = feasibilityLine(hist.slice(0, 3), "Bench 315 by December 25", "2026-08-18 to 2026-12-25");
+  ok(/not enough logged/.test(light) && /NO claims/.test(light), "below the gate → light touch, no data claims");
+  ok(feasibilityLine(hist, "get stronger", "") === "", "no lift/target → no line");
+}
+
 console.log(`\n${pass}/${pass + fail} passed${fail ? " — FAILED" : ""}`);
 process.exit(fail ? 1 : 0);

@@ -28,7 +28,7 @@ export function parseBlockInfo(text) {
     const l = lines.find((x) => new RegExp(`^${key}:`, "i").test(x));
     return l ? l.replace(new RegExp(`^${key}:\\s*`, "i"), "").trim() : "";
   };
-  const out = { found: true, goal: get("Goal"), loading: get("Loading"), runs: get("Runs"), maxes: [], campaign: [] };
+  const out = { found: true, goal: get("Goal"), loading: get("Loading"), runs: get("Runs"), gate: get("Gate") || null, maxes: [], campaign: [] };
 
   // "Maxes used: Back Squat 405 lb (declared/tested 1RM), Bench ~275 lb (est. from logs)"
   const maxesLine = get("Maxes used") || get("Maxes");

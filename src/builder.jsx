@@ -20,7 +20,7 @@
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
 import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, sbUpsert, track } from "./App.jsx";
-import { epley1RM, normalizeExName, toLbs, computeGritSnapshot, ratioLimitersLine } from "./grit.js";
+import { epley1RM, normalizeExName, toLbs, computeGritSnapshot, ratioLimitersLine, feasibilityLine } from "./grit.js";
 import { normalizePrefs, prefsPromptLines, validatePref, describePref, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { campaignLine, parseBlockInfo } from "./programContract.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
@@ -257,6 +257,15 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       limiters ? `STRENGTH RATIO READ (code-computed limiters): ${limiters}` : "",
     ].filter(Boolean).join("\n");
   }, [workoutHistory, liftContext, athlete]);
+  // W39.5: the feasibility argument, computed fresh per turn from the CURRENT
+  // goal + timeline cells (they move during the interview).
+  const feasFor = (bp) => {
+    try {
+      return feasibilityLine(workoutHistory,
+        bp?.goal?.value || bp?.goal?.pending || "",
+        bp?.timeline?.value || "");
+    } catch (_) { return ""; }
+  };
   // T53 #2: the rolling athlete_context notes ride with the numbers block into the
   // interviewer and the drafter — data, not instructions (same contract as chat).
   const withNotes = (n) => {
@@ -432,7 +441,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const openInterview = async (bp, sc) => {
     setBusy(true); setErr("");
     try {
-      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name, today: todayStr(), numbers: withNotes(numbers) });
+      const sys = interviewerSystem({ cells: cellsFor(viewer, sc), blueprint: bp, scope: sc, viewer, name: athlete.name, today: todayStr(), numbers: withNotes([numbers, feasFor(bp)].filter(Boolean).join("\n")) });
       const raw = await askClaude({ cached: doctrine(), dynamic: sys }, "Open the interview: greet in one short line, then your first question.", 400, [], "claude-sonnet-5", "program_build");
       const { text, chips: ch } = parseInterviewerReply(raw);
       const t1 = [{ role: "assistant", content: text }];
@@ -490,6 +499,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       // T53 #8: a confirmed multi-block plan replaces the whole campaign (the
       // extractor emits every block, so partial edits can't strand stale ones).
       if (ex.campaign) bp.__campaign = ex.campaign;
+      if (ex.gate) bp.__gate = ex.gate; // W39.5b: the agreed dated checkpoint this block is judged against
       if (ex.pref) {
         const v = validatePref(ex.pref.field, ex.pref.value);
         const cur = liftContext.prefs ? liftContext.prefs[ex.pref.field] : undefined;
@@ -521,7 +531,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         postReadback(bp, t1);
       } else {
         // 2) interviewer — next question (or, at 100%, a brief "noted" ack).
-        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done, today: todayStr(), numbers: withNotes(numbers) });
+        const sys = interviewerSystem({ cells, blueprint: bp, scope, viewer, name: athlete.name, complete: done, today: todayStr(), numbers: withNotes([numbers, feasFor(bp)].filter(Boolean).join("\n")) });
         const raw = await askClaude({ cached: doctrine(), dynamic: sys }, `Conversation so far:\n${transcriptText(t1)}\n\nContinue with your next single question.`, 400, [], "claude-sonnet-5", "program_build");
         const { text, chips: ch } = parseInterviewerReply(raw);
         const t2 = [...t1, { role: "assistant", content: text }];
@@ -541,6 +551,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   const readbackText = (bp) => {
     const lines = cells.map(c => `${c.label}: ${bp[c.key]?.value?.trim() || "—"}`);
     if (bp.__campaign?.length) lines.push(`Campaign: ${campaignLine(bp.__campaign, 1)} (drafting Block 1 now)`);
+    if (bp.__gate) lines.push(`Block gate: ${bp.__gate}`);
     return `Before I write a rep, read this back — it's exactly what I'll draft from:
 
 ${lines.join("\n")}
@@ -569,7 +580,7 @@ Anything wrong is a one-word fix now and a wasted week later. Good to build?`;
       // A rebuild or a named-phase reference carries the old phase's full text
       // as the starting template.
       if (liftContext.prefs) blueprint.__prefs = liftContext.prefs;
-      let userPrompt = draftUser({ blueprint, cells, athlete, numbers: withNotes(numbers) });
+      let userPrompt = draftUser({ blueprint, cells, athlete, numbers: withNotes([numbers, feasFor(blueprint)].filter(Boolean).join("\n")) });
       const tmpl = rebuildFrom?.program_text || templateRef.current?.program_text;
       if (tmpl) userPrompt += `\n\nPREVIOUS BLOCK (starting template — keep its working structure unless the blueprint says otherwise):\n${tmpl.slice(0, 3000)}`;
       startGeneration(id, { cached: doctrine(), sys, userPrompt, blueprint, cells });

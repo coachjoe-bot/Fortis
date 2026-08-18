@@ -9,6 +9,7 @@ Goal: Bench 315 by Dec 25
 Maxes used: Back Squat 405 lb (declared/tested 1RM), Bench Press ~275 lb (est. from logs), Snatch 113 kg (declared/tested 1RM)
 Loading: percentages and RPE mixed
 Runs: 2026-08-18 to 2026-09-14
+Gate: bench 3x5 @ 275 by week 4
 Campaign: Block 1 of 3 (this one): 4 wk strength base → checkpoint bench 3x5 @ 275; Block 2 of 3: 4 wk intensification; Block 3 of 3: 2 wk peak → checkpoint bench single
 
 WILL // FALL BLOCK 1 — Strength Base
@@ -22,6 +23,8 @@ ok(p.found, "header found");
 ok(p.goal === "Bench 315 by Dec 25", `goal parsed (got "${p.goal}")`);
 ok(p.loading.includes("RPE"), "loading parsed");
 ok(p.runs === "2026-08-18 to 2026-09-14", "runs parsed");
+ok(p.gate === "bench 3x5 @ 275 by week 4", `gate parsed (got "${p.gate}")`);
+ok(parseBlockInfo("=== BLOCK INFO ===\nGoal: g\n\nDay 1").gate === null, "no gate → null");
 ok(p.maxes.length === 3, `3 maxes (got ${p.maxes.length})`);
 ok(p.maxes[0].lift === "Back Squat" && p.maxes[0].weight === 405 && p.maxes[0].source === "declared", "declared max parsed");
 ok(p.maxes[1].source === "estimated", "estimated max tagged");

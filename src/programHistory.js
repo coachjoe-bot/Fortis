@@ -26,6 +26,7 @@
 // scripts/test-program-history.mjs.
 import { lineDiff } from "./programDiff.js";
 import { currentPosition } from "./programPosition.js";
+import { parseBlockInfo } from "./programContract.js";
 
 // Fraction of the COMBINED line count that changed between two program texts.
 // 0 = identical, 1 = nothing in common. Exported for the test suite.
@@ -110,10 +111,13 @@ async function closeBlock(athleteId, row, deps, completedAtOverride = null) {
       const pos = currentPosition({ programText: String(row.program_text || ""), startedOn: row.applied_at, sessions: [] });
       if (pos.weekKnown && pos.weekCount > 0) declaredWeeks = pos.weekCount;
     } catch (_) {}
+    let gate = null;
+    try { gate = parseBlockInfo(String(row.program_text || "")).gate || null; } catch (_) {}
     const factBits = [
       row.applied_at ? `ran ${String(row.applied_at).slice(0, 10)} → ${completedAt.slice(0, 10)}${ranDays ? ` (${ranDays} days)` : ""}` : null,
       `${(Array.isArray(logs) ? logs.length : 0)} workout rows logged in the block`,
       declaredWeeks ? `the program itself is a ${declaredWeeks}-week block` : null,
+      gate ? `the block's agreed GATE was: ${gate} — judge it plainly in the recap (hit or missed, from the logs)` : null,
     ].filter(Boolean).join(" · ");
     const user =
       `BLOCK FACTS (computed by the app — authoritative): ${factBits}\n\n` +
