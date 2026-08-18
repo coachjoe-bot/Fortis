@@ -360,8 +360,12 @@ function clearAuthSession(){
   CURRENT_AUTH = null;
 }
 
-const dataApi = async (op,table,{data,id,params}={}) => {
-  const r = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth:CURRENT_AUTH,op,table,data,id,params})});
+const dataApi = async (op,table,{data,id,params,conflict}={}) => {
+  // T57 (live QA find, 08-18): `conflict` was silently DROPPED here — the
+  // destructure never picked it up, so every authenticated sbUpsert reached the
+  // gateway with conflict:undefined and 400'd ("conflict must be text") behind
+  // the caller's catch. The mocks accept any upsert, so no suite ever saw it.
+  const r = await fetch("/api/data",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth:CURRENT_AUTH,op,table,data,id,params,conflict})});
   const t = await r.text(); let d; try{ d = t?JSON.parse(t):null; }catch(_){ d=t; }
   if(!r.ok) throw new Error((d&&d.error)||`Write failed (${r.status})`);
   return d;
