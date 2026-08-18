@@ -50,7 +50,7 @@ import {
 // Lock-screen session card (T40): today's session pinned as a notification. The
 // card is a projection of the Quick Log draft — never model chat text.
 import {
-  asksTodaysWorkout, asksLockScreenCard, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
+  asksTodaysWorkout, asksLockScreenCard, asksStartingWorkout, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
   repinSessionCard, clearSessionCard, activeSessionCard, expireSessionCardIfStale,
   sessionCardDeclinedToday, markSessionCardDeclined,
 } from "./sessionCard.js";
@@ -2282,6 +2282,11 @@ ${IS_DARK?`
 @keyframes ldd{0%,60%,100%{opacity:.35;transform:translateY(0);}30%{opacity:1;transform:translateY(-4px);}}
 /* PR "NEW MAX" stamp — straight on, cyan */
 .stampstage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:700;pointer-events:none;}
+/* T56: dimming scrim behind the stamps — they used to slam straight over busy
+   chat text with zero separation, which read as "the animation is broken"
+   (Will, 08-17/18). Fades on the stamp's own clock. */
+.stampstage::before{content:"";position:absolute;inset:0;background:${IS_DARK?"rgba(2,6,14,.5)":"rgba(228,230,235,.6)"};backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);opacity:0;animation:stampScrim 2.6s ease forwards;}
+@keyframes stampScrim{0%{opacity:0;}10%{opacity:1;}78%{opacity:1;}100%{opacity:0;}}
 ${IS_DARK?`
 .stamp{border:3px solid ${CA.cyan};border-radius:12px;padding:16px 30px;transform:scale(2.4);opacity:0;text-align:center;background:rgba(4,10,20,.72);box-shadow:0 0 40px ${CA.cyan};}
 `:`
@@ -6513,7 +6518,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // so nothing here depends on its result) — run them in ONE parallel batch
         // instead of the old five-step waterfall. Each is individually caught so a
         // single failed read degrades that feature instead of the whole boot.
-        const [_fa, goals, ctxRows, digestRows, logs] = await Promise.all([
+        let [_fa, goals, ctxRows, digestRows, logs] = await Promise.all([
           // Re-fetch athlete so JoBot has the latest program_text even if the
           // coach set it after this athlete logged in.
           idApi("get-athlete",{athleteId:athlete.id,pin:athlete.pin}).catch(()=>null),
@@ -6523,6 +6528,21 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           // Free tier: no session memory — skip loading workout history
           tier!=="free" ? sbRead("workouts",`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=100&select=*`).catch(()=>[]) : Promise.resolve([]),
         ]);
+        // T56 (Will's gym report 08-18): ONE dropped read on gym cellular used to
+        // silently downgrade a programmed athlete's open to the generic greeting —
+        // readsFailed skipped the today's-session opener with no retry. Retry the
+        // two loads the opener depends on once, when the OS says we're online.
+        if(!_fa && (typeof navigator==="undefined" || navigator.onLine!==false)){
+          try{
+            const [fa2, logs2] = await Promise.all([
+              idApi("get-athlete",{athleteId:athlete.id,pin:athlete.pin}).catch(()=>null),
+              (Array.isArray(logs)&&logs.length>0) ? Promise.resolve(logs)
+                : sbRead("workouts",`?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=100&select=*`).catch(()=>[]),
+            ]);
+            if(fa2) _fa = fa2;
+            if((!logs||!logs.length) && Array.isArray(logs2) && logs2.length) logs = logs2;
+          }catch(_){}
+        }
         const freshAthlete = _fa?.athlete ? [_fa.athlete] : [];
         if(freshAthlete.length>0){
           const fa = freshAthlete[0];
@@ -6614,11 +6634,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
             } else {
-              // Rest day or nothing to prescribe — fall back to the normal greeting.
-              setMessages(m=> fresh(m) ? [{role:"assistant",content:bootGreeting(openerAthlete.name, tier, lastLog)}] : m);
+              // T56: REST_DAY is an answer, not a shrug — say it. The generic
+              // "what have you been up to" greeting on a programmed athlete's
+              // training-day open read as the feature being broken (Will, 08-18).
+              setMessages(m=> fresh(m) ? [{role:"assistant",content:`Rest day on your block today, ${openerAthlete.name}. Recovery is training too. Anything sore or worth noting from the last session, tell me here.`}] : m);
             }
           }catch(_){
-            setMessages(m=> (m.length===0) ? [{role:"assistant",content:bootGreeting(openerAthlete.name, tier, lastLog)}] : m);
+            setMessages(m=> (m.length===0) ? [{role:"assistant",content:`What's up, ${openerAthlete.name}. Couldn't line up today's session just now — say "what's my workout today" and I'll pull it right up.`}] : m);
           }
           setOpenerLoading(false);
           return;
@@ -8102,20 +8124,44 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // the model's reply — nothing for the model to get wrong. One offer per
       // day, never stacked on another pending chip, only when there's a program
       // to card.
-      if((asksTodaysWorkout(msg) || asksLockScreenCard(msg)) && !chipSetThisSend && sessionCardSupported()
-         && hasProgram && !activeSessionCard(updatedAthlete.id)
-         && !sessionCardDeclinedToday(updatedAthlete.id)){
-        setSessionCardPending(true); chipSetThisSend = true;
-        // A direct lock-screen ask gets a direct yes (T55 — Joe once denied this);
-        // the what's-today phrasing keeps the softer offer.
-        followUp(asksLockScreenCard(msg)
-          ? "Can do. I'll pin today's session to your lock screen — if notifications are off you'll get the allow prompt first. It clears itself when you log."
-          : "Want today's session on your lock screen while you train? It clears itself when you log.");
+      {
+        const explicitCardAsk = asksLockScreenCard(msg);
+        const startingNow = asksStartingWorkout(msg);
+        if((asksTodaysWorkout(msg) || explicitCardAsk || startingNow) && !chipSetThisSend && sessionCardSupported()
+           && hasProgram && !activeSessionCard(updatedAthlete.id)
+           && (explicitCardAsk || !sessionCardDeclinedToday(updatedAthlete.id))){
+          // T56 (Will's spec, 08-18): permission already granted (or native, where
+          // pinSessionCard reports blocked truthfully) → ZERO-TAP pin. The chip
+          // survives only for the web ungranted case, where accepting IS the
+          // browser's permission prompt. An explicit ask overrides today's earlier
+          // decline — they're asking NOW.
+          if(notifPermission()==="granted" || isNativeIOS()){
+            chipSetThisSend = true;
+            try{
+              // 8s cap: navigator.serviceWorker.ready can hang forever (private
+              // mode, dead SW) and a silent no-reply is the worst outcome here.
+              const res = await Promise.race([
+                pinSessionCard(updatedAthlete),
+                new Promise((_,rej)=>setTimeout(()=>rej(new Error("pin timeout")),8000)),
+              ]);
+              followUp(res.rest ? "Today reads as a rest day on your program, nothing to pin. Enjoy it."
+                : res.shown ? "Today's session is on your lock screen. It clears itself when you log."
+                : "Couldn't pin it, your device is blocking WILCO notifications. Settings > Notifications > WILCO, flip them on, then ask me again.");
+            }catch(_){ followUp("Couldn't pin it just now, ask me again in a minute."); }
+          } else {
+            setSessionCardPending(true); chipSetThisSend = true;
+            followUp(explicitCardAsk
+              ? "Can do. Tap below and I'll pin today's session to your lock screen — you'll get the notifications prompt first. It clears itself when you log."
+              : "Want today's session on your lock screen while you train? It clears itself when you log.");
+          }
+        }
       }
       // An in-chat swap while a card is pinned re-renders it — "subbed dips for
       // pushdowns" must reach the lock screen in real time. The position-claim
       // hook above covers day corrections; this covers exercise changes.
-      else if(activeSessionCard(updatedAthlete.id)
+      // (Plain if: mutually exclusive with the pin block above, which requires
+      // NO active card — the old else-if hung off a block T56 had to wrap.)
+      if(activeSessionCard(updatedAthlete.id)
          && /\bsub(?:bed|bing|stitut\w*)?\b|\bswap(?:ped|ping)?\b|\binstead of\b|\breplac(?:e|ed|ing)\b/i.test(msg)){
         refreshSessionCard(updatedAthlete, newMsgs);
       }

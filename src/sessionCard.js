@@ -45,10 +45,23 @@ export const asksTodaysWorkout = (msg) => TODAYS_WORKOUT_RE.test(String(msg || "
 // know better. Any lock-screen mention aimed at the program/workout now offers
 // the card through the same deterministic path.
 export const LOCKSCREEN_RE =
-  /lock\s*screen|lockscreen/i;
+  /lock\s*screen|lockscreen|home\s*screen|homescreen/i;
 export const asksLockScreenCard = (msg) => {
   const t = String(msg || "");
   return LOCKSCREEN_RE.test(t) && /\b(put|pin|add|show|get|keep|throw|set|program|workout|session|card|widget)\b/i.test(t);
+};
+
+// T56 (Will's spec, 08-18): "when I say I'm starting my workout and notifications
+// are on, the card should just appear." Session-start intent — the third
+// deterministic trigger alongside what's-today and the explicit lock-screen ask.
+export const STARTING_WORKOUT_RE =
+  /\b(start(?:ing)?|about to (?:start|do|hit)|beginning|kicking off)\b[^.!?\n]{0,30}\b(workout|session|lift(?:ing)?|training)\b|\b(?:i'?m |im |just got )(?:at|to|heading to|walking into|on my way to) the gym\b/i;
+// Past-tense talk ("benched at the gym yesterday") is a LOG, not a session start —
+// it would pin a card the log immediately clears.
+const PAST_TENSE_RE = /\b(yesterday|last (?:night|week)|earlier|this morning|logg?ed|did|finished|done)\b/i;
+export const asksStartingWorkout = (msg) => {
+  const t = String(msg || "");
+  return STARTING_WORKOUT_RE.test(t) && !PAST_TENSE_RE.test(t);
 };
 
 // ── card content, from the draft ─────────────────────────────────────────────
