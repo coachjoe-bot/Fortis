@@ -25,3 +25,12 @@ create table if not exists athlete_training_prefs (
 
 -- Gateway-only access, same posture as the other athlete PII tables.
 revoke all on athlete_training_prefs from anon, authenticated;
+
+-- W39.4 (Will, 08-17): silent auto-set after repeated consistent signals, always
+-- reversible. 'auto' joins the source vocab; signals counts un-actioned candidates
+-- per "field=value" key (an explicit decline zeroes its counter — auto-set must
+-- never override a stated no).
+alter table athlete_training_prefs drop constraint if exists athlete_training_prefs_source_check;
+alter table athlete_training_prefs add constraint athlete_training_prefs_source_check
+  check (source in ('chat','builder','settings','auto'));
+alter table athlete_training_prefs add column if not exists signals jsonb not null default '{}'::jsonb;

@@ -67,7 +67,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
 import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
-import { validatePref, normalizePrefs, describePref, prefsPromptLines } from "./trainingPrefs.js";
+import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
@@ -374,11 +374,11 @@ const dataApi = async (op,table,{data,id,params}={}) => {
 // resolved position Quick Log uses instead of re-deriving the day itself.
 // Cached per athlete; busted at the sb* write choke point below so a max
 // declared mid-chat is visible to the very next message.
-let joeCtxCache = { athleteId:null, manualRMs:[], programStartedOn:null, prefs:null, at:0 };
+let joeCtxCache = { athleteId:null, manualRMs:[], programStartedOn:null, prefs:null, prefsRow:null, at:0 };
 const bustJoeCtxCache = (table) => { if(table==="manual_one_rms"||table==="program_history"||table==="athlete_training_prefs") joeCtxCache.at = 0; };
 const getJoeCtx = async (athleteId) => {
   if(joeCtxCache.athleteId===athleteId && Date.now()-joeCtxCache.at < 5*60*1000) return joeCtxCache;
-  let manualRMs = [], programStartedOn = null, prefs = null;
+  let manualRMs = [], programStartedOn = null, prefs = null, prefsRow = null;
   try {
     const [rms, hist, pf] = await Promise.all([
       sbRead("manual_one_rms",`?athlete_id=eq.${athleteId}`),
@@ -388,8 +388,9 @@ const getJoeCtx = async (athleteId) => {
     manualRMs = Array.isArray(rms)?rms:[];
     programStartedOn = (Array.isArray(hist)&&hist[0]?.applied_at)||null;
     prefs = (Array.isArray(pf)&&pf[0]) ? normalizePrefs(pf[0]) : null;
+    prefsRow = (Array.isArray(pf)&&pf[0]) || null;
   } catch(_){ /* chat degrades to history-only, same as before this cache existed */ }
-  joeCtxCache = { athleteId, manualRMs, programStartedOn, prefs, at:Date.now() };
+  joeCtxCache = { athleteId, manualRMs, programStartedOn, prefs, prefsRow, at:Date.now() };
   return joeCtxCache;
 };
 export const sbInsert = async (table,data) => {
@@ -8076,10 +8077,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(parsed.preference_request && !chipSetThisSend){
         const { field, value } = parsed.preference_request || {};
         const v = validatePref(field, value);
-        const cur = (await getJoeCtx(updatedAthlete.id)).prefs;
-        if(v!==undefined && (!cur || cur[field]!==v)){
-          setPrefPending({field, value:v}); chipSetThisSend = true;
-          followUp(`Want me to make that your standing setup? From here on: ${describePref(field, v)}. You can change it any time by telling me.`);
+        const ctx = await getJoeCtx(updatedAthlete.id);
+        if(v!==undefined && (!ctx.prefs || ctx.prefs[field]!==v)){
+          // W39.4: count the signal. Third consistent ask → auto-apply, announced
+          // and reversible (saying the opposite flips it back through this same
+          // path). Otherwise the normal confirm chip.
+          const st = nextSignalState(ctx.prefsRow, field, v);
+          if(st.autoSet){
+            try {
+              await sbUpsert("athlete_training_prefs",{athlete_id:updatedAthlete.id,[field]:v,source:"auto",confirmed_at:new Date().toISOString(),updated_at:new Date().toISOString(),signals:st.signals},"athlete_id");
+              track("pref_auto_set","ai");
+              followUp(`You've asked for that a few times now, so I made it your standing setup: ${describePref(field, v)}. Wrong call? Just tell me and I'll flip it back.`);
+            } catch(_){}
+          } else {
+            sbUpsert("athlete_training_prefs",{athlete_id:updatedAthlete.id,signals:st.signals,updated_at:new Date().toISOString()},"athlete_id").catch(()=>{});
+            setPrefPending({field, value:v}); chipSetThisSend = true;
+            followUp(`Want me to make that your standing setup? From here on: ${describePref(field, v)}. You can change it any time by telling me.`);
+          }
         }
       }
 
@@ -8810,7 +8824,11 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Make it standing
           </button>
-          <button onClick={()=>{setPrefPending(null); setMessages(prev=>[...prev,{role:"assistant",content:"No problem — nothing saved, this session only."}]);}}
+          <button onClick={()=>{
+            const p = prefPending; setPrefPending(null);
+            if(p) sbUpsert("athlete_training_prefs",{athlete_id:athlete.id,signals:clearedSignal(joeCtxCache.prefsRow, p.field, p.value),updated_at:new Date().toISOString()},"athlete_id").catch(()=>{});
+            setMessages(prev=>[...prev,{role:"assistant",content:"No problem — nothing saved, this session only."}]);
+          }}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Just this once
           </button>

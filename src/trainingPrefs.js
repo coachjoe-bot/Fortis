@@ -109,3 +109,28 @@ export function prefsPromptLines(prefs) {
     ? `CONFIRMED TRAINING PREFERENCES (athlete-confirmed, honor them):\n${lines.join("\n")}`
     : "";
 }
+
+// ── Silent auto-set (W39.4, Will 08-17) ──────────────────────────────────────
+// A validated candidate the athlete keeps stating (but never taps to confirm)
+// auto-applies after AUTO_SET_THRESHOLD consistent signals — always announced,
+// always reversible by just telling Joe. An explicit "just this once" decline
+// ZEROES that signal: auto-set must never override a stated no.
+export const AUTO_SET_THRESHOLD = 3;
+export const signalKey = (field, value) => `${field}=${value}`;
+
+// row = the stored athlete_training_prefs row (or null). Returns the updated
+// signals map, the new count, and whether this crossing auto-applies.
+export function nextSignalState(row, field, value) {
+  const signals = { ...(row?.signals || {}) };
+  const k = signalKey(field, value);
+  const count = (Number(signals[k]) || 0) + 1;
+  signals[k] = count;
+  if (count >= AUTO_SET_THRESHOLD) delete signals[k]; // applied → counter retires
+  return { signals, count, autoSet: count >= AUTO_SET_THRESHOLD };
+}
+
+export function clearedSignal(row, field, value) {
+  const signals = { ...(row?.signals || {}) };
+  delete signals[signalKey(field, value)];
+  return signals;
+}

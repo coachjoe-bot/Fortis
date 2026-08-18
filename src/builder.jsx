@@ -21,7 +21,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, sbUpsert, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs, computeGritSnapshot, ratioLimitersLine } from "./grit.js";
-import { normalizePrefs, prefsPromptLines, validatePref, describePref } from "./trainingPrefs.js";
+import { normalizePrefs, prefsPromptLines, validatePref, describePref, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { campaignLine, parseBlockInfo } from "./programContract.js";
 import { diffStats, lineDiff, mergeGuard } from "./programDiff.js";
 import { parseTimeline } from "./programHistory.js";
@@ -213,7 +213,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
   // T53 #1/#2: the resolved-max context (manual_one_rms + prs) and the rolling
   // athlete_context notes that chat and the coach side already read — the Builder
   // was the one feature blind to both.
-  const [liftContext, setLiftContext] = useState({ manual: [], prs: [], notes: "", prefs: null });
+  const [liftContext, setLiftContext] = useState({ manual: [], prs: [], notes: "", prefs: null, prefsRow: null });
   useEffect(() => {
     let on = true;
     (async () => {
@@ -229,6 +229,7 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
         prs: Array.isArray(p) ? p : [],
         notes: (Array.isArray(ctx) && ctx[0]?.content) ? String(ctx[0].content).slice(0, 1200) : "",
         prefs: (Array.isArray(pf) && pf[0]) ? normalizePrefs(pf[0]) : null,
+        prefsRow: (Array.isArray(pf) && pf[0]) || null,
       });
     })();
     return () => { on = false; };
@@ -492,7 +493,19 @@ export function ProgramBuilderPane({ athlete, viewer = "athlete", coachId = null
       if (ex.pref) {
         const v = validatePref(ex.pref.field, ex.pref.value);
         const cur = liftContext.prefs ? liftContext.prefs[ex.pref.field] : undefined;
-        if (v !== undefined && cur !== v) setPrefOffer({ field: ex.pref.field, value: v });
+        if (v !== undefined && cur !== v) {
+          const st = nextSignalState(liftContext.prefsRow, ex.pref.field, v);
+          if (st.autoSet) {
+            sbUpsert("athlete_training_prefs", { athlete_id: athlete.id, [ex.pref.field]: v, source: "auto", confirmed_at: nowIso(), updated_at: nowIso(), signals: st.signals }, "athlete_id")
+              .then(() => setLiftContext(lc => ({ ...lc, prefs: normalizePrefs({ ...(lc.prefs || {}), [ex.pref.field]: v }), prefsRow: { ...(lc.prefsRow || {}), [ex.pref.field]: v, signals: st.signals } })))
+              .catch(() => {});
+          } else {
+            sbUpsert("athlete_training_prefs", { athlete_id: athlete.id, signals: st.signals, updated_at: nowIso() }, "athlete_id")
+              .then(() => setLiftContext(lc => ({ ...lc, prefsRow: { ...(lc.prefsRow || {}), signals: st.signals } })))
+              .catch(() => {});
+            setPrefOffer({ field: ex.pref.field, value: v });
+          }
+        }
       }
       // Named-phase resolver: mentioning a past phase by name loads it as the
       // hand-off + draft template. Deterministic substring match — no AI guessing.
@@ -901,7 +914,10 @@ Anything wrong is a one-word fix now and a wasted week later. Good to build?`;
                   setLiftContext(lc => ({ ...lc, prefs: normalizePrefs({ ...(lc.prefs || {}), [p.field]: p.value }) }));
                 } catch (_) {}
               }}>Make it standing</button>
-              <button style={miniBtn(false)} onClick={() => setPrefOffer(null)}>Just this block</button>
+              <button style={miniBtn(false)} onClick={() => {
+                const p = prefOffer; setPrefOffer(null);
+                if (p) sbUpsert("athlete_training_prefs", { athlete_id: athlete.id, signals: clearedSignal(liftContext.prefsRow, p.field, p.value), updated_at: nowIso() }, "athlete_id").catch(() => {});
+              }}>Just this block</button>
             </div>
           )}
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>

@@ -34,5 +34,24 @@ const goal2 = rateOfProgress(rows, "bench", 340, "2026-12-01");
 ok(goal2.feasible === true, "a 10 lb jump over 15 weeks reads feasible");
 ok(rateOfProgress([mk("2026-08-16T12:00:00Z", 300, 1)], "bench").known === false, "one data point → unknown");
 
+// ── W39.4 signal-state logic (appended here — same pure-math suite family) ──
+{
+  const { nextSignalState, clearedSignal, AUTO_SET_THRESHOLD } = await import("../src/trainingPrefs.js");
+  let row = null;
+  let st = nextSignalState(row, "loading_language", "percent");
+  ok(st.count === 1 && !st.autoSet, "first signal counts, no auto-set");
+  row = { signals: st.signals };
+  st = nextSignalState(row, "loading_language", "percent");
+  ok(st.count === 2 && !st.autoSet, "second signal counts");
+  row = { signals: st.signals };
+  st = nextSignalState(row, "loading_language", "percent");
+  ok(st.count === AUTO_SET_THRESHOLD && st.autoSet, "third consistent signal auto-sets");
+  ok(!("loading_language=percent" in st.signals), "applied counter retires");
+  ok(nextSignalState({ signals: { "loading_language=rpe": 2 } }, "loading_language", "percent").count === 1,
+     "a DIFFERENT value starts its own counter");
+  const cleared = clearedSignal({ signals: { "loading_language=percent": 2 } }, "loading_language", "percent");
+  ok(!("loading_language=percent" in cleared), "explicit decline zeroes the counter");
+}
+
 console.log(`\n${pass}/${pass + fail} passed${fail ? " — FAILED" : ""}`);
 process.exit(fail ? 1 : 0);

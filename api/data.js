@@ -233,14 +233,14 @@ const ATHLETE_COL_ALLOW = {
     cols: new Set([
       "loading_language", "max_update_policy", "testing_style",
       "session_minutes_cap", "movements_per_day_cap", "accessory_load",
-      "source", "confirmed_at", "updated_at",
+      "source", "confirmed_at", "updated_at", "signals",
     ]),
     values: {
       loading_language: (v) => ["percent+rpe", "percent", "rpe", "climb_singles", "fixed_weight"].includes(v),
       max_update_policy: (v) => ["infer", "declared_only", "pr_single_only"].includes(v),
       testing_style: (v) => ["final_week", "test_day", "retest_cycle"].includes(v),
       accessory_load: (v) => ["programmed", "athlete_choice"].includes(v),
-      source: (v) => ["chat", "builder", "settings"].includes(v),
+      source: (v) => ["chat", "builder", "settings", "auto"].includes(v),
       session_minutes_cap: (v) => v == null || (Number.isInteger(v) && v >= 15 && v <= 240),
       movements_per_day_cap: (v) => v == null || (Number.isInteger(v) && v >= 2 && v <= 15),
     },
