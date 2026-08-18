@@ -71,6 +71,28 @@ export function parseBlockInfo(text) {
   return out;
 }
 
+// The program text WITHOUT its BLOCK INFO header — what MY PROGRAM shows once
+// the header renders as a card (T57: the raw "=== BLOCK INFO ===" block read
+// techy in the monospace body). Walks the same lines parseBlockInfo reads, so
+// the two can never disagree about where the header ends. No header → text
+// unchanged.
+export function stripBlockInfo(text) {
+  const t = String(text || "");
+  const m = t.match(HEADER_RE);
+  if (!m) return t;
+  const before = t.slice(0, m.index);
+  const after = t.slice(m.index + m[0].length);
+  const lines = after.split("\n");
+  let i = 0, seen = false;
+  for (; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) { if (seen) { i++; break; } else continue; }
+    if (!/^[A-Za-z][A-Za-z &/]{1,20}:\s/.test(line)) break;
+    seen = true;
+  }
+  return (before + lines.slice(i).join("\n")).replace(/^\s*\n/, "");
+}
+
 // Render a campaign array (from a blueprint's __campaign or parseBlockInfo) as
 // the drafter's Campaign line — the writer half of the same contract.
 export function campaignLine(campaign, currentN = 1) {

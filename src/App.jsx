@@ -68,7 +68,7 @@ import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeReq
 import { FEATURE_INVENTORY } from "./features.js";
 import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
-import { parseBlockInfo } from "./programContract.js";
+import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
 import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
@@ -2891,6 +2891,61 @@ const digestSections = (c) => Array.isArray(c?.sections)&&c.sections.length ? c.
   ["plateau_flag","PLATEAU FLAG"],["unresolved_plateaus","PLATEAUS"],["encouragement","FROM COACH JOE"],
   ["focus_next_week","FOCUS NEXT WEEK"],
 ].filter(([k])=>c&&c[k]).map(([k,l])=>({label:l,body:c[k]}));
+
+// ─── BLOCK INFO card + campaign strip (T57 seam fix) ─────────────────────────
+// The program's own contract header rendered as a card instead of raw
+// "=== BLOCK INFO ===" text inside the monospace body. Pre-contract programs
+// parse to found:false and render nothing — their text shows exactly as before.
+function BlockInfoCard({info}) {
+  if (!info?.found) return null;
+  const rows = [
+    info.goal && ["GOAL", info.goal],
+    info.runs && ["RUNS", info.runs],
+    info.loading && ["LOADING", info.loading],
+    info.gate && ["GATE", info.gate],
+  ].filter(Boolean);
+  if (!rows.length && !(info.maxes||[]).length) return null;
+  return (
+    <div style={{border:`1px solid ${CA.accent}40`,background:`${CA.accent}0d`,borderRadius:10,padding:"10px 13px",marginBottom:12}}>
+      <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:CA.accent,textTransform:"uppercase",marginBottom:6}}>This Block</div>
+      {rows.map(([k,v])=>(
+        <div key={k} style={{display:"flex",gap:10,alignItems:"baseline",marginBottom:3}}>
+          <span style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:1,color:CA.muted,textTransform:"uppercase",width:52,flexShrink:0}}>{k}</span>
+          <span style={{fontSize:12.5,fontWeight:600,color:CA.text,lineHeight:1.45}}>{v}</span>
+        </div>
+      ))}
+      {(info.maxes||[]).length>0&&(
+        <div style={{display:"flex",gap:10,alignItems:"baseline",marginTop:2}}>
+          <span style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:1,color:CA.muted,textTransform:"uppercase",width:52,flexShrink:0}}>MAXES</span>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {info.maxes.map((m,i)=>(
+              <span key={i} title={m.source==="estimated"?"Estimated from your logs":m.source==="declared"?"Declared / tested 1RM":undefined}
+                style={{border:`1px solid ${CA.border}`,background:CA.navy2,borderRadius:6,padding:"2px 7px",fontSize:11,color:CA.muted2,whiteSpace:"nowrap"}}>
+                {m.lift} <b style={{color:CA.text}}>{m.source==="estimated"?"~":""}{m.weight}</b> {m.unit}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+// Campaign strip — one chip per block of the macro (T53 #8/#9), shared by the
+// locked and unlocked Program panes.
+function CampaignStrip({campaign}) {
+  if (!(campaign||[]).length) return null;
+  return (
+    <div className="no-sb" style={{display:"flex",gap:6,overflowX:"auto",marginBottom:12,paddingBottom:2}}>
+      {campaign.map(b=>(
+        <div key={b.n} style={{flexShrink:0,border:`1px solid ${b.current?CA.accent:CA.border}`,background:b.current?`${CA.accent}14`:CA.navy2,borderRadius:9,padding:"7px 11px"}}>
+          <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:b.current?CA.accent:CA.muted,textTransform:"uppercase"}}>Block {b.n}{b.of?` / ${b.of}`:""}{b.current?" · NOW":""}</div>
+          <div style={{fontSize:11.5,fontWeight:600,color:b.current?CA.text:CA.muted2,marginTop:2}}>{b.emphasis}{b.weeks?` · ${b.weeks} wk`:""}</div>
+          {b.checkpoint&&<div style={{fontSize:10,color:CA.muted,marginTop:1}}>gate: {b.checkpoint}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // The Proof tab: this week's front page. Unlike a sealed letter, the front page shows
 // the headlines + snippets, so you see what's inside before opening the full edition.
@@ -6016,7 +6071,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // with no program_modifications trace. Keyed on the saved text, so this only
   // fires when the underlying program actually changed — which is exactly the case
   // where keeping local edits would clobber a newer program.
-  useEffect(()=>{ setAthleteProgramText(athlete.program_text||""); },[athlete.program_text]);
+  useEffect(()=>{ setAthleteProgramText(athlete.program_text||""); setProgramEditing(false); },[athlete.program_text]);
+  // T57: a contract program (BLOCK INFO header) renders as a card + clean body
+  // by default; the raw-text editor is one tap away and stays the only write
+  // path. Pre-contract programs never see the card view — editor as always.
+  const [programEditing,setProgramEditing] = useState(false);
   // Field Mode only: reveals the regular-program editor under the "On Hold" card.
   const [editRegularInField,setEditRegularInField] = useState(false);
   const [athleteProgramSaving,setAthleteProgramSaving] = useState(false);
@@ -9266,31 +9325,44 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   REQUEST A CHANGE
                 </button>
                 <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
-                  {/* T53 #8/#9: campaign strip — programs drafted under the BLOCK INFO
-                      contract carry their own campaign; pre-contract programs parse to
-                      found:false and render exactly as before. */}
+                  {/* T53 #8/#9 + T57: contract header as a card + campaign strip —
+                      programs drafted under the BLOCK INFO contract render their
+                      header styled and the raw "=== BLOCK INFO ===" lines drop out
+                      of the body; pre-contract programs parse to found:false and
+                      render exactly as before. */}
                   {(()=>{
                     const info = parseBlockInfo(athlete.program_text);
-                    if(!info.found || !info.campaign?.length) return null;
-                    return (
-                      <div className="no-sb" style={{display:"flex",gap:6,overflowX:"auto",marginBottom:12,paddingBottom:2}}>
-                        {info.campaign.map(b=>(
-                          <div key={b.n} style={{flexShrink:0,border:`1px solid ${b.current?CA.accent:CA.border}`,background:b.current?`${CA.accent}14`:CA.navy2,borderRadius:9,padding:"7px 11px"}}>
-                            <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:8.5,letterSpacing:1.5,color:b.current?CA.accent:CA.muted,textTransform:"uppercase"}}>Block {b.n}{b.of?` / ${b.of}`:""}{b.current?" · NOW":""}</div>
-                            <div style={{fontSize:11.5,fontWeight:600,color:b.current?CA.text:CA.muted2,marginTop:2}}>{b.emphasis}{b.weeks?` · ${b.weeks} wk`:""}</div>
-                            {b.checkpoint&&<div style={{fontSize:10,color:CA.muted,marginTop:1}}>gate: {b.checkpoint}</div>}
-                          </div>
-                        ))}
-                      </div>
-                    );
+                    return (<>
+                      <BlockInfoCard info={info}/>
+                      {info.found&&<CampaignStrip campaign={info.campaign}/>}
+                    </>);
                   })()}
                   <pre style={{color:CA.text,fontSize:12.5,lineHeight:1.8,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0}}>
-                    {athlete.program_text}
+                    {stripBlockInfo(athlete.program_text)}
                   </pre>
                 </div>
               </>
             ):(
               <div style={{flex:1,overflowY:"auto",padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+                {(()=>{
+                  // T57: contract programs open as a styled card + clean day list;
+                  // the raw editor (photo upload included) is one tap away and stays
+                  // the only write path. Unsaved edits pin the editor open.
+                  const saved=(athlete.program_text||"");
+                  const info=parseBlockInfo(saved);
+                  const cardView=!programEditing&&info.found&&athleteProgramText===saved;
+                  if(cardView) return (<>
+                    <div>
+                      <BlockInfoCard info={info}/>
+                      <CampaignStrip campaign={info.campaign}/>
+                      <pre style={{color:CA.text,fontSize:12.5,lineHeight:1.8,fontFamily:"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",whiteSpace:"pre-wrap",wordBreak:"break-word",margin:0}}>{stripBlockInfo(saved)}</pre>
+                    </div>
+                    <button onClick={()=>setProgramEditing(true)}
+                      style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:10,padding:"9px 14px",cursor:"pointer",fontSize:13,textAlign:"left"}}>
+                      ✏️ Edit program text
+                    </button>
+                  </>);
+                  return (<>
                 <input ref={athletePhotoRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleAthletePhotoProgram}/>
                 <button onClick={()=>athletePhotoRef.current?.click()} disabled={athletePhotoProcessing}
                   style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:10,padding:"9px 14px",cursor:"pointer",fontSize:13,textAlign:"left"}}>
@@ -9312,6 +9384,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   style={{background:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.navy3:CA.accent,color:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.muted:"#000",border:`1px solid ${athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?CA.border:CA.accent}`,borderRadius:10,padding:"11px 20px",cursor:athleteProgramSaving||athleteProgramText===(athlete.program_text||"")?"not-allowed":"pointer",fontSize:14,fontWeight:700,...DISP,letterSpacing:1}}>
                   {athleteProgramSaving?"Saving...":"Save Program →"}
                 </button>
+                {info.found&&athleteProgramText===saved&&(
+                  <button onClick={()=>setProgramEditing(false)}
+                    style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:10,padding:"8px 16px",cursor:"pointer",fontSize:12,fontFamily:"'Inter'"}}>
+                    ← Back to card view
+                  </button>
+                )}
+                  </>);
+                })()}
                 {(athlete.program_text||"").trim()&&(retireArm?(
                   <div style={{border:`1px solid ${CA.amber}55`,background:`${CA.amber}0d`,borderRadius:10,padding:"10px 12px"}}>
                     <div style={{color:CA.muted2,fontSize:12,lineHeight:1.6,marginBottom:8}}>

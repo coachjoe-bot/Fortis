@@ -1,5 +1,5 @@
 // ─── T53 #7/#8: BLOCK INFO contract reader/writer suite ──────────────────────
-import { parseBlockInfo, campaignLine } from "../src/programContract.js";
+import { parseBlockInfo, campaignLine, stripBlockInfo } from "../src/programContract.js";
 
 let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) pass++; else { fail++; console.error(`✗ ${n}`); } };
@@ -45,6 +45,16 @@ const line = campaignLine([
 const rt = parseBlockInfo(`=== BLOCK INFO ===\nGoal: g\nCampaign: ${line}\n\nDay 1`);
 ok(rt.campaign.length === 2 && rt.campaign[0].current && rt.campaign[0].weeks === 4, "campaignLine round-trips through the parser");
 ok(campaignLine([]) === "" && campaignLine(null) === "", "empty campaign → empty line");
+
+// stripBlockInfo — the display half of the same contract (T57): drops exactly
+// the header lines parseBlockInfo reads, leaves everything else byte-identical.
+const stripped = stripBlockInfo(prog);
+ok(!/BLOCK INFO/.test(stripped), "strip removes the header banner");
+ok(!/^Goal:/m.test(stripped) && !/^Runs:/m.test(stripped) && !/^Campaign:/m.test(stripped), "strip removes the header's key lines");
+ok(/WILL \/\/ FALL BLOCK 1/.test(stripped), "strip keeps the program body");
+ok(stripped.startsWith("WILL //"), "body starts clean, no leading blank");
+ok(stripBlockInfo("Day 1 - Push\nBench 3x5 @ 225") === "Day 1 - Push\nBench 3x5 @ 225", "pre-contract text passes through unchanged");
+ok(stripBlockInfo("") === "", "empty stays empty");
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? " — FAILED" : ""}`);
 process.exit(fail ? 1 : 0);
