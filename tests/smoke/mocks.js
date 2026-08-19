@@ -110,6 +110,7 @@ export const pushupParse = {
 export async function mockApi(page, options = {}) {
   const {
     athlete = makeAthlete(),
+    coach = null,
     parseResult = emptyParse,
     chatReply = "Solid work. Keep stacking sessions.",
     blockStripeJs = false,
@@ -171,6 +172,10 @@ export async function mockApi(page, options = {}) {
         return route.fulfill(json({ athlete, token: "smoketest-session-token" }));
       case "check-athlete-name":
         return route.fulfill(json({ exists: false }));
+      case "coach-login": // real endpoint: pin-only, first bcrypt match wins
+        return route.fulfill(json(coach ? { coach, token: "smoketest-coach-token" } : { coach: null }));
+      case "coach-dashboard": // roster + school for the caller (shape of identity.js coachDashboard)
+        return route.fulfill(json({ athletes: coach ? [athlete] : [], coaches: [], school: [], schoolsAll: [], coachCounts: null }));
       case "create-athlete": {
         // Real endpoint: hashes the PIN server-side and forces tier; returns the
         // created row (merged over the caller's profile fields) + a session token.
@@ -272,6 +277,31 @@ export async function mockApi(page, options = {}) {
 }
 
 /** Drive the real login UI to land on the athlete main screen. */
+// A coach row as coach-login returns it (stripPin'd server-side; the mock keeps
+// pin present because coach.jsx forwards coach.pin on idApi calls it makes).
+export const makeCoach = (overrides = {}) => ({
+  id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  name: "Smoke Coach",
+  email: "smoke@coach.test",
+  sports: ["Football"],
+  role: "coach",
+  school_id: null,
+  coach_number: 1,
+  tour_done_at: new Date().toISOString(),
+  crew_allowed: true,
+  pin: "9999",
+  ...overrides,
+});
+
+/** Drive the real coach login UI to land on the dashboard Overview. */
+export async function loginAsCoach(page, coach) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Coach Login" }).click();
+  await page.getByPlaceholder("----").fill(coach.pin || "9999");
+  await page.getByRole("button", { name: "Access Dashboard ->" }).click();
+  await page.getByText("WILCO COACH").waitFor();
+}
+
 export async function loginAsAthlete(page, athlete) {
   await page.goto("/");
   await page.getByRole("button", { name: "Athlete Login" }).click();
