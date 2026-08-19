@@ -5807,10 +5807,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // with NO live program — e.g. right after a retire) > the typed backfill.
         if(open&&open.ends_at){
           const state=blockPromptState({endsAt:open.ends_at});
-          if(!state||last===`${state}:${today}`) return;
-          stamp(state);
-          setBlockPrompt({kind:state,endsAt:open.ends_at,draft,extendOpen:false});
-        } else if(dRow&&schedStart&&schedStart<=today){
+          if(state){
+            if(last===`${state}:${today}`) return;
+            stamp(state);
+            setBlockPrompt({kind:state,endsAt:open.ends_at,draft,extendOpen:false});
+            return;
+          }
+          // Open block with a known, still-distant end: nothing to raise about
+          // the END — but a scheduled draft whose start date has arrived still
+          // gets its offer below (T57: the Builder promises "when the date
+          // comes, Joe offers to swap it in"; an early return here silently
+          // broke that promise whenever the outgoing block's end was far off).
+        }
+        if(dRow&&schedStart&&schedStart<=today){
           if(last===`scheduled:${today}`) return;
           stamp("scheduled");
           setBlockPrompt({kind:"scheduled",draft,start:schedStart});
