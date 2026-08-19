@@ -117,6 +117,11 @@ const READ_OWN_COL = {
   // NOTE this list is a FOURTH registration point beyond the three the G8 commit
   // named — reads die loudly ("Table not readable") without it while writes land.
   coach_programs: "coach_id",
+  // The program-change strip on the Program tab ("why does my program say 315
+  // now?"). Written on PR propagation / correction reversal / Field Mode; the
+  // gateway hardening dropped its read and the strip died silently on every
+  // Program-modal open (T57 — found via a 400 in the live walk).
+  program_modifications: "athlete_id",
   // T53: typed training preferences (athlete reads own; coach reads roster's).
   athlete_training_prefs: "athlete_id",
 };
