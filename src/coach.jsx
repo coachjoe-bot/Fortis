@@ -3890,7 +3890,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
     const lift = item?.lift||null;
     const base = programText||athlete.program_text||"";
     const placement = findPlacement(base,lift)||(item?.current?findPlacement(base,item.current):null);
-    setTab("program"); setProgTab("program");
+    setTab("program");
     const next = {
       origin:"request", requestId:r.id, athleteWords:r.reason||null,
       suggestion, originalSuggestion:suggestion, lift, current:item?.current||null, why:item?.why||null,
@@ -3964,7 +3964,7 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
   // reviews the diff and hits Save.
   useEffect(()=>{
     if(!prefill||prefill.athleteId!==athlete.id) return;
-    setTab("program"); setProgTab("program");
+    setTab("program");
     const base = programText||athlete.program_text||"";
     // Injury/plateau suggestions sometimes lead with "Lift: ..." — pull it out so
     // placement lookup has something to search for even with no request row.
@@ -4059,7 +4059,11 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
     } catch(err){ setProgramError("Couldn't update lock. Try again."); }
   };
 
-  const lastWorkout = workouts[0];
+  // Newest row WITH training content — a chat aside ("leave the weight up to
+  // me") writes a workout row with no exercises, and rendering its raw text
+  // under "LAST SESSION" showed the coach a non-session (T57). No real session
+  // yet → null, so the empty state says so instead.
+  const lastWorkout = workouts.find(w=>{const pd=w?.parsed_data; return (Array.isArray(pd?.exercises)&&pd.exercises.length>0)||!!pd?.run_data;}) || null;
   // Memoized: EVERY program-textarea keystroke (and every staged-editor state
   // change) re-renders AthleteDetail, and these used to re-run a full
   // groupIntoSessions (filter + O(W log W) sort) plus a pain scan over the

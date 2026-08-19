@@ -26,7 +26,7 @@
 // scripts/test-program-history.mjs.
 import { lineDiff } from "./programDiff.js";
 import { currentPosition } from "./programPosition.js";
-import { parseBlockInfo } from "./programContract.js";
+import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 
 // Fraction of the COMBINED line count that changed between two program texts.
 // 0 = identical, 1 = nothing in common. Exported for the test suite.
@@ -186,8 +186,10 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
   };
   if (endsAt) row.ends_at = endsAt;
   // Phase name: caller-provided ("what are we calling it") or defaulted from the
-  // program's header line — the drafter's headers make decent names.
-  const name = (blockName || t.split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
+  // program's first REAL line — through stripBlockInfo, so a contract program
+  // names itself "Block 1 of 2 — …" and never the literal "=== BLOCK INFO ==="
+  // banner (T57 live find).
+  const name = (blockName || stripBlockInfo(t).split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
   if (name) row.block_name = name;
   await sbInsert("program_history", row);
 }
