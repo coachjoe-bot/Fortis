@@ -3727,7 +3727,11 @@ function GroupProgress({athletes,workouts,manualRMs,prs=[],analytics}){
                     </div>
                     <div className="htube"><div className="hfill" style={{"--tc":TIER_COLORS[tf],"--tb":tf/7,"--pct":frac,transitionDelay:`${Math.min(i*70,420)}ms`}}/></div>
                     <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9.5,letterSpacing:1.2,textTransform:"uppercase",color:CA.faint,marginTop:7}}>
-                      {next?`${Math.round(frac*100)}% of the way to ${next}`:"Top of the ladder"}
+                      {/* frac's 0.06 floor is a VISUAL minimum so the tube isn't
+                          empty — printing it as "6% of the way" stated a number
+                          nothing computed (T57: every card read 6%). Only claim a
+                          percentage when there's a real fraction behind it. */}
+                      {next?(frac>0.06?`${Math.round(frac*100)}% of the way to ${next}`:`working toward ${next}`):"Top of the ladder"}
                     </div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10,justifyContent:"center"}}>
                       {b.dist.map((cnt,ti2)=>cnt>0&&<span key={ti2} style={{fontSize:10,color:TIER_COLORS[ti2],background:`${TIER_COLORS[ti2]}18`,border:`1px solid ${TIER_COLORS[ti2]}44`,borderRadius:999,padding:"2px 8px",fontWeight:700}}>{TIER_NAMES[ti2]} {cnt}</span>)}
