@@ -7416,7 +7416,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     }
     setLoading(true);
     try {
-      const target = workoutHistory.find(w=>String(w.id)===String(pending.targetId));
+      const target = workoutHistory.find(w=>String(w.id)===String(pending.targetId)) || pending.targetRow;
       if(!target) throw new Error("target row not in history");
       const pd = JSON.parse(JSON.stringify(
         typeof target.parsed_data==="string" ? JSON.parse(target.parsed_data) : (target.parsed_data||{})
@@ -7950,10 +7950,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           return;
         }
         try {
-          const plan = await resolveLogCorrection(msg, newMsgs.slice(-6), workoutHistory);
+          let hist = workoutHistory;
+          let plan = await resolveLogCorrection(msg, newMsgs.slice(-6), hist);
+          if(!plan?.found){
+            // The entry may have been logged on ANOTHER device after this session
+            // loaded its window (T57: a fresh log existed server-side, the local
+            // window predated it, and the correction gave up). Refresh the recent
+            // window once and retry before falling back to the manual path.
+            try {
+              const fresh = await sbRead("workouts", `?athlete_id=eq.${athlete.id}&order=created_at.desc&limit=40&select=*`);
+              if(Array.isArray(fresh)&&fresh.length){ hist = fresh; plan = await resolveLogCorrection(msg, newMsgs.slice(-6), fresh); }
+            } catch(_){}
+          }
           if(plan?.found && plan.workout_id!=null && Array.isArray(plan.edits) && plan.edits.length &&
-             workoutHistory.some(w=>String(w.id)===String(plan.workout_id))){
-            setCorrectionPending({plan, targetId: plan.workout_id}); chipSetThisSend = true;
+             hist.some(w=>String(w.id)===String(plan.workout_id))){
+            // Carry the resolved row itself: after the cross-device refresh above
+            // it may not exist in this session's workoutHistory state.
+            setCorrectionPending({plan, targetId: plan.workout_id, targetRow: hist.find(w=>String(w.id)===String(plan.workout_id))||null}); chipSetThisSend = true;
             followUp(`Here's the fix:\n\n${plan.summary}\n\nTap “Apply fix” below and I'll set the record straight, any false PR or max from the mistype gets recalculated too. Nothing changes until you tap.`);
           } else {
             followUp(`I couldn't safely pin down that entry${plan?.reason?` (${plan.reason.toLowerCase()})`:""}. Open MY LOG → tap Edit on the workout and fix it by hand, takes 30 seconds.`);
