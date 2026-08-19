@@ -104,6 +104,84 @@ test("live: Quick Log prefashions today's session and sends it through the real 
     .toBeVisible({ timeout: 60_000 });
 });
 
+test("live: the session card pins on 'starting my workout', SURVIVES backgrounding + Clear All, and clears on log", async ({ page }) => {
+  // Will's ask (08-19): "check that the live notification comes when people
+  // start their workout and stays on the homescreen." The OS half (a real lock
+  // screen) is device-territory; this proves the entire app-side contract the
+  // persistence is built on, against prod, through a faithful notification-
+  // center shim: every showNotification lands in window.__cards, getNotifications
+  // serves from it, close() removes from it — so posts, re-pins, sweeps, and
+  // clears are all observable.
+  await page.addInitScript(() => {
+    try { Object.defineProperty(Notification, "permission", { get: () => "granted" }); } catch (_) {}
+    window.__cards = []; window.__closes = 0;
+    const origReady = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator.serviceWorker), "ready");
+    void origReady; // SW itself is real (prod) — only the notification surface is shimmed
+    ServiceWorkerRegistration.prototype.showNotification = function (title, options) {
+      window.__cards.push({ title, ...options });
+      return Promise.resolve();
+    };
+    ServiceWorkerRegistration.prototype.getNotifications = function (filter) {
+      const tag = filter && filter.tag;
+      const list = window.__cards.filter((c) => !tag || c.tag === tag);
+      return Promise.resolve(list.map((c) => ({
+        tag: c.tag, title: c.title,
+        close: () => { window.__closes++; window.__cards = window.__cards.filter((x) => x !== c); },
+      })));
+    };
+    // Backgrounding lever: the spec flips __visState and fires visibilitychange.
+    window.__visState = "visible";
+    Object.defineProperty(document, "visibilityState", { get: () => window.__visState });
+  });
+
+  await login(page);
+  const composer = page.getByPlaceholder(/Tell Coach Joe about your workout/);
+  const cards = () => page.evaluate(() => window.__cards.filter((c) => c.tag === "wilco-session-card"));
+
+  // 1 ── session-start intent → ZERO-TAP pin. The card is the Quick Log draft
+  // projected: uppercase headline, real lines, one stable tag, requireInteraction.
+  await composer.fill("at the gym, starting my workout");
+  await page.getByRole("button", { name: "→", exact: true }).click();
+  await expect(page.getByText(/pinned|lock screen|rest day/i).last()).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await cards()).length, { timeout: 30_000 }).toBeGreaterThan(0);
+  const first = (await cards()).pop();
+  expect(first.tag).toBe("wilco-session-card");
+  expect(first.requireInteraction).toBe(true);
+  expect(first.title).toBe(first.title.toUpperCase());
+  expect(String(first.body || "").length).toBeGreaterThan(0);
+
+  const background = () => page.evaluate(() => {
+    window.__visState = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.__visState = "visible";
+  });
+
+  // 2 ── "stays on the homescreen": backgrounding RE-POSTS the same card (iOS
+  // has no pinned web surface — the re-pin cycle IS the persistence).
+  const before = (await cards()).length;
+  await background();
+  await expect.poll(async () => (await cards()).length, { timeout: 10_000 }).toBeGreaterThan(before);
+
+  // 3 ── a Clear-All sweep doesn't kill it: empty the center, background again,
+  // the card comes back.
+  await page.evaluate(() => { window.__cards = []; });
+  await background();
+  await expect.poll(async () => (await cards()).length, { timeout: 10_000 }).toBeGreaterThan(0);
+
+  // 4 ── logging TODAY'S session is the one "done" state: the card clears and
+  // the stored state goes with it, so later backgrounding re-pins NOTHING.
+  await composer.fill("done — face pulls 3x15, easy");
+  await page.getByRole("button", { name: "→", exact: true }).click();
+  await expect.poll(async () => page.evaluate(() => window.__closes), { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect.poll(async () =>
+    page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("wilco_sessioncard_") && !k.includes("declined") && localStorage.getItem(k) !== null && JSON.parse(localStorage.getItem(k) || "null") !== null))
+  , { timeout: 20_000 }).toBe(false);
+  await page.evaluate(() => { window.__cards = []; });
+  await background();
+  await page.waitForTimeout(1500);
+  expect((await cards()).length).toBe(0);
+});
+
 test("live: a loading-language preference offers a chip and 'Make it standing' locks it in", async ({ page }) => {
   await login(page);
   const composer = page.getByPlaceholder(/Tell Coach Joe about your workout/);
