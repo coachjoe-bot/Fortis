@@ -25,6 +25,8 @@
 //   free-messages the coach on the athlete's behalf — every coach request is
 //   structured (lift/current/suggested_change/why), never raw chat text.
 
+import { findPlacement } from "./programDiff.js";
+
 export const CR_SOURCES = ["pain","plateau","pr","feedback"];
 
 // equipment problems don't have their own DB source value — they fall into the
@@ -47,7 +49,11 @@ suggested_change: ONE concrete, actionable sentence in a coach's voice — what 
 
   const suggestion = String(draft?.suggested_change||"").trim() || message.slice(0,140);
   const lift = draft?.lift || null;
-  const current = draft?.current || null;
+  // "Current" is a FACT — compute it from the full program text, never trust the
+  // model's copy (T57: the drafter only sees the first 1200 chars, so it quoted
+  // "4x6 @ RPE 7-8" for a lift actually programmed 5x5 @ RPE 8 further down).
+  const placed = lift ? findPlacement(programText||"", lift) : null;
+  const current = placed?.currentLine || null;
   const why = draft?.why || null;
   const source = CR_SOURCES.includes(sourceHint) ? sourceHint
     : (CR_SOURCES.includes(draft?.source) ? draft.source : "feedback");

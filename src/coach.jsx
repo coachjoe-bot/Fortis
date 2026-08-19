@@ -3868,13 +3868,28 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
       const sys = mergeSystemPrompt("coach");
       const parts = [`CURRENT PROGRAM:\n${base}`, `\nREQUESTED CHANGE: ${s.suggestion}`];
       if(s.placement) parts.push(`\nTARGET: ${s.placement.dayLabel||"unspecified day"} — currently "${s.placement.currentLine}"`);
+      // T57: a pain request left Front Squat 5x5 in place and merely re-labeled
+      // the Leg Press accessory as the "swap". Pain is the one source where a
+      // half-applied change is unsafe, so the rule is injected explicitly.
+      if(s.source==="pain"&&s.lift) parts.push(`\nPAIN RULE: this change is driven by PAIN on ${s.lift}. The updated program must no longer prescribe working sets of ${s.lift} anywhere — swap or remove every prescription of it — unless the request explicitly says to keep it at reduced load. Renaming or adjusting an accessory is not enough.`);
       if(s.athleteWords) parts.push(`\nATHLETE'S OWN WORDS: "${s.athleteWords}"`);
       if(contextLines.length) parts.push(`\nCOACH'S RECENT CONTEXT (may inform exercise selection):\n${contextLines.map(n=>`- ${n}`).join("\n")}`);
       const raw = await askClaude(sys, parts.join("\n"), 4000, [], "claude-sonnet-5", "program_apply_change");
       const guard = mergeGuard(base, raw);
       if(!guard.ok){ setMergeState({error:guard.reason}); return; }
       const diff = lineDiff(base, guard.text);
-      setMergeState({merged:guard.text, diff, stats:diffStats(diff)});
+      // Deterministic backstop for the same failure: if a pain request's lift is
+      // still prescribed as working sets in the merged text, say so ON the review
+      // — the coach decides, but never unknowingly.
+      let warn=null;
+      if(s.source==="pain"&&s.lift){
+        const stillLine = guard.text.split("\n").map(l=>l.trim()).find(l=>{
+          const n=l.replace(/×/g,"x").toLowerCase();
+          return String(s.lift).toLowerCase().split(/\s+/).every(w=>n.includes(w)) && /\d+\s*x\s*\d+/.test(n) && !/warm-?up|cool-?down/.test(n);
+        });
+        if(stillLine) warn=`This draft still prescribes ${s.lift} ("${stillLine}") — the request was pain on that movement. Edit before saving if that's not intended.`;
+      }
+      setMergeState({merged:guard.text, diff, stats:diffStats(diff), warn});
     }catch(e){
       console.error("runMerge",e);
       setMergeState({error:"Something went wrong drafting that change. Try again."});
@@ -4634,6 +4649,9 @@ function AthleteDetail({athlete,coachId,workouts,prs,requests=[],onResolveReques
             <div style={{color:CA.muted,fontSize:12,marginBottom:12}}>
               {mergeState.stats.added+mergeState.stats.removed} line{mergeState.stats.added+mergeState.stats.removed!==1?"s":""} change · {mergeState.stats.unchanged} untouched
             </div>
+            {mergeState.warn&&(
+              <div style={{background:`${CA.amber}15`,border:`1px solid ${CA.amber}66`,color:CA.amber,borderRadius:10,padding:"10px 12px",fontSize:12.5,lineHeight:1.5,marginBottom:12}}>⚠ {mergeState.warn}</div>
+            )}
             <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:"12px 14px",fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:12.5,lineHeight:1.7,marginBottom:16,overflowX:"auto"}}>
               {collapseDiffForDisplay(mergeState.diff).map((d,i)=>
                 d.type==="gap"
