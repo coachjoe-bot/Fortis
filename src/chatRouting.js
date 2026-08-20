@@ -151,3 +151,15 @@ export const propagate1RM = (programText, exerciseName, old1RM, new1RM) => {
 // truncation costs them their program.
 export const isFullProgramEcho = (prog, programText) =>
   !!prog && prog.length >= 60 && prog.length >= String(programText || "").length * 0.9;
+
+// ── explicit program-edit ask ─────────────────────────────────────────────────
+// "add a day 4 to my program: Deadlift 4x3 @ RPE 7" parsed as a PERFORMED
+// workout on prod (T57 s5 live find): the model missed program_append, the
+// message's exercises entered the athlete's history as a phantom session, and
+// every real log that day became a same-session "continuation" — no WORKOUT
+// stamp. The ask is deterministic, so the model doesn't get a vote: a
+// present-tense add/append/put/tack/stick aimed at "my program/plan/split" is
+// a program EDIT, never a log. ("added ... yesterday" stays a log: \b keeps
+// past-tense forms out.)
+export const PROGRAM_EDIT_ASK_RE = /\b(?:add|append|put|tack|stick)\b[^.!?\n]{0,60}\b(?:to|onto|into|in|on)\s+my\s+(?:program|plan|split|training plan)\b/i;
+export const asksProgramEdit = (message) => PROGRAM_EDIT_ASK_RE.test(String(message || ""));

@@ -88,7 +88,7 @@ const ProgramEditPane = lazy(() => import("./builder.jsx").then(m => ({ default:
 import {
   needsAdvancedParser, looksLikeLifting, parseGotNothing, asksToRemember,
   looksLikeWorkoutLog, hasExplicitWorkingBasis, propagate1RM, isFullProgramEcho,
-  stripFailedAttempts,
+  stripFailedAttempts, asksProgramEdit,
 } from "./chatRouting.js";
 export { isFullProgramEcho };
 // Boot layer: is this build still the deployed one, the warm-reopen snapshot, and
@@ -7986,7 +7986,21 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // EXISTING program — a replace needs the athlete's explicit tap
       // (setProgramReplacePending → confirm chips). Creating a first program or
       // APPENDING loses nothing, so those save straight away.
+      // T57 s5 (live find): "add a day 4 to my program: Deadlift 4x3 @ RPE 7"
+      // parsed as a PERFORMED workout — the model missed program_append, the
+      // message's exercises entered history as a phantom session, and every
+      // real log that day became a same-session continuation (no WORKOUT
+      // stamp). The explicit ask is deterministic, so it forces the flag; and
+      // ANY program-intent message has its exercises scrubbed before the log
+      // path — a prescription is never a performed session.
+      if(asksProgramEdit(msg) && !fromQuickLog
+         && !parsed.is_program_update && !parsed.program_append && !parsed.program_create_request){
+        parsed.program_append = true;
+      }
       const wantsProgramWrite = parsed.is_program_update || parsed.program_append || parsed.program_create_request;
+      if(wantsProgramWrite && ((parsed.exercises?.length||0) > 0 || parsed.run_data || (parsed.pr_attempts?.length||0) > 0)){
+        parsed.exercises = []; parsed.run_data = null; parsed.pr_attempts = [];
+      }
       // Snapshot to detect "a program landed on this message" below — the ask about
       // whether it ends belongs at the moment it's saved, not a week later.
       const programTextBefore = (updatedAthlete.program_text || "").trim();

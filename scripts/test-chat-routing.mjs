@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import {
   needsAdvancedParser, looksLikeLifting, parseGotNothing, asksToRemember,
   looksLikeWorkoutLog, hasExplicitWorkingBasis, propagate1RM, isFullProgramEcho,
-  stripFailedAttempts,
+  stripFailedAttempts, asksProgramEdit,
 } from "../src/chatRouting.js";
 import { normalizeExName } from "../src/grit.js";
 
@@ -354,7 +354,25 @@ console.log("stripFailedAttempts:");
      "Quick Log cheat-sheet scope covers the RPE step");
   ok(/RPE resolved off the lift's "\(actual 1RM\)" else "\(est\.\)" cheat-sheet entry/.test(src),
      "Quick Log edit prompt carries the RPE base rule");
+
+  // T57 s5: a program-intent message never logs a phantom session — the ask is
+  // forced deterministically and exercises are scrubbed at the choke point.
+  ok(src.includes("asksProgramEdit(msg) && !fromQuickLog"),
+     "an explicit program-edit ask forces program_append when the model missed it");
+  ok(src.includes("parsed.exercises = []; parsed.run_data = null; parsed.pr_attempts = [];"),
+     "program-intent messages have exercises/runs/attempts scrubbed before the log path");
 }
+
+// ── asksProgramEdit ───────────────────────────────────────────────────────────
+console.log("asksProgramEdit:");
+ok(asksProgramEdit("add a day 4 to my program please: Deadlift 4x3 @ RPE 7"), "the live phantom-session phrasing matches");
+ok(asksProgramEdit("can you put this in my plan"), "put ... in my plan matches");
+ok(asksProgramEdit("tack these onto my split"), "tack ... onto my split matches");
+ok(asksProgramEdit("I want to add lunges to my training plan"), "add ... to my training plan matches");
+ok(!asksProgramEdit("I added dips to my program yesterday and did 3x8"), "past-tense 'added' stays a log");
+ok(!asksProgramEdit("can you put my program on my home screen?"), "the lock-screen ask never matches");
+ok(!asksProgramEdit("did bench 3x5 at 225, felt strong"), "a plain log never matches");
+ok(!asksProgramEdit("what's in my program for tomorrow?"), "a program QUESTION never matches");
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} chat-routing checks pass.`);
