@@ -11,6 +11,7 @@ import {
 // deepLink.js is dependency-free, and routing a notification target should not
 // have to go through the App→coach import cycle to get here.
 import { takeNotificationTarget, isCoachTarget } from "./deepLink.js";
+import { CREW_ENABLED } from "./flags.js";
 // Program Builder (Phase C) — lazy so the doctrine text + Builder UI download
 // only when a coach actually opens the Builder subtab.
 const ProgramBuilderPane = lazy(() => import("./builder.jsx").then(m => ({ default: m.ProgramBuilderPane })));
@@ -1784,6 +1785,11 @@ function CoachDashboard({coach,onLogout}) {
                   </div>
                   <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>WILCO never messages your athletes on your behalf, these alerts go only to you.</div>
 
+                  {/* Crew is PARKED app-wide (Will, 08-20) — a per-team toggle
+                      for a feature nobody has would only confuse. Section (and
+                      the coaches.crew_allowed column it writes) revive with
+                      CREW_ENABLED. */}
+                  {CREW_ENABLED&&<>
                   <div style={{display:"flex",alignItems:"center",gap:12,margin:"26px 2px 12px"}}>
                     <span style={{fontSize:10.5,letterSpacing:1.4,textTransform:"uppercase",color:CA.accent,fontWeight:700}}>Your team</span>
                     <span style={{height:1,background:CA.border,flex:1}}/>
@@ -1802,6 +1808,7 @@ function CoachDashboard({coach,onLogout}) {
                     </div>
                   </div>
                   <div style={{color:CA.muted,fontSize:11.5,marginTop:12,lineHeight:1.5}}>Turn Crew off and it disappears from every athlete you coach. Turn it back on and it returns with everything still there.</div>
+                  </>}
 
                   <div style={{display:"flex",alignItems:"center",gap:12,margin:"26px 2px 12px"}}>
                     <span style={{fontSize:10.5,letterSpacing:1.4,textTransform:"uppercase",color:CA.accent,fontWeight:700}}>Appearance</span>
