@@ -8,6 +8,7 @@
 // this makes the notify step prove the same before any mail goes out.
 
 import { authCaller, sbSelect, authThrottle, clientIp } from "./_supa.js";
+import { emailFooter } from "./_email.js";
 
 const enc = encodeURIComponent;
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -62,7 +63,7 @@ export default async function handler(req, res) {
       from:    FROM_EMAIL,
       to:      [coachEmail.trim().toLowerCase()],
       subject: `Your WILCO coach access code: ${accessCode}`,
-      html
+      html: html.replace("</body>", `${emailFooter(coachEmail)}</body>`)
     })
   });
 

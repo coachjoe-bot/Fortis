@@ -23,6 +23,7 @@
 //      RESEND_API_KEY + FROM_EMAIL + APP_URL (email fallback).
 
 import { sbSelect, sbWrite, logError } from "./_supa.js";
+import { emailFooter } from "./_email.js";
 import { ensureVapid, sendToAthlete, pushPayload } from "./_push.js";
 
 const enc = encodeURIComponent;
@@ -56,7 +57,7 @@ async function sendProgramEmail(to, name) {
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject: "Your coach updated your program", html: programEmail(name) }),
+      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject: "Your coach updated your program", html: programEmail(name).replace("</body>", `${emailFooter(to)}</body>`) }),
     });
     return r.ok;
   } catch (e) {

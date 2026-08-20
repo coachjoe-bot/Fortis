@@ -7,6 +7,7 @@
 import bcrypt from "bcryptjs";
 import { randomInt } from "node:crypto";
 import { rateLimit, clientIp, escapeLike } from "./_supa.js";
+import { emailFooter } from "./_email.js";
 
 // Escape user-supplied text before interpolating into email HTML.
 const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -115,7 +116,7 @@ export default async function handler(req, res) {
           from: FROM_EMAIL,
           to: [email.trim().toLowerCase()],
           subject,
-          html,
+          html: html.replace("</body>", `${emailFooter(email)}</body>`),
         }),
       });
     }

@@ -8,6 +8,7 @@
 // day it was typed. Re-exported from src/grit.js so this file cannot drift from
 // the client's grouping (see api/_grit.js).
 import { effectiveDate } from "./_grit.js";
+import { emailFooter, unsubHeaders, isUnsubscribed } from "./_email.js";
 
 export const maxDuration = 60;
 
@@ -26,8 +27,8 @@ export default async function handler(req, res) {
   // cron-secret-gated server context, same as the proof-feed engine.
   const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
   const RESEND_KEY   = process.env.RESEND_API_KEY;
-  const FROM_EMAIL   = process.env.FROM_EMAIL   || "WILCO <reports@wilco.app>";
-  const SIGNUP_URL   = process.env.TEAM_SIGNUP_URL || "https://wilco.app/coaches";
+  const FROM_EMAIL   = process.env.FROM_EMAIL   || "WILCO <noreply@trainwilco.com>";
+  const SIGNUP_URL   = process.env.TEAM_SIGNUP_URL || "https://trainwilco.com";
 
   console.log("[weekly-report] triggered —", new Date().toISOString());
   console.log("[weekly-report] env check — SUPABASE_URL:", !!SUPABASE_URL, "| SUPABASE_KEY:", !!SUPABASE_KEY, "| RESEND_KEY:", !!RESEND_KEY, "| FROM_EMAIL:", FROM_EMAIL);
@@ -81,7 +82,14 @@ export default async function handler(req, res) {
     const workouts = Array.isArray(allWorkouts) ? allWorkouts.filter(w => athIds.has(w.athlete_id)) : [];
     const prs      = Array.isArray(allPRs)      ? allPRs.filter(p => athIds.has(p.athlete_id))      : [];
 
-    const html = buildEmail(coach, workouts, prs, weekLabel, SIGNUP_URL);
+    // Recurring mail with a promo CTA = commercial under CAN-SPAM: honor
+    // opt-outs, and every send carries the postal footer + one-click unsubscribe.
+    if (await isUnsubscribed(coach.email)) {
+      results.push({coach:coach.email, skipped:"unsubscribed"});
+      continue;
+    }
+    const html = buildEmail(coach, workouts, prs, weekLabel, SIGNUP_URL)
+      .replace("</body>", `${emailFooter(coach.email, { unsubscribe: true })}</body>`);
 
     const emailRes = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -90,7 +98,8 @@ export default async function handler(req, res) {
         from: FROM_EMAIL,
         to:   [coach.email],
         subject: `WILCO Weekly Progress Report: Week of ${weekLabel}`,
-        html
+        html,
+        headers: unsubHeaders(coach.email)
       })
     });
     const emailData = await emailRes.json();
@@ -305,7 +314,7 @@ function buildEmail(coach, workouts, prs, weekLabel, signupUrl) {
         SET UP YOUR TEAM ACCOUNT →
       </a>
       <p style="color:#475569;font-size:11px;margin:16px 0 0">
-        This report was requested by one of your athletes via WILCO. To unsubscribe, reply to this email.
+        This report was requested by one of your athletes via WILCO. To stop receiving it, use the unsubscribe link below or reply to this email.
       </p>
     </div>
 

@@ -15,6 +15,7 @@
 // send-coach-welcome, tightened one step further).
 
 import { authCaller, authThrottle, rateLimit, clientIp, sbSelect } from "./_supa.js";
+import { emailFooter } from "./_email.js";
 
 // Vercel Pro: cap execution time. One outbound email; 30s is plenty.
 export const maxDuration = 30;
@@ -80,7 +81,7 @@ export default async function handler(req, res) {
     await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [me.email], subject: "Welcome to WILCO: your account is live", html }),
+      body: JSON.stringify({ from: FROM_EMAIL, to: [me.email], subject: "Welcome to WILCO: your account is live", html: html.replace("</body>", `${emailFooter(me.email)}</body>`) }),
     });
   } catch (e) {
     console.error("[athlete-welcome] send failed:", e.message);

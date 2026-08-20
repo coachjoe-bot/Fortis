@@ -59,6 +59,7 @@ import { computeGritSnapshot } from "./_grit.js";
 import { sendToAthlete, pushPayload, ensureVapid, sendTo } from "./_push.js";
 import { mapPooled } from "./_pool.js";
 import { buildCrewBlip } from "./_crew.js";
+import { emailFooter, unsubHeaders, isUnsubscribed } from "./_email.js";
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || "WILCO <noreply@trainwilco.com>";
@@ -190,13 +191,20 @@ const buildDigestEmail = (recipientName, contentJson, label) => {
 </div></body></html>`;
 };
 
+// Digests are RECURRING mail (CAN-SPAM): suppressed for opted-out addresses,
+// and every send carries the postal footer + a one-click unsubscribe.
 const sendEmail = async (to, subject, html) => {
   if (!RESEND_KEY || !to) return;
   try {
+    if (await isUnsubscribed(to)) return;
     await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html }),
+      body: JSON.stringify({
+        from: FROM_EMAIL, to: [to], subject,
+        html: html.replace("</body>", `${emailFooter(to, { unsubscribe: true })}</body>`),
+        headers: unsubHeaders(to),
+      }),
     });
   } catch (e) { console.error("[proof-feed] email failed:", e.message); }
 };

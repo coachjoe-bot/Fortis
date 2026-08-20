@@ -7,6 +7,7 @@
 // unauthenticated version could send WILCO-branded mail to anyone.
 
 import { authCaller, authThrottle, rateLimit, clientIp } from "./_supa.js";
+import { emailFooter } from "./_email.js";
 
 // Vercel Pro: cap this function's execution time. Was implicitly the Hobby 10s
 // wall; 30s gives external Stripe/email/DB calls room without paying for idle time.
@@ -60,7 +61,7 @@ export default async function handler(req, res) {
       from:    FROM_EMAIL,
       to:      [coachEmail.trim().toLowerCase()],
       subject: `${athleteName} just joined WILCO: you're set as their coach`,
-      html
+      html: html.replace("</body>", `${emailFooter(coachEmail)}</body>`)
     })
   });
 
