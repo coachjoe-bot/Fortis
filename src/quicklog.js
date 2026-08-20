@@ -247,6 +247,21 @@ export const openerSave = (athleteId, msg, now) => {
   } catch (_) {}
 };
 
+// ── T57 opener choice stamp (Will's 08-19 spec) ──────────────────────────────
+// The opener ends with "Starting this workout now?" + three tap responses.
+// Answered (or typed past) once per LOCAL day: the stamp stops a same-day
+// reopen of the cached opener from re-asking a question already answered.
+const qlOpenerChoiceKey = (athleteId) => `wilco_opener_choice_${athleteId}`;
+
+export const openerChoiceMadeToday = (athleteId, now) => {
+  try { return localStorage.getItem(qlOpenerChoiceKey(athleteId)) === qlLocalDay(now); }
+  catch (_) { return true; } // no storage -> never show chips we can't retire
+};
+
+export const markOpenerChoice = (athleteId, now) => {
+  try { localStorage.setItem(qlOpenerChoiceKey(athleteId), qlLocalDay(now)); } catch (_) {}
+};
+
 export const qlPrebuildEligible = (athleteId, now) => {
   try{
     const t = now||Date.now();

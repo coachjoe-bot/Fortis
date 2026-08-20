@@ -44,6 +44,7 @@ import WORDMARK from "./assets/wilco-wordmark.png";
 import {
   qlLoad, qlSave, qlClear, qlPositionConflict, splitQuickLogReply, streamQuickLogReply,
   qlMarkUsed, qlPrebuildEligible, qlMarkPrebuilt, openerLoad, openerSave,
+  openerChoiceMadeToday, markOpenerChoice,
   findChatProgram, looksLikeProgramText, programSaveOfferAllowed, markProgramSaveOffered,
   markSupersededPrograms, parseRequestedDate, qlLocalDay,
 } from "./quicklog.js";
@@ -5721,6 +5722,14 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // screen?" is waiting for the athlete's yes/no. One offer per day max.
   const [sessionCardPending,setSessionCardPending] = useState(false);
   const [prefPending,setPrefPending] = useState(null); // {field,value} — typed training-preference proposal awaiting the athlete's explicit yes (T53)
+  // T57 opener chips (Will's 08-19 spec): true while the opener's closing
+  // "Starting this workout now?" waits on a tap. Retired by a tap or by typing
+  // anything; either way the day is stamped so a same-day reopen won't re-ask.
+  const [openerChoicePending,setOpenerChoicePending] = useState(false);
+  // One-shot: the "Different workout today" chip makes the athlete's NEXT
+  // message the which-one answer — that message rebuilds the Quick Log draft
+  // from the conversation and pins the corrected session card.
+  const openerSwitchRef = useRef(false);
   // T40: yesterday's (or a >3h-stale) pinned card comes down at boot — the web
   // platform has no self-expiring notifications, so expiry is enforced here.
   useEffect(()=>{ expireSessionCardIfStale(athlete.id); },[athlete.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6712,6 +6721,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const cachedOpener = openerLoad(openerAthlete.id);
         if(cachedOpener){
           setMessages([{role:"assistant",content:cachedOpener}]);
+          // T57: the cached opener still ends on "Starting this workout now?" —
+          // re-show the chips unless today's answer is already stamped.
+          if(!openerChoiceMadeToday(openerAthlete.id)) setOpenerChoicePending(true);
           setOpenerLoading(false);
           setHistoryLoaded(true);
           return;
@@ -6744,6 +6756,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               // Prime the Quick Log sheet with the same session so it opens instantly.
               try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
+              // T57: the opener ends on "Starting this workout now?" — surface the
+              // three chips. If the athlete typed during generation the chips are
+              // harmless: any send retires them and stamps the day.
+              if(!openerChoiceMadeToday(openerAthlete.id)) setOpenerChoicePending(true);
             } else {
               // T56: REST_DAY is an answer, not a shrug — say it. The generic
               // "what have you been up to" greeting on a programmed athlete's
@@ -7383,6 +7399,39 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setLoading(false);
   };
 
+  // T57 (Will's 08-19 spec): the opener's three-tap answer.
+  // YES pins today's session to the lock screen — showSessionCard raises the
+  // notifications prompt itself where permission was never asked (both
+  // platforms), and pinSessionCard reports a block truthfully. NO just opens
+  // the door for questions. SWITCH asks which session; the athlete's next
+  // message answers it (openerSwitchRef, consumed in send()).
+  const answerOpenerChoice = async (choice) => {
+    setOpenerChoicePending(false);
+    markOpenerChoice(athlete.id);
+    if(choice==="yes"){
+      if(!sessionCardSupported()){
+        setMessages(prev=>[...prev,{role:"assistant",content:"Let's get it. Log it here when you're done."}]);
+        return;
+      }
+      setLoading(true);
+      try{
+        const res = await pinSessionCard(athlete);
+        setMessages(prev=>[...prev,{role:"assistant",content:
+          res.rest ? "Today reads as a rest day on your program, nothing to pin. Enjoy it."
+          : res.shown ? "Let's get it. Today's session is on your lock screen and it clears itself when you log."
+          : "Let's get it. Couldn't pin it to your lock screen though, your device is blocking WILCO notifications. Turn them on in your phone's settings and ask me again."}]);
+      }catch(_){
+        setMessages(prev=>[...prev,{role:"assistant",content:"Let's get it. Couldn't pin the lock-screen card just now, ask me again in a minute."}]);
+      }
+      setLoading(false);
+    } else if(choice==="no"){
+      setMessages(prev=>[...prev,{role:"assistant",content:"All good. I'm here when you need me: questions, swaps, form checks, whatever you've got."}]);
+    } else {
+      openerSwitchRef.current = true;
+      setMessages(prev=>[...prev,{role:"assistant",content:"Which one are you running? Give me the day or the session, like \"day 3\" or \"upper B\", and I'll line it up."}]);
+    }
+  };
+
   // A position correction ("I'm actually on day 7") or an in-chat swap ("subbed
   // dips for pushdowns") changes what today IS, so a pinned card must follow.
   // Regenerate the draft — the conversation carries the correction, and the
@@ -7770,6 +7819,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // only an explicit "No thanks" burns the daily offer).
     if(sessionCardPending) setSessionCardPending(false);
     if(prefPending) setPrefPending(null);
+    // T57: typing past the opener's "Starting this workout now?" answers it by
+    // action — retire the chips and stamp the day so it doesn't re-ask.
+    if(openerChoicePending){ setOpenerChoicePending(false); markOpenerChoice(athlete.id); }
 
     // T40: "take it off my lock screen" — the card's one explicit exit besides
     // logging the session. Deterministic (no AI turn), and only when a card is
@@ -8022,6 +8074,36 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // column and nothing ever surfaced the rejection). The athlete's claim
         // still holds in memory for this session either way.
         reportError("data", e, { component:"position_claim_write" });
+      }
+
+      // ── T57 opener chip 3: this message is the which-workout answer ────────
+      // They tapped "Different workout today"; whatever they just said states
+      // the session (a day number, "upper B", "bench day"). Rebuild the Quick
+      // Log draft from the conversation — the generator is told a stated day
+      // overrides inference — then pin the corrected card. Web with permission
+      // never asked keeps the offer chip (accepting IS the browser prompt).
+      if(openerSwitchRef.current){
+        openerSwitchRef.current = false;
+        if(hasProgram){
+          try{
+            const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:newMsgs, goals:athleteGoals, contextNotes:athleteContext});
+            if(!gen.rest && gen.draft){
+              qlSave(updatedAthlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+              if(sessionCardSupported() && (notifPermission()==="granted" || isNativeIOS())){
+                chipSetThisSend = true;
+                const card = buildSessionCard(gen.draft, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
+                const shown = card ? await showSessionCard(updatedAthlete.id, card) : false;
+                followUp(shown ? "Swapped. That session is loaded in your Quick Log and on your lock screen; it clears itself when you log."
+                  : "Swapped. That session is loaded in your Quick Log.");
+              } else if(sessionCardSupported()){
+                setSessionCardPending(true); chipSetThisSend = true;
+                followUp("Swapped, that session is loaded in your Quick Log. Want it on your lock screen too? You'll get the notifications prompt first.");
+              } else {
+                followUp("Swapped. That session is loaded in your Quick Log.");
+              }
+            }
+          }catch(_){ /* the reply above already answered; the draft just didn't rebuild */ }
+        }
       }
 
       // ── "does this block end?" — the athlete's answer, recorded ───────────
@@ -9001,6 +9083,22 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           }}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Just this once
+          </button>
+        </div>
+      ):openerChoicePending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={()=>answerOpenerChoice("yes")}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Yes, starting now
+          </button>
+          <button onClick={()=>answerOpenerChoice("no")}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Not right now
+          </button>
+          <button onClick={()=>answerOpenerChoice("switch")}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            I'm doing a different workout
           </button>
         </div>
       ):sessionCardPending?(

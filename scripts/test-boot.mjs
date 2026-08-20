@@ -189,7 +189,9 @@ check("opener shows the RPE source", op.includes("Overhead Press 5x5 @ RPE 8 (11
 check("opener shows the last-time source", op.includes("Barbell Row 3x10 @ 135 lbs (last time)"));
 check("opener units a program-stated weight", op.includes("Front Squat 3x5 @ 225 lbs"));
 check("opener passes weighted bodyweight through", op.includes("Weighted Dips 3x8 +25"));
-check("opener closes with a run-it cue", op.includes("log it here when you're done"));
+// T57 (Will's 08-19 spec): the opener must end on the exact question the three
+// chat chips answer — the chips are UI, this line is their anchor.
+check("opener closes with the starting-now question (T57 chips contract)", op.trimEnd().endsWith("Log it here when you're done. Starting this workout now?"));
 const opLapsed = B.buildTodayOpener({ name: "Marcus", dAgo: 6, draft: DRAFT });
 check("lapsed athlete still gets the days-since nudge", opLapsed.includes("6 days since your last log"));
 check("empty draft → empty opener (caller falls back to greeting)", B.buildTodayOpener({ name: "Marcus", dAgo: 1, draft: "" }) === "");
