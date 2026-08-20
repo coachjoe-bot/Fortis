@@ -2659,6 +2659,12 @@ export function RunCard({runData, feel, palette=CA}) {
 // (iOS Safari tab that isn't installed to the home screen) pushSupported() is
 // false and every push surface simply hides itself.
 const PUSH_PROMPT_KEY = "wilco_push_prompt_answered";
+// T57-B (Will's "require email" ruling): athletes who signed up name-only have
+// NO recovery path — a forgotten PIN is a lost account. A slim banner asks for
+// a recovery email; "Later" snoozes it a week, never a hard gate.
+const EMAIL_PROMPT_KEY = (id) => `wilco_email_prompt_${id}`;
+const EMAIL_PROMPT_SNOOZE_MS = 7*24*60*60*1000;
+const EMAIL_OK_RE = /^\S+@\S+\.\S+$/;
 export const pushSupported = () =>
   isNativeIOS() || // APNs via @capacitor/push-notifications — always available in the native shell
   (typeof window!=="undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
@@ -5996,6 +6002,22 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     try{return!!localStorage.getItem(`wilco_profile_banner_${initialAthlete.id}`);}catch{return false;}
   });
   const [showPushPrompt,setShowPushPrompt] = useState(false); // one-time post-workout notifications offer
+  // T57-B recovery-email banner: null | "offer" | "saving" | "saved"
+  const [emailPrompt,setEmailPrompt] = useState(null);
+  const [emailDraft,setEmailDraft] = useState("");
+  useEffect(()=>{
+    if(athlete.email && String(athlete.email).includes("@")){
+      // Only retire an unanswered OFFER — the Save handler owns the
+      // "saving"→"saved" confirmation and this effect fires the moment the
+      // saved address lands on the athlete row.
+      setEmailPrompt(p => p==="offer" ? null : p);
+      return;
+    }
+    try{
+      const at = Number(localStorage.getItem(EMAIL_PROMPT_KEY(athlete.id))||0);
+      if(Date.now()-at > EMAIL_PROMPT_SNOOZE_MS) setEmailPrompt("offer");
+    }catch(_){}
+  },[athlete.id, athlete.email]); // eslint-disable-line react-hooks/exhaustive-deps
   // Seeded from the warm-reopen snapshot (see `snapshot` above) so the Proof tab
   // and Joe's context aren't empty for the first second of a reopen.
   const [athleteGoals,setAthleteGoals] = useState(()=>snapshot?.goals||[]);
@@ -8793,6 +8815,41 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               setShowPushPrompt(false);
             }} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11}}>No Thanks</button>
           </div>
+        </div>
+      )}
+
+      {/* T57-B: recovery-email banner for name-only accounts. Never stacks on the
+          push offer; "Later" snoozes a week; saving fires the same welcome email a
+          signup gets, so a typo'd address bounces NOW instead of at lockout. */}
+      {emailPrompt&&!showPushPrompt&&(
+        <div style={{background:`${CA.accent}15`,borderBottom:`1px solid ${CA.accent}40`,padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexShrink:0,flexWrap:"wrap"}}>
+          {emailPrompt==="saved" ? (
+            <div style={{color:CA.accent,fontSize:12}}>✓ Saved. We just sent you a confirmation email — if it never lands, fix the address in Settings.</div>
+          ) : (
+            <>
+              <div style={{color:CA.accent,fontSize:12}}>Add a recovery email. If you ever forget your PIN, it's the only way back into your account.</div>
+              <div style={{display:"flex",gap:6,flexShrink:0,alignItems:"center"}}>
+                <input type="email" value={emailDraft} onChange={e=>setEmailDraft(e.target.value)} placeholder="you@example.com" aria-label="Recovery email"
+                  style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:6,padding:"4px 8px",color:CA.text,fontSize:12,width:170,outline:"none"}}/>
+                <button disabled={emailPrompt==="saving"||!EMAIL_OK_RE.test(emailDraft.trim())} onClick={async()=>{
+                  const em = emailDraft.trim().toLowerCase();
+                  setEmailPrompt("saving");
+                  try{
+                    await sbUpdate("athletes",athlete.id,{email:em});
+                    setAthlete(prev=>({...prev,email:em}));
+                    fetch("/api/send-athlete-welcome",{method:"POST",headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({auth:CURRENT_AUTH})}).catch(()=>{});
+                    setEmailPrompt("saved");
+                    setTimeout(()=>setEmailPrompt(p=>p==="saved"?null:p), 8000);
+                  }catch(_){ setEmailPrompt("offer"); }
+                }} style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700,opacity:emailPrompt==="saving"||!EMAIL_OK_RE.test(emailDraft.trim())?0.5:1}}>
+                  {emailPrompt==="saving"?"Saving…":"Save"}
+                </button>
+                <button onClick={()=>{ try{localStorage.setItem(EMAIL_PROMPT_KEY(athlete.id),String(Date.now()));}catch(_){} setEmailPrompt(null); }}
+                  style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11}}>Later</button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

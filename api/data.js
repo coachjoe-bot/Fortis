@@ -203,10 +203,16 @@ const ATHLETE_COL_ALLOW = {
       "tier",
       // onboarding tour resolution stamp (taken or declined — either way it's done)
       "tour_done_at",
+      // T57-B: recovery email, self-serve add/fix — 29 of 53 athletes signed up
+      // name-only and could never PIN-recover. Format-guarded in `values`.
+      "email",
     ]),
     // Value guards: an athlete may only ever DOWNGRADE their own tier to "free"
     // (paid tiers are granted server-side by Stripe), never self-grant pro/elite.
-    values: { tier: (v) => v === "free" },
+    values: {
+      tier: (v) => v === "free",
+      email: (v) => typeof v === "string" && /^\S+@\S+\.\S+$/.test(v.trim()) && v.trim().length <= 200,
+    },
   },
   // A filed request is AI-extracted from free-text chat — pin down what the athlete
   // side may set so it can never self-resolve (status) or misroute. status defaults
