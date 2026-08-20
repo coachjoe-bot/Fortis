@@ -230,20 +230,37 @@ export const parseRequestedDate = (text, now) => {
 // draft call a second time on the same training day (same bug class as qlLocalDay).
 const qlOpenerKey = (athleteId) => `wilco_today_opener_${athleteId}`;
 
-export const openerLoad = (athleteId, now) => {
+// Cheap deterministic stamp of the program the opener was drafted from. A
+// mid-day program change (a coach assigning from the dashboard, a library
+// swap) must invalidate the cached opener, or the athlete opens straight into
+// the OLD program's session (T57 s5 live find: the coach put a new block on
+// the QA athlete and the next open still greeted with the replaced program's
+// day). Callers that don't know the program omit it and skip the check.
+const progStamp = (text) => {
+  const s = String(text || "");
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) | 0;
+  return `${s.length}:${h}`;
+};
+
+export const openerLoad = (athleteId, now, program) => {
   try {
     if (!athleteId) return null;
     const d = JSON.parse(localStorage.getItem(qlOpenerKey(athleteId)) || "null");
     if (!d || d.day !== qlLocalDay(now)) return null;
     if (typeof d.msg !== "string" || !d.msg.trim()) return null;
+    if (program !== undefined && d.prog && d.prog !== progStamp(program)) return null;
     return d.msg;
   } catch (_) { return null; }
 };
 
-export const openerSave = (athleteId, msg, now) => {
+export const openerSave = (athleteId, msg, now, program) => {
   try {
     if (!athleteId || !msg || !String(msg).trim()) return;
-    localStorage.setItem(qlOpenerKey(athleteId), JSON.stringify({ day: qlLocalDay(now), msg: String(msg) }));
+    localStorage.setItem(qlOpenerKey(athleteId), JSON.stringify({
+      day: qlLocalDay(now), msg: String(msg),
+      ...(program !== undefined ? { prog: progStamp(program) } : {}),
+    }));
   } catch (_) {}
 };
 

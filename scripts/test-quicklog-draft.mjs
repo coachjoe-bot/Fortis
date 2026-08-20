@@ -242,6 +242,18 @@ openerSave(ATH, "morning session", MORNING);
 openerSave(ATH, "re-generated same day", LATER);   // a later save overwrites the day's opener
 check("a later same-day save overwrites", openerLoad(ATH, LATER) === "re-generated same day");
 
+// T57 s5: a mid-day program change invalidates the cached opener — the coach
+// can swap the program from the dashboard and the athlete's next open must not
+// greet them with the replaced program's day.
+reset();
+openerSave(ATH, "Here's today — Day 4", MORNING, "PROGRAM A\nBench 3x5");
+check("same program same day → cache hit", openerLoad(ATH, LATER, "PROGRAM A\nBench 3x5") === "Here's today — Day 4");
+check("a changed program drops the cached opener", openerLoad(ATH, LATER, "PROGRAM B\nSquat 5x5") === null);
+check("a caller that doesn't know the program skips the check", openerLoad(ATH, LATER) === "Here's today — Day 4");
+reset();
+openerSave(ATH, "legacy entry", MORNING);          // pre-stamp cache entry
+check("a legacy un-stamped entry stays valid for the day", openerLoad(ATH, LATER, "PROGRAM A") === "legacy entry");
+
 // ─── a program written in the conversation ───────────────────────────────────
 // The false-positive direction is the dangerous one: treating Joe's prose (or a
 // workout the athlete already finished) as "the program" makes Quick Log prescribe

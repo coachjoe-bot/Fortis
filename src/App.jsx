@@ -5646,10 +5646,11 @@ function planOpener(a, snapshot){
     if(Array.isArray(stored)&&stored.length>0) return {messages:stored, openerLoading:false};
   }catch(_){}
   if(snapshot && a.first_chat_complete && snapshot.workouts.length>0){
-    const cached = openerLoad(a.id);
-    if(cached) return {messages:[{role:"assistant",content:cached}], openerLoading:false};
     // Merge so program_text/tier from either the snapshot or the login row counts.
-    if(openerEligibleFor({...(snapshot.athlete||{}), ...a})) return {messages:[], openerLoading:true};
+    const merged = {...(snapshot.athlete||{}), ...a};
+    const cached = openerLoad(a.id, undefined, merged.temp_program_text||merged.program_text||"");
+    if(cached) return {messages:[{role:"assistant",content:cached}], openerLoading:false};
+    if(openerEligibleFor(merged)) return {messages:[], openerLoading:true};
     return {messages:[{role:"assistant",content:bootGreeting(a.name, a.tier, snapshot.workouts[0])}], openerLoading:false};
   }
   return {messages:[], openerLoading:false};
@@ -6711,7 +6712,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // % -> weight math (QL_DRAFT_SYS weight hierarchy); we just frame it. Cached
         // per local day so this call happens at most once per day, then instant.
         const openerAthlete = {...latestAthlete, tier};
-        const cachedOpener = openerLoad(openerAthlete.id);
+        const cachedOpener = openerLoad(openerAthlete.id, undefined, openerAthlete.temp_program_text||openerAthlete.program_text||"");
         if(cachedOpener){
           setMessages([{role:"assistant",content:cachedOpener}]);
           setOpenerLoading(false);
@@ -6742,7 +6743,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
                 draft: res.draft,
                 unit: openerAthlete.weight_unit==="kg" ? "kg" : "lbs",
               });
-              openerSave(openerAthlete.id, opener);
+              openerSave(openerAthlete.id, opener, undefined, openerAthlete.temp_program_text||openerAthlete.program_text||"");
               // Prime the Quick Log sheet with the same session so it opens instantly.
               try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
