@@ -5111,7 +5111,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
               style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,letterSpacing:1,...DISP,
                 background:data.billing===b?CA.accent:"transparent",
                 color:data.billing===b?CA.onAccent:CA.muted,transition:"all 0.15s"}}>
-              {b==="monthly"?"MONTHLY":"ANNUAL · SAVE ~17%"}
+              {b==="monthly"?"MONTHLY":"ANNUAL · SAVE UP TO 45%"}
             </button>
           ))}
         </div>
@@ -13284,7 +13284,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                   style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,letterSpacing:1,...DISP,
                     background:selectedBilling===b?CA.accent:"transparent",
                     color:selectedBilling===b?CA.onAccent:CA.muted,transition:"all 0.15s"}}>
-                  {b==="monthly"?"MONTHLY":"ANNUAL · SAVE ~17%"}
+                  {b==="monthly"?"MONTHLY":"ANNUAL · SAVE UP TO 45%"}
                 </button>
               ))}
             </div>

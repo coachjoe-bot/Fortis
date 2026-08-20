@@ -171,3 +171,15 @@ for (const [key, e] of Object.entries(EVENT_SOURCES)) {
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} billing-terms checks pass.`);
+
+// ── pricing-copy contract (T57 s5) ───────────────────────────────────────────
+// The annual toggle said "SAVE ~17%" — stale from the $150/yr era — while the
+// tier cards correctly said Save $81 (45%). The athlete-facing claim must never
+// understate or overstate the live prices again.
+{
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+  ok(!app.includes("SAVE ~17%"), "the stale ~17% annual claim is gone");
+  ok((app.match(/ANNUAL · SAVE UP TO 45%/g) || []).length === 2,
+     "both annual toggles (signup + settings drawer) claim the true Pro savings");
+}
