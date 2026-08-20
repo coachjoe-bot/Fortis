@@ -179,6 +179,12 @@ test("live: the session card pins on 'starting my workout', SURVIVES backgroundi
   // the stored state goes with it, so later backgrounding re-pins NOTHING.
   await composer.fill(`done — face pulls 3x${11 + (Date.now() % 40)}, easy`);
   await page.getByRole("button", { name: "→", exact: true }).click();
+  // The 2-3h session-gap interstitial ("Same workout still, or a new session?")
+  // HOLDS the log behind its chips — it fires whenever the previous live run's
+  // logs are 2-3h old, so this spec flaked in a daily time band (T57 s6). Answer
+  // it the way a real athlete does; the held finalize then runs and the card
+  // clears. When the chips don't appear the click times out harmlessly.
+  try { await page.getByRole("button", { name: "Same workout", exact: true }).click({ timeout: 15_000 }); } catch {}
   await expect.poll(async () => page.evaluate(() => window.__closes), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect.poll(async () =>
     page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("wilco_sessioncard_") && !k.includes("declined") && localStorage.getItem(k) !== null && JSON.parse(localStorage.getItem(k) || "null") !== null))
