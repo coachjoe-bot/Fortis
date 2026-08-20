@@ -302,6 +302,17 @@ export const parseBlockSpan = (programText) => {
   if (!text.trim()) return { known: false, repeating: false, weeks: null, source: "none" };
   const runs = text.match(RUNS_RE);
   if (runs) return { known: true, repeating: false, weeks: null, endDate: runs[2] || runs[1], source: "text_runs" };
+  // A Runs line WITHOUT ISO dates (the drafter drifted into prose: "Runs: Week 1
+  // start (today) through Oct 10 (6 weeks)") still states the span — read the
+  // week count off that line so a contract program is never asked when it ends
+  // (T57 s5 live find). Scoped to the Runs line only: a bare "N weeks" anywhere
+  // else in a program is not a span claim.
+  const runsLine = text.match(/^\s*Runs\s*:\s*(.+)$/im);
+  if (runsLine) {
+    const wk = runsLine[1].match(/(\d{1,2})\s*(?:-|–|\s)\s*weeks?\b/i);
+    const n = wk ? parseInt(wk[1], 10) : null;
+    if (n && n >= 1 && n <= 52) return { known: true, repeating: false, weeks: n, source: "text_runs_weeks" };
+  }
   // An explicit "this repeats" beats a week count — a 4-week wave the athlete runs on
   // loop is repeating, and treating it as finite would end it every fourth week.
   if (REPEATING_RE.test(text)) return { known: true, repeating: true, weeks: null, source: "text_repeating" };

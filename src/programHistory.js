@@ -185,11 +185,13 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
     applied_at: startsAt || new Date().toISOString(),
   };
   if (endsAt) row.ends_at = endsAt;
-  // Phase name: caller-provided ("what are we calling it") or defaulted from the
-  // program's first REAL line — through stripBlockInfo, so a contract program
-  // names itself "Block 1 of 2 — …" and never the literal "=== BLOCK INFO ==="
-  // banner (T57 live find).
-  const name = (blockName || stripBlockInfo(t).split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
+  // Phase name: caller-provided ("what are we calling it"), else a contract
+  // program names itself from its own Goal line ("Bench 245 by Oct 10") — the
+  // first body line can be Joe's prose intro, and half a sentence about ratios
+  // is not a block name (T57 s5 live find) — else the program's first REAL line
+  // through stripBlockInfo, never the literal "=== BLOCK INFO ===" banner.
+  const info = parseBlockInfo(t);
+  const name = (blockName || (info.found && info.goal) || stripBlockInfo(t).split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
   if (name) row.block_name = name;
   await sbInsert("program_history", row);
 }

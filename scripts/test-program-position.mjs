@@ -354,6 +354,16 @@ check("a stated duration needs no question", parseBlockSpan("Duration: 4 Weeks (
 check("'6-week block' needs no question", parseBlockSpan("6-week block\nPush\nBench 3x5 @ 185").weeks === 6);
 check("numbered weeks need no question", parseBlockSpan(WEEK_SECTIONED).known === true && parseBlockSpan(WEEK_SECTIONED).weeks === 2);
 check("'repeats weekly' in the text is an answer", parseBlockSpan("Push/Pull/Legs, repeats weekly\nPush\nBench 3x5 @ 185").repeating === true);
+// T57 s5: the drafter drifted into a prose Runs line on a live coach build —
+// the week count on that line still answers the span, and never asks.
+{
+  const prose = parseBlockSpan("=== BLOCK INFO ===\nGoal: Bench 245 by Oct 10\nRuns: Week 1 start (today) through Oct 10 (6 weeks)\n\nDay 1\nBench 3x5 @ 185");
+  check("a prose Runs line's week count is a known span", prose.known === true && prose.weeks === 6 && prose.source === "text_runs_weeks");
+  const iso = parseBlockSpan("=== BLOCK INFO ===\nRuns: 2026-08-17 to 2026-09-13\n\nDay 1\nBench 3x5 @ 185");
+  check("ISO Runs dates still win over the prose fallback", iso.source === "text_runs" && iso.endDate === "2026-09-13");
+  const stray = parseBlockSpan("Day 1\nBench 3x5 @ 185\nDeload after 6 weeks of hard running");
+  check("a bare 'N weeks' outside a Runs line claims nothing", stray.source !== "text_runs_weeks");
+}
 // An explicit repeat beats a week count — a 4-week wave run on loop must not end.
 check("explicit repeat outranks a week count", parseBlockSpan(WEEK_COLUMNS + "\nRun this on repeat.").repeating === true);
 check("Will's own program declares its length", parseBlockSpan(WILLARD).known === true && parseBlockSpan(WILLARD).weeks === 4);

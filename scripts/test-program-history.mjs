@@ -75,6 +75,22 @@ console.log("first save:");
   ok(calls.updates.length === 0, "no previous block to close");
 }
 
+// T57 s5: a contract program names its block from its own Goal line — the first
+// body line can be Joe's prose intro, and half a sentence is not a block name.
+console.log("block naming:");
+{
+  const { calls, deps } = harness(null);
+  const CONTRACT = "=== BLOCK INFO ===\nGoal: Bench 245 by Oct 10\nRuns: 2026-08-19 to 2026-09-27\n\nBench trend has been solid, but the ratios tell the real story.\n\nDay 1 - Push\nBench 3x5 @ 185";
+  await snapshotProgramHistory({ athleteId: "a1", text: CONTRACT, source: "library" }, deps);
+  ok(calls.inserts[0]?.data.block_name === "Bench 245 by Oct 10", "contract block names itself from Goal");
+}
+{
+  const { calls, deps } = harness(null);
+  const CONTRACT = "=== BLOCK INFO ===\nGoal: Bench 245 by Oct 10\n\nDay 1 - Push\nBench 3x5 @ 185";
+  await snapshotProgramHistory({ athleteId: "a1", text: CONTRACT, source: "library", blockName: "My Named Block" }, deps);
+  ok(calls.inserts[0]?.data.block_name === "My Named Block", "a caller-provided name still wins over the Goal");
+}
+
 // ── no-op save ───────────────────────────────────────────────────────────────
 console.log("no-op save:");
 {
