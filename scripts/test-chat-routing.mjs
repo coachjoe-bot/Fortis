@@ -221,6 +221,17 @@ console.log("isFullProgramEcho:");
   ok(/never say you lack the ability|NEVER deny it/i.test(block),
      "the rule forbids denying a correction that was applied");
 
+  // THE ATHLETE'S NAME rule (T57 s2 + s6): the exact-name rule must survive,
+  // and it must carry the self-name clause — a live s6 probe caught Joe
+  // addressing the athlete as "Joe" (his own persona name), the one substitute
+  // the generic rule didn't call out.
+  const nameI = src.indexOf("THE ATHLETE'S NAME:");
+  ok(nameI !== -1, "the ATHLETE'S NAME rule still exists in JOEBOT_STATIC_SYS");
+  const nameBlock = src.slice(nameI, nameI + 900);
+  ok(/use EXACTLY that name/.test(nameBlock), "the rule pins the exact name");
+  ok(/YOUR OWN name is Joe/.test(nameBlock),
+     "the rule names the self-name confusion (never call the athlete Joe)");
+
   // The pre-tap caution must stay SCOPED. If an unconditional 'NEVER claim ...
   // already fixed' ever comes back, the original bug is back with it.
   const beforeIdx = block.indexOf("BEFORE the athlete taps");

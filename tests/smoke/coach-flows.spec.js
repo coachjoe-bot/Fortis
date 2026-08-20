@@ -140,3 +140,32 @@ test("bulk assign completes: program written, block history snapshotted per athl
   await expect.poll(() => writes.some((w) => JSON.stringify(w).includes("program_history") && JSON.stringify(w).includes("coach_bulk"))).toBe(true);
   await expect.poll(() => writes.some((w) => JSON.stringify(w).includes("Squat 3x5 @ 225") && JSON.stringify(w).includes("athletes"))).toBe(true);
 });
+
+// ─── T57 s6: the EMPTY-ROSTER coach (untyped-input sweep item 1e) ────────────
+// A brand-new coach with zero athletes walks every tab. The failure mode this
+// pins: an empty-state render crash (an unguarded roster[0], a .map over
+// undefined) unmounts the whole tree into the error boundary's RELOAD screen.
+test("a coach with 0 athletes walks every tab without crashing", async ({ page }) => {
+  const coach = makeCoach();
+  await mockApi(page, { athlete: makeAthlete(), coach });
+  // Newest route wins: the dashboard answers with an EMPTY roster.
+  await page.route("**/api/identity", (route) => {
+    const body = route.request().postDataJSON() || {};
+    if (body.action === "coach-dashboard") {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+        athletes: [], coaches: [], school: [], schoolsAll: [], coachCounts: null,
+      }) });
+    }
+    return route.fallback();
+  });
+
+  await loginAsCoach(page, coach);
+  for (const tab of ["overview", "athletes", "progress", "programs", "reports", "settings"]) {
+    await page.getByRole("button", { name: new RegExp(`^${tab}$`, "i") }).click();
+    await page.waitForTimeout(250);
+    // The tree survived: the tab bar is still there and the boundary's RELOAD
+    // screen never appeared.
+    await expect(page.getByRole("button", { name: /^overview$/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "RELOAD", exact: true })).toHaveCount(0);
+  }
+});
