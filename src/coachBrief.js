@@ -86,7 +86,7 @@ const OPEN_ATHLETE_ACTION = (athleteId) => ({ id: "open", kind: "open_athlete", 
 function buildConcernBeat({ t, row, req, dateKey, beatIndex }) {
   const name = t.name;
   const athleteId = t.id;
-  const baseFlag = t.kind === "Injury" ? "injury" : t.kind === "Quiet" ? "quiet" : t.kind === "Adherence" ? "adherence" : "plateau";
+  const baseFlag = t.kind === "Injury" ? "injury" : t.kind === "Quiet" ? "quiet" : t.kind === "Adherence" ? "adherence" : t.kind === "Request" ? "request" : "plateau";
 
   // Pending change request wins the merge — quote it, flag='request'.
   if (req) {
@@ -444,11 +444,26 @@ export function buildMorningBrief({ D, athletes = [], changeRequests = [], clear
   const concernBeats = [];
   let bi = 1;
   for (const t of triage) {
-    const baseFlag = t.kind === "Injury" ? "injury" : t.kind === "Quiet" ? "quiet" : t.kind === "Adherence" ? "adherence" : "plateau";
+    const baseFlag = t.kind === "Injury" ? "injury" : t.kind === "Quiet" ? "quiet" : t.kind === "Adherence" ? "adherence" : t.kind === "Request" ? "request" : "plateau";
     if (cleared.has(`${t.id}:${baseFlag}`)) continue;
     const row = rowsById[t.id] || null;
     const req = pendingReqByAthlete[t.id] || null;
     concernBeats.push(buildConcernBeat({ t, row, req, dateKey, beatIndex: bi }));
+    bi++;
+  }
+
+  // A pending request from an otherwise-healthy athlete is still work waiting
+  // on the coach — it gets its own beat instead of being silently dropped.
+  // (T57 recheck find: requests only rode triage beats, so the brief claimed
+  // "nothing needs you today" over a pending request; and a cleared triage flag
+  // took the athlete's request down with it.)
+  const beatIds = new Set(concernBeats.map((b) => b.athleteId));
+  for (const [aid, req] of Object.entries(pendingReqByAthlete)) {
+    if (beatIds.has(aid)) continue;
+    if (cleared.has(`${aid}:request`)) continue;
+    const a = (athletes || []).find((x) => x && x.id === aid);
+    if (!a) continue;
+    concernBeats.push(buildConcernBeat({ t: { id: aid, name: a.name, kind: "Request" }, row: rowsById[aid] || null, req, dateKey, beatIndex: bi }));
     bi++;
   }
 

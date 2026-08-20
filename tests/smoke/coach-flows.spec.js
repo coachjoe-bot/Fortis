@@ -65,13 +65,12 @@ test("'Review & apply' on a change request reaches the REVIEW CHANGE diff (the s
   await expect(page.getByRole("button", { name: /Save program/ })).toBeVisible();
 });
 
-// FIXME(T57 s4): the mocked pending request never surfaces as a brief beat —
-// the dashboard's program_change_requests read IS intercepted (the card spec
-// proves the route), so something in buildMorningBrief's beat gating filters it
-// under mock data. The crash class itself is covered: the card spec drives the
-// same staged editor end-to-end, and both setProgTab call sites were removed in
-// one commit. Trace the beat gating, then un-fixme.
-test.fixme("the Morning Brief's 'Review & apply' hand-off reaches the staged diff (the second setProgTab site)", async ({ page }) => {
+// TRACED (T57 s5): the beat never rendered because buildMorningBrief only ever
+// attached pending requests to TRIAGE beats — a healthy athlete's request was
+// dropped entirely and the brief claimed all-clear over pending work. Fixed in
+// coachBrief.js (standalone request beats + the request survives a cleared
+// triage flag); pinned in test-coach-brief.mjs.
+test("the Morning Brief's 'Review & apply' hand-off reaches the staged diff (the second setProgTab site)", async ({ page }) => {
   const coach = makeCoach();
   const athlete = makeAthlete({ coach_id: coach.id, program_text: PROGRAM, program_locked: true });
   await mockApi(page, { athlete, coach });

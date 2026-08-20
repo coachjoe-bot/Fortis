@@ -92,6 +92,31 @@ truthy("a different day can phrase the opening differently",
   new Set(["2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"].map(proseFor)).size > 1);
 check("the same day always phrases it the same", proseFor(DAY), proseFor(DAY));
 
+console.log("\nT57: a pending request surfaces even when the athlete has no triage flag:");
+const REQ = { id: "req1", athlete_id: "a3", status: "pending", reason: "shoulder is barking on OHP",
+  items: [{ lift: "Overhead Press", suggested_change: "Swap OHP for landmine press for two weeks" }] };
+const healthyReq = buildMorningBrief({ D: D(), athletes: ATHLETES, changeRequests: [REQ], dateKey: DAY });
+const reqBeat = healthyReq.beats.find((b) => b.kind === "concern" && b.flag === "request");
+truthy("the request gets its own beat with no triage flag", !!reqBeat && reqBeat.athleteId === "a3");
+truthy("the brief no longer claims all-clear over a pending request",
+  !healthyReq.beats.some((b) => b.kind === "allclear"));
+truthy("the headline counts the request as needing attention",
+  /1 athlete needs/.test(healthyReq.headline));
+truthy("Review & apply is offered on the standalone beat",
+  (reqBeat.actions || []).some((a) => a.kind === "resolve_request" && a.label === "Review & apply"));
+const clearedReq = buildMorningBrief({ D: D(), athletes: ATHLETES, changeRequests: [REQ],
+  cleared: new Set(["a3:request"]), dateKey: DAY });
+truthy("a cleared standalone request stays cleared",
+  !clearedReq.beats.some((b) => b.flag === "request"));
+const triagedReq = buildMorningBrief({ D: D({ triage: [{ id: "a3", name: "Diego Marin", kind: "Quiet" }] }),
+  athletes: ATHLETES, changeRequests: [REQ], dateKey: DAY });
+truthy("a triaged athlete's request still merges into the triage beat (no duplicate)",
+  triagedReq.beats.filter((b) => b.flag === "request").length === 1);
+const clearedTriage = buildMorningBrief({ D: D({ triage: [{ id: "a3", name: "Diego Marin", kind: "Quiet" }] }),
+  athletes: ATHLETES, changeRequests: [REQ], cleared: new Set(["a3:quiet"]), dateKey: DAY });
+truthy("clearing the triage flag does NOT take the pending request down with it",
+  clearedTriage.beats.filter((b) => b.flag === "request").length === 1);
+
 console.log("\nbriefWeekKey + decisionNote:");
 check("the week key is stable across a Mon-Sun week",
   briefWeekKey(new Date("2026-07-20T12:00:00Z")), briefWeekKey(new Date("2026-07-24T12:00:00Z")));
