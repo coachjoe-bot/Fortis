@@ -168,3 +168,52 @@ test("opener DIFFERENT WORKOUT: the next message picks the session, Quick Log + 
   await expect(page.getByText(/Swapped/)).toBeVisible({ timeout: 20000 });
   await expect.poll(() => page.evaluate(() => window.__cardPosted && JSON.stringify(window.__cardPosted))).toContain("Row 3x8");
 });
+
+// ─── T57-B: recovery-email banner for name-only accounts ──────────────────────
+// 29 of 53 real athletes signed up before email was required and can never
+// PIN-recover. The banner is a slim ask, never a gate: Save writes the address
+// (gateway-allowlisted + format-guarded) and fires the welcome email; Later
+// snoozes a week.
+test("a name-only athlete gets the recovery-email banner; Save writes the address", async ({ page }) => {
+  const athlete = makeAthlete({ email: null });
+  await mockApi(page, { athlete });
+  const writes = [];
+  await page.route("**/api/data", (route) => {
+    const body = route.request().postDataJSON() || {};
+    if (body.op && body.op !== "read") writes.push(body);
+    return route.fallback();
+  });
+  await page.route("**/api/send-athlete-welcome", (route) => {
+    route.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+
+  await loginAsAthlete(page, athlete);
+  await expect(page.getByText(/Add a recovery email/)).toBeVisible({ timeout: 15000 });
+  const save = page.getByRole("button", { name: "Save" });
+  await expect(save).toBeDisabled(); // no address typed yet
+  await page.getByPlaceholder("you@example.com").fill("marcus@example.com");
+  await save.click();
+  await expect(page.getByText(/We just sent you a confirmation/)).toBeVisible({ timeout: 10000 });
+  await expect.poll(() => writes.some((w) => JSON.stringify(w).includes("marcus@example.com") && JSON.stringify(w).includes("athletes"))).toBe(true);
+});
+
+test("Later snoozes the email banner for a week (stamped, not just hidden)", async ({ page }) => {
+  const athlete = makeAthlete({ email: null });
+  await mockApi(page, { athlete });
+  await loginAsAthlete(page, athlete);
+  await expect(page.getByText(/Add a recovery email/)).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "Later" }).click();
+  await expect(page.getByText(/Add a recovery email/)).toHaveCount(0);
+  // The snooze is a persisted timestamp — the next open inside the week reads it
+  // and never re-raises (the show effect gates on this exact key).
+  const stamp = await page.evaluate((id) => localStorage.getItem(`wilco_email_prompt_${id}`), athlete.id);
+  expect(Number(stamp)).toBeGreaterThan(Date.now() - 60_000);
+});
+
+test("an athlete WITH an email never sees the banner", async ({ page }) => {
+  const athlete = makeAthlete(); // mocks default carries an email
+  await mockApi(page, { athlete });
+  await loginAsAthlete(page, athlete);
+  await expect(page.getByPlaceholder(/Tell Coach Joe/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Add a recovery email/)).toHaveCount(0);
+});
