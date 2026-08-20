@@ -5991,7 +5991,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(!athlete?.id || !historyLoaded || !(athlete.temp_program_text||athlete.program_text||findChatProgram(messages))){ setQuickLogParked(false); return; }
     const parked = qlLoad(athlete.id, workoutHistory);
     // A PRE-BUILT draft is not "the workout you started" — nobody started it. It
-    // opens instantly, but the button keeps saying QUICK LOG so RESUME LOG stays a
+    // opens instantly, but the button keeps saying LOG so RESUME stays a
     // true statement about the athlete's own unfinished work.
     setQuickLogParked(!!parked && !parked.prebuilt);
   },[athlete?.id, athlete?.program_text, athlete?.temp_program_text, historyLoaded, workoutHistory, showQuickLog, messages]);
@@ -8840,12 +8840,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             chat screen without opening anything, which is what makes closing it safe. */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:8}}>
         {/* Light brand (Will, 08-11): no emojis, one shared type register
-            (10.5/0.3 DISP) so QUICK LOG never gets smooshed. Dark keeps the
-            original stretched ⚡ button. */}
+            (10.5/0.3 DISP). Dark keeps the original stretched ⚡ button.
+            Label shortened QUICK LOG → LOG (Will, 08-20). */}
         {effectiveTier(athlete)!=="free"&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
             style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:IS_DARK?"6px 8px":"6px 10px",cursor:"pointer",fontSize:IS_DARK?10:10.5,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
-            {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ QUICK LOG"):(quickLogParked?"RESUME":"QUICK LOG")}
+            {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ LOG"):(quickLogParked?"RESUME":"LOG")}
           </button>
         )}
         <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:5,flexShrink:0}}>

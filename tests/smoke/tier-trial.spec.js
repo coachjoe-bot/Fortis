@@ -40,7 +40,7 @@ test("inside the trial window a free-pick athlete gets the full Pro surface", as
   await mockApi(page, { athlete });
 
   await loginAsAthlete(page, athlete);
-  await expect(page.getByRole("button", { name: "QUICK LOG" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "MY LOG" })).toBeVisible();
   await expect(page.getByRole("button", { name: "PROGRESS" })).toBeVisible();
   // No countdown drama anywhere on the main surface (the plan drawer is the one
@@ -56,7 +56,7 @@ test("an expired trial silently reverts, and the workout log survives read-only"
   await loginAsAthlete(page, athlete);
   // The Pro surfaces are simply gone — no banner, no countdown, no upsell modal.
   await expect(page.getByText(/COACH JOE/)).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("button", { name: "QUICK LOG" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "PROGRESS" })).toHaveCount(0);
 
   // …except MY LOG: history they logged during the trial stays viewable.
@@ -76,7 +76,7 @@ test("an expired trial with nothing logged shows the plain free surface (no MY L
   await loginAsAthlete(page, athlete);
   await expect(page.getByText(/COACH JOE/)).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "MY LOG" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "QUICK LOG" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
 });
 
 test("the plan step states the universal trial and the free card is honest about it", async ({ page }) => {
@@ -130,5 +130,5 @@ test("the plan step states the universal trial and the free card is honest about
 
   // Free pick lands in the app WITH the Pro surface live (trial from creation).
   await page.getByRole("button", { name: "Start with Free →" }).click();
-  await expect(page.getByRole("button", { name: "QUICK LOG" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toBeVisible({ timeout: 15000 });
 });

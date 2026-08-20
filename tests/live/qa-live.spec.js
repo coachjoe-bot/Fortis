@@ -95,7 +95,7 @@ test("live: the unit toggle round-trips every athlete surface (kg ↔ lbs)", asy
 
 test("live: Quick Log prefashions today's session and sends it through the real parser", async ({ page }) => {
   await login(page);
-  await page.getByRole("button", { name: /QUICK LOG/ }).click();
+  await page.getByRole("button", { name: "LOG", exact: true }).click();
   // The AI prefill lands in the editable draft (program day + loads), never empty
   // — and SEND only arms once it has. Waiting on the BUTTON (not the textarea)
   // avoids racing the prefill against selector order.
