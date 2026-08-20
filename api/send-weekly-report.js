@@ -49,8 +49,11 @@ export default async function handler(req, res) {
   const weekLabel  = weekAgo.toLocaleDateString("en-US", {month:"long", day:"numeric"});
 
   // ── Fetch Pro/Elite athletes with a coach email set ─────────────────────
-  // Free tier does not receive weekly progress reports — only Pro and Elite
-  const athRes  = await fetch(`${SUPABASE_URL}/rest/v1/athletes?coach_email=not.is.null&tier=in.(pro,elite)&select=*`, {headers:sbH});
+  // Free tier does not receive weekly progress reports — only Pro and Elite,
+  // plus free-pick athletes still inside the W18-3 7-day trial window (they
+  // have Pro features, so the report is part of what they're trialing).
+  const trialFilter = `and(tier.eq.free,trial_ends_at.gt.${now.toISOString()})`;
+  const athRes  = await fetch(`${SUPABASE_URL}/rest/v1/athletes?coach_email=not.is.null&or=(tier.in.(pro,elite),${trialFilter})&select=*`, {headers:sbH});
   const athletes = await athRes.json();
   if(!Array.isArray(athletes) || athletes.length === 0) {
     return res.status(200).json({message:"No Pro/Elite athletes with coach emails set.", sent:0});

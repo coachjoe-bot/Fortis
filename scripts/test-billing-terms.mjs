@@ -182,4 +182,14 @@ console.log(`\nAll ${pass} billing-terms checks pass.`);
   ok(!app.includes("SAVE ~17%"), "the stale ~17% annual claim is gone");
   ok((app.match(/ANNUAL · SAVE UP TO 45%/g) || []).length === 2,
      "both annual toggles (signup + settings drawer) claim the true Pro savings");
+
+  // W18-3 trial copy (Will, 08-20): the paid path collects the card at signup
+  // and must say PLAINLY that billing waits out the trial. Full trial-clock
+  // logic contract: scripts/test-tier-trial.mjs.
+  ok(app.includes("Your {trialDays}-day free trial starts today. You will be charged"),
+     "the payment disclosure still states trial start + exact first-charge date");
+  ok(app.includes("You won't be billed for ${trialDays} days"),
+     "the card step carries Will's exact 'won't be billed' promise");
+  ok(app.includes("Every plan starts with a 7-day free trial"),
+     "the plan step states the universal 7-day trial");
 }

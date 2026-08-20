@@ -323,6 +323,12 @@ async function createAthleteAction(req, res, body) {
   const row = { name, email: email.toLowerCase(), pin: await hashPin(pin) };
   for (const k of ATHLETE_FIELDS) if (a[k] !== undefined) row[k] = a[k];
   row.tier = body.isSchool ? "school" : "free"; // never set from the client's tier
+  // W18-3 (Will, 08-20): every non-school signup starts a 7-day trial. Stamped
+  // server-side at creation, never client-writable (not in ATHLETE_COL_ALLOW).
+  // A paid pick supersedes this via its Stripe trial (tier becomes pro/elite);
+  // the FREE pick rides this clock alone — src/tiers.js effectiveTier presents
+  // the athlete as pro until it expires, then silently answers free again.
+  if (!body.isSchool) row.trial_ends_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   if (body.isSchool && body.schoolPriceId) row.stripe_price_id = str(body.schoolPriceId, { max: 120, name: "price" });
   // Marketing attribution (go-forward only — existing rows stay null). An exact
   // event key (QR → landing → signup) is stored as-is; it also gates the event

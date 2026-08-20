@@ -68,6 +68,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
 import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
+import { effectiveTier, trialActive } from "./tiers.js";
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
@@ -4359,7 +4360,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
       <div style={{color:CA.muted2,fontSize:13,marginBottom:14,lineHeight:1.6}}>
         {appliedKind==="tester" ? `Add a card to activate your free ${tier==="elite"?"Elite":"Pro"} tester access. It won't be charged.`
           : appliedGift ? "Confirm your payment details to activate Pro."
-          : "Add a card to start your free trial. You won't be charged until it ends, cancel anytime."}
+          : `Add your card to start. You won't be billed for ${trialDays} days, and you can cancel anytime before then for free.`}
       </div>
 
       <PaymentDisclosures tier={tier} billing={billing} giftApplied={!!appliedGift} giftTerms={giftTerms} tester={appliedKind==="tester"} trialDays={trialDays}/>
@@ -4845,13 +4846,13 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
     const selected = data.tier===tierKey;
     const annual = data.billing==="annual";
     const pricing = {
-      free:  {monthly:"Free",        annual:"Free",       monthlyNote:"No credit card needed", annualNote:"No credit card needed"},
-      pro:   {monthly:"$14.99/mo",   annual:"$99/yr",     monthlyNote:"Billed monthly",        annualNote:"~$8.25/mo · Save $81"},
-      elite: {monthly:"$99.99/mo",   annual:"$1,000/yr",  monthlyNote:"Billed monthly",        annualNote:"~$83/mo · Save ~$200"},
+      free:  {monthly:"Free",        annual:"Free",       monthlyNote:"No credit card needed",     annualNote:"No credit card needed"},
+      pro:   {monthly:"$14.99/mo",   annual:"$99/yr",     monthlyNote:"First 7 days free",         annualNote:"~$8.25/mo · Save $81"},
+      elite: {monthly:"$99.99/mo",   annual:"$1,000/yr",  monthlyNote:"First 7 days free",         annualNote:"~$83/mo · Save ~$200"},
     };
     const p = pricing[tierKey];
     const features = {
-      free:  ["Full AI coaching chat","Form review (video upload)","Coach welcome email","No session memory (fresh start each login)"],
+      free:  ["Starts with 7 days of Pro, no card needed","Full AI coaching chat","Form review (video upload)","After the trial your workout log is view-only"],
       pro:   ["Everything in Free","Workout history saved","Progress tracking & PRs","Training program stored","Workout log viewable","Weekly coach progress reports"],
       elite: ["Everything in Pro","Assigned WILCO Certified Coach","Guaranteed weekly check-in","Initial onboarding call"],
     };
@@ -5110,7 +5111,7 @@ function SignupScreen({setView,setAthlete,setErr,err,eventCtx}) {
       </>}
       {/* ── Step 14: Plan selection (last data step) ── */}
       {step===14&&<>
-        <div style={{color:CA.muted2,fontSize:13,marginBottom:12,lineHeight:1.6}}>Choose your plan. You can upgrade anytime from settings.</div>
+        <div style={{color:CA.muted2,fontSize:13,marginBottom:12,lineHeight:1.6}}>Choose your plan. Every plan starts with a 7-day free trial, and you can change plans anytime from settings.</div>
         {/* Billing toggle */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:0,marginBottom:14,background:CA.navy3,borderRadius:10,padding:4,border:`1px solid ${CA.border}`}}>
           {["monthly","annual"].map(b=>(
@@ -5658,7 +5659,7 @@ function planOpener(a, snapshot){
     const cached = openerLoad(a.id, undefined, merged.temp_program_text||merged.program_text||"");
     if(cached) return {messages:[{role:"assistant",content:cached}], openerLoading:false};
     if(openerEligibleFor(merged)) return {messages:[], openerLoading:true};
-    return {messages:[{role:"assistant",content:bootGreeting(a.name, a.tier, snapshot.workouts[0])}], openerLoading:false};
+    return {messages:[{role:"assistant",content:bootGreeting(a.name, effectiveTier(a), snapshot.workouts[0])}], openerLoading:false};
   }
   return {messages:[], openerLoading:false};
 }
@@ -6260,7 +6261,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     sbUpdate("athletes",athlete.id,{tour_done_at:at}).catch(()=>{});
   };
   const startTour = (replay) => {
-    const free = (athlete.tier||"free")==="free";
+    const free = effectiveTier(athlete)==="free"; // trial athletes tour as Pro
     setTourOffer(false); setTourChips(false);
     setTour({steps:athleteTourSteps({free}), idx:0, part:0, replay:!!replay, free});
     track("tour_start","nav",{role:"athlete",replay:!!replay});
@@ -6547,7 +6548,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const prebuiltRef = useRef(false);
   useEffect(()=>{
     if(prebuiltRef.current || !historyLoaded || offline) return;
-    if((athlete.tier||"free")==="free") return;
+    if(effectiveTier(athlete)==="free") return;
     if(!(athlete.temp_program_text||athlete.program_text)) return;
     if(qlLoad(athlete.id, workoutHistory)) return;      // already have a draft to open
     if(!qlPrebuildEligible(athlete.id)) return;
@@ -6625,7 +6626,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       }
     }catch(_){}
     (async()=>{
-      const tier = athlete.tier||"free";
+      // effectiveTier: a W18-3 trial athlete loads history like a Pro. (The
+      // webhook-lag guard further down deliberately keeps reading the RAW tier —
+      // that one is billing reconciliation, not feature gating.)
+      const tier = effectiveTier(athlete);
       // Restore today's conversation from localStorage if available
       try {
         const storedChat = localStorage.getItem(chatStorageKey);
@@ -6815,7 +6819,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   },[]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finalizeWorkout = async (parsed, msg, reply, updatedAthlete, isNewSession, addReply) => {
-    const tier = updatedAthlete.tier||"free";
+    // effectiveTier: trial athletes persist workouts/PRs like Pro; once the
+    // trial lapses this silently answers "free" again and new logs stop saving
+    // (history already written stays — free = read-only history, 08-19 ruling).
+    const tier = effectiveTier(updatedAthlete);
     // Activation event — fired for ALL tiers (free tier logs but isn't persisted, so
     // tracking here, before the tier gate below, keeps the funnel honest).
     track("workout_logged","workout_log",{ persisted: tier!=="free" });
@@ -7914,7 +7921,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     const logKeywords = ["show me my log","my log","my workout log","show my workouts","view my workouts","workout history","my history","show my history","see my log","all my workouts","see my workouts","show my log"];
     if(msg.length<=40 && logKeywords.some(kw=>msg.toLowerCase().includes(kw))){
       setInput("");
-      if((athlete.tier||"free")==="free"){
+      // Free = read-only history (08-19 ruling): an expired-trial athlete with
+      // logged sessions still gets to LOOK at them — the modal opens read-only.
+      // A free athlete with nothing logged keeps the upsell line.
+      if(effectiveTier(athlete)==="free" && !((athlete.total_sessions_logged||0)>0 || workoutHistory.length>0)){
         setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:`Your workout log is a Pro feature, ${athlete.name}. Upgrade to Pro to save your history between sessions and view your full log.`}]);
       } else {
         setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:`Here's your full workout log, ${athlete.name}.`}]);
@@ -8022,7 +8032,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // (Quick Log drafts are pure logs by construction — same reason they can never
       // be classified as programs — so the flag is ignored for them.)
       if(parsed.log_correction?.is_mistake_fix && !fromQuickLog){
-        if((updatedAthlete.tier||"free")==="free"){
+        if(effectiveTier(updatedAthlete)==="free"){
           followUp("Free tier doesn't store workout history, so there's no saved entry to fix, nothing carried over.");
           return;
         }
@@ -8215,7 +8225,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           }
         } catch(e){}
       } else if(parsed.program_create_request && !fromQuickLog
-                && (updatedAthlete.tier||"free")!=="free" && !updatedAthlete.temp_program_text){
+                && effectiveTier(updatedAthlete)!=="free" && !updatedAthlete.temp_program_text){
         // Phase D: a real program request from a Builder-eligible athlete gets the
         // Builder, not inline generation — the Builder interviews properly and
         // drafts from doctrine. "Just write it here" keeps the old path one tap
@@ -8804,7 +8814,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div style={{flex:1,minWidth:0,color:CA.muted,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{String(athlete.name||"").length>13?String(athlete.name||"").trim().split(/\s+/)[0]:athlete.name}</div>
           {/* Tier badge — athlete world holds the accent electric-blue (TIERS.color stays
               gold for the coach side / pricing; we repoint just this render). */}
-          {(()=>{const t=TIERS[athlete.tier||"free"]||{badge:athlete.tier==="school"?"ORG":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
+          {/* effectiveTier: a trial athlete's badge reads PRO while the trial
+              runs, then silently reads FREE again — matching the features. */}
+          {(()=>{const t=TIERS[effectiveTier(athlete)]||{badge:athlete.tier==="school"?"ORG":String(athlete.tier||"FREE").toUpperCase()};const bc=CA.accent;return(<span style={{flexShrink:0,background:`${bc}22`,border:`1px solid ${bc}`,borderRadius:4,padding:"1px 6px",color:bc,fontSize:9,fontWeight:700,letterSpacing:1}}>{t.badge}</span>);})()}
           {(athlete.total_sessions_logged||0)>=100&&(()=>{const cnt=athlete.total_sessions_logged||0;const tier=cnt>=1000?"×4":cnt>=500?"×3":cnt>=250?"×2":"";return<span title="WILCO Certified: 100+ workouts logged" style={{flexShrink:0,background:`${CA.accent}22`,border:`1px solid ${CA.accent}`,borderRadius:4,padding:"1px 6px",color:CA.accent,fontSize:9,fontWeight:700,letterSpacing:1}}>✦ CERTIFIED{tier?` ${tier}`:""}</span>;})()}
         </div>
         {/* Row 1.5: streak charge-chain — this week's training as a row of links,
@@ -8825,14 +8837,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         {/* Light brand (Will, 08-11): no emojis, one shared type register
             (10.5/0.3 DISP) so QUICK LOG never gets smooshed. Dark keeps the
             original stretched ⚡ button. */}
-        {(athlete.tier||"free")!=="free"&&(
+        {effectiveTier(athlete)!=="free"&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
             style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:IS_DARK?"6px 8px":"6px 10px",cursor:"pointer",fontSize:IS_DARK?10:10.5,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
             {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ QUICK LOG"):(quickLogParked?"RESUME":"QUICK LOG")}
           </button>
         )}
         <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:5,flexShrink:0}}>
-          {(athlete.tier||"free")!=="free"&&(
+          {effectiveTier(athlete)!=="free"&&(
             <button data-tour="program-btn" onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
               style={{background:athlete.temp_program_text?`${CA.amber}15`:(IS_DARK?(athlete.program_text?CA.navy2:CA.navy3):CA.navy3),border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:IS_DARK?"4px 8px":"6px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
               {IS_DARK
@@ -8844,7 +8856,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               edition from Joe was invisible unless the athlete happened to open MY
               LOG first. Same 6px accent dot, on the door instead of behind it —
               proofDigest is already in scope right here. */}
-          {(athlete.tier||"free")!=="free"&&(
+          {/* MY LOG stays visible for a free athlete WITH history (read-only —
+              free = read-only history, 08-19 ruling); the modal itself hides its
+              write affordances for them and self-loads the rows on open. */}
+          {(effectiveTier(athlete)!=="free"||(athlete.total_sessions_logged||0)>0)&&(
             <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
               style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>
@@ -8852,7 +8867,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               {proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:-3,right:-3,width:8,height:8,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 6px ${CA.accent}`,display:"block"}}/>}
             </button>
           )}
-          {(athlete.tier||"free")!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>PROGRESS</button>}
+          {effectiveTier(athlete)!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>PROGRESS</button>}
           <button onClick={()=>setShowSettings(true)} title="Settings" style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:14,lineHeight:1}}>⚙</button>
           {!isMobile&&<button onClick={onLogout} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Log Out</button>}
         </div>
@@ -10493,6 +10508,14 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
   // caller omits it and still opens on the workouts list.
   const [tab,setTab] = useState(initialTab || "workouts");
   const [editSession,setEditSession] = useState(null);
+  // Free = READ-ONLY history (Will's 08-19 ruling, wired in with the W18-3
+  // trial): a free athlete — typically one whose 7-day trial lapsed — can still
+  // look at every session they logged, but every write affordance (edit, pain
+  // resolve) is hidden. The paging machinery below self-loads their rows: the
+  // boot batch skips the workouts read for free, so workoutHistory arrives
+  // empty, sessionCount(0) < total_sessions_logged, and the scroll sentinel
+  // pages the full history in from the server on first open.
+  const readOnly = effectiveTier(athlete)==="free";
   // Older-session paging. workoutHistory is the recent working set (capped at ~100 raw
   // rows on load); anything older only exists on the server. The athlete pages it into
   // THIS local state on demand. It is deliberately NOT pushed back into workoutHistory:
@@ -10573,6 +10596,13 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
   const sentinelRef = useRef(null);
   const loadOlderRef = useRef(loadOlder);
   loadOlderRef.current = loadOlder;
+  // Read-only (free) open: the boot batch skips the workouts read for a free
+  // athlete, so the modal arrives with ZERO rows while total_sessions_logged
+  // says history exists. The scroll sentinel only renders once the timeline is
+  // non-empty, so it can't bootstrap itself — kick the first page in on mount.
+  useEffect(()=>{
+    if(timelineWorkouts.length===0 && (athlete.total_sessions_logged||0)>0) loadOlderRef.current();
+  },[]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(()=>{
     if(tab!=="workouts"||allLoaded) return;
     const el = sentinelRef.current;
@@ -10733,7 +10763,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           {!isRunSession&&feelVal&&<div style={{fontSize:11,color:feelVal==="great"||feelVal==="good"?CA.green:feelVal==="rough"?CA.red:CA.accent,fontWeight:600}}>{feelVal}</div>}
-                          {!isRunSession&&allExercises.length>0&&(
+                          {!isRunSession&&allExercises.length>0&&!readOnly&&(
                             <button onClick={()=>setEditSession(session)} title="Edit this workout" style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:11}}>✎ Edit</button>
                           )}
                         </div>
@@ -10777,7 +10807,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                           {allPainFlags.filter(p=>!resolvedPain.includes(p.area.toLowerCase())).map((p,pi)=>(
                             <div key={pi} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,padding:"3px 8px"}}>
                               <span style={{color:CA.red,fontSize:11}}>⚠ {p.area}</span>
-                              <button onClick={()=>resolvePain(p.area)} title="Mark resolved: hides from active view" style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✓ resolved</button>
+                              {!readOnly&&<button onClick={()=>resolvePain(p.area)} title="Mark resolved: hides from active view" style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✓ resolved</button>}
                             </div>
                           ))}
                         </div>
@@ -13323,7 +13353,7 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
         {/* Coach section — auto-saves on blur (no bulk Save button) */}
         <div className="setgrp" style={{marginBottom:6}}>MY COACH</div>
         <div style={{color:CA.muted2,fontSize:12,marginBottom:16,lineHeight:1.5}}>
-          {(athlete.tier||"free")==="free"
+          {effectiveTier(athlete)==="free"
             ? "Your coach will receive a welcome email. Upgrade to Pro for weekly progress reports."
             : "Your coach receives weekly progress reports every Monday."}
         </div>
@@ -13443,6 +13473,21 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
                       : `Renews ${fmtDate(renewalDate)}.`}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Card-less free-pick trial (W18-3). The plan drawer is the one
+              billing surface that states the trial plainly — a single quiet
+              card, no countdown anywhere else in the app (silent revert). */}
+          {!hasStripeSub&&trialActive(athlete)&&(
+            <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{color:CA.text,fontWeight:700,fontSize:13}}>PRO FEATURES</span>
+                <span style={{color:CA.blue,fontSize:11,fontWeight:700,letterSpacing:1}}>TRIAL</span>
+              </div>
+              <div style={{color:CA.muted,fontSize:11,marginTop:4,lineHeight:1.5}}>
+                {`You have Pro features free until ${fmtDate(athlete.trial_ends_at)}. No card on file and nothing gets charged. Pick a plan below to keep Pro after that.`}
+              </div>
             </div>
           )}
 
