@@ -26,6 +26,7 @@
 // Either alone would be enough in practice; together they survive a bundler
 // changing how the entry is referenced.
 import { LBS_PER_KG } from "./units.js";
+import { effectiveTier } from "./tiers.js";
 
 export function runningAssetPaths(doc, moduleUrl) {
   const out = new Set();
@@ -183,10 +184,12 @@ export function buildGreeting({ name, isFree, hasLog, dAgo, summary }) {
 // Who gets the opener: a returning, PAID athlete who has a program on file. Free
 // tier stores no program/history server-side, so it always keeps the plain
 // greeting. A temp (travel/injury) program counts — that IS today's session.
+// effectiveTier (not the raw tier): a free-pick athlete inside the W18-3 7-day
+// trial has Pro features, so their program day opens like any Pro athlete's.
 export function openerEligibleFor(a) {
   return !!a
     && a.first_chat_complete === true
-    && (a.tier || "free") !== "free"
+    && effectiveTier(a) !== "free"
     && !!(a.temp_program_text || a.program_text);
 }
 

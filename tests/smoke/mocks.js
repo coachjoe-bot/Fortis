@@ -50,6 +50,7 @@ export const makeAthlete = (overrides = {}) => ({
   subscription_status: null,
   cancel_at_period_end: false,
   trial_end: null,
+  trial_ends_at: null, // W18-3 app-side free-pick trial clock (server-set)
   current_period_end: null,
   proof_enabled: false,
   proof_schedule_dow: 0,
@@ -182,6 +183,9 @@ export async function mockApi(page, options = {}) {
         const created = makeAthlete({
           ...body.athlete,
           tier: body.isSchool ? "school" : "free",
+          // Mirrors api/identity.js: every non-school signup gets the W18-3
+          // 7-day trial stamp at creation (server-set, never client-writable).
+          trial_ends_at: body.isSchool ? null : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         });
         return route.fulfill(json({ athlete: created, token: "smoketest-session-token" }));
       }
