@@ -590,6 +590,8 @@ const PROGRAM_MOD_DESC = {
   checkin_change: "Changed at check-in with Joe",
   builder: "New program from the Builder",
   coach_save: "Your coach updated your program",
+  coach_bulk: "Your coach put the team on a new program",
+  library: "Your coach put a saved program on you",
   goal_change: "Program updated for your new goal",
 };
 

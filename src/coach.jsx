@@ -1294,6 +1294,13 @@ function CoachDashboard({coach,onLogout}) {
     try {
       await writeChunked(selectedIds,{program_text:bulkProgram.trim()});
       setAthletes(prev=>prev.map(a=>selectedIds.has(a.id)?{...a,program_text:bulkProgram.trim()}:a));
+      // Block-history snapshot per athlete (T57 s5 find: bulk assign wrote
+      // program_text raw, so bulk-assigned athletes never got a program_history
+      // row — the old block never closed and Phases/recaps/Builder hand-off were
+      // blind to it; the same gap the G8 library-apply fix closed). Replacing a
+      // whole roster's program is a wholesale swap, hence forceNewBlock.
+      // snapshotProgram is fire-and-forget and self-logs failures.
+      [...selectedIds].forEach(id=>snapshotProgram(id, bulkProgram.trim(), "coach_bulk", {forceNewBlock:true}));
       // parse-at-save for bulk: same text for everyone → ONE Haiku call, then the
       // parsed row is fanned out per athlete (fire-and-forget).
       (async()=>{

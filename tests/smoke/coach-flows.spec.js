@@ -109,3 +109,34 @@ test("saving the reviewed merge writes the program and resolves the request", as
   const ta = page.locator("textarea").filter({ hasText: /Leg Press 3x10 @ 200/ });
   await expect(ta.or(page.locator(`textarea >> nth=0`))).toBeVisible();
 });
+
+// ─── T57 s5: bulk assign writes the program AND the block history ─────────────
+// Live find: handleBulkAssign wrote program_text raw — bulk-assigned athletes
+// never got a program_history row, so the old block never closed and Phases/
+// recaps/Builder hand-off were blind to the swap (the same gap the G8
+// library-apply fix closed for single assigns).
+test("bulk assign completes: program written, block history snapshotted per athlete", async ({ page }) => {
+  const coach = makeCoach();
+  const athlete = makeAthlete({ coach_id: coach.id, program_text: PROGRAM });
+  await mockApi(page, { athlete, coach });
+  const writes = [];
+  await page.route("**/api/data", (route) => {
+    const body = route.request().postDataJSON() || {};
+    if (body.op && body.op !== "read") writes.push(body);
+    return route.fallback();
+  });
+
+  await loginAsCoach(page, coach);
+  await page.getByRole("button", { name: /^athletes$/i }).click();
+  await page.getByRole("button", { name: /Bulk Assign/ }).click();
+  await page.getByText(athlete.name).first().click();
+  await page.getByRole("button", { name: /Program \(1\)/ }).click();
+  await page.getByPlaceholder(/Paste the program here/).fill("Week 1\nMon: Squat 3x5 @ 225");
+  await page.getByRole("button", { name: /Assign to 1 Athletes/ }).click();
+
+  // The modal closes, the athlete row carries the new program, and BOTH writes
+  // went out: athletes.program_text and a program_history insert with the bulk source.
+  await expect(page.getByText("BULK ASSIGN PROGRAM")).toHaveCount(0, { timeout: 10000 });
+  await expect.poll(() => writes.some((w) => JSON.stringify(w).includes("program_history") && JSON.stringify(w).includes("coach_bulk"))).toBe(true);
+  await expect.poll(() => writes.some((w) => JSON.stringify(w).includes("Squat 3x5 @ 225") && JSON.stringify(w).includes("athletes"))).toBe(true);
+});
