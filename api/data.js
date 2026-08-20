@@ -22,6 +22,7 @@
 
 import { applyCors, httpErr, str, sbWrite, sbSelect, authCaller, tryTokenAuth, logError, authThrottle, clientIp } from "./_supa.js";
 import { toLbs as toLbsShared } from "./_units.js";
+import { CREW_ENABLED } from "./_flags.js";
 import { crewPeerIds, resolveCrewOrg, crewAllowedFor, composeGoalGlance, goalTargets, bestE1rmLbsForLift, orderedPair, withinWindow, withinTierPct, compareStateFor, CREW_CAP, REACTION_EMOJI, CREW_CODE_ALPHABET } from "./_crew.js";
 
 const enc = encodeURIComponent;
@@ -334,6 +335,10 @@ export default async function handler(req, res) {
     // api/_crew.js for the shared peer-resolution helper and api/push.js for
     // the action-dispatch pattern this mirrors.
     if (body.op === "crew") {
+      // Crew is PARKED (Will, 08-20). Refusing here — not just hiding the tab —
+      // means stale cached bundles can't act on crew either. Data stays intact;
+      // flipping CREW_ENABLED revives the whole op family untouched.
+      if (!CREW_ENABLED) return res.status(403).json({ error: "Crew isn't available right now." });
       return await handleCrew(body, caller, res);
     }
 

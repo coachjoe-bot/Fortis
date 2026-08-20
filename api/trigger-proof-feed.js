@@ -59,6 +59,7 @@ import { computeGritSnapshot } from "./_grit.js";
 import { sendToAthlete, pushPayload, ensureVapid, sendTo } from "./_push.js";
 import { mapPooled } from "./_pool.js";
 import { buildCrewBlip } from "./_crew.js";
+import { CREW_ENABLED } from "./_flags.js";
 import { emailFooter, unsubHeaders, isUnsubscribed } from "./_email.js";
 
 const RESEND_KEY = process.env.RESEND_API_KEY;
@@ -383,7 +384,7 @@ async function runAthlete(athlete, batch, { dryRun = false } = {}) {
   // failure here can never break or delay the digest itself. Rides the EXISTING
   // Proof push (no new notification type — non-goal §9).
   try {
-    const crew = await buildCrewBlip(athlete);
+    const crew = CREW_ENABLED ? await buildCrewBlip(athlete) : null; // parked → no blip
     if (crew) digest.contentJson.crew = crew;
   } catch (e) { console.error("[proof-feed] crew blip failed:", e.message); }
 

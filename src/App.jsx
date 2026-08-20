@@ -68,6 +68,7 @@ import { currentPosition, positionBlock, parseBlockSpan } from "./programPositio
 import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeRequest.js";
 import { FEATURE_INVENTORY } from "./features.js";
 import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
+import { CREW_ENABLED } from "./flags.js";
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
@@ -3248,7 +3249,9 @@ function ProofLetter({intro, sections, flags, label, dateStr, crew}) {
           it (UX doctrine: relatively invisible, discoverable when wanted). Rides
           the existing weekly Proof digest; omitted entirely when there's nothing
           (server never sends "your crew was quiet" — see api/_crew.js). */}
-      {crew&&crew.text&&(
+      {/* CREW_ENABLED also gates the render: old digests in the DB still carry
+          a contentJson.crew from before the park — don't resurface it. */}
+      {CREW_ENABLED&&crew&&crew.text&&(
         <div className="proof-drop" style={{...delay(),fontSize:11,lineHeight:1.5,color:CA.muted,marginTop:2,paddingLeft:2}}>
           {crew.text}
         </div>
@@ -6350,7 +6353,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     else if(target==="quicklog"){ setShowQuickLog(true); }
     else if(target==="log"){ setMyLogTab("workouts"); setShowLog(true); }
     else if(target==="proof"){ setMyLogTab("proof"); setShowLog(true); }
-    else if(target==="crew"){ setMyLogTab(athlete?.crew_allowed===false?"workouts":"crew"); setShowLog(true); }
+    else if(target==="crew"){ setMyLogTab(!CREW_ENABLED||athlete?.crew_allowed===false?"workouts":"crew"); setShowLog(true); }
   },[historyLoaded, deepLinkTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A tap that arrives while the native app is ALREADY running never reloads the
@@ -7307,7 +7310,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // WILCO Crew V1 — write whatever moments this turn detected (pr/week/
       // milestone/goal). Fire-and-forget: never awaited, a failure here must
       // never surface as "hit a snag" on an otherwise-successful log.
-      if(crewMoments.length) crewWriteMoments(updatedAthlete, crewMoments);
+      // CREW_ENABLED: detection above still runs (it's interleaved with PR/
+      // milestone logic); this choke point is where parked crew stops writing.
+      if(CREW_ENABLED && crewMoments.length) crewWriteMoments(updatedAthlete, crewMoments);
     } catch(e){
       setMessages(prev=>[...prev,{role:"assistant",content:"Hit a snag saving that. Try again."}]);
     }
@@ -10628,7 +10633,7 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
           already carrying four tabs and clipped the fifth off-screen, this one had
           two. overflowX + nowrap so a third can never be stranded the same way. */}
       <div style={{display:"flex",borderBottom:`1px solid ${CA.border}`,flexShrink:0,overflowX:"auto"}}>
-        {["workouts","proof",...(athlete?.crew_allowed===false?[]:["crew"])].map(t=>(
+        {["workouts","proof",...(CREW_ENABLED&&athlete?.crew_allowed!==false?["crew"]:[])].map(t=>(
           <button key={t} onClick={()=>setTab(t)}
             style={{padding:"10px 20px",background:"none",border:"none",borderBottom:`2px solid ${tab===t?CA.cyan:"transparent"}`,color:tab===t?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'Inter'",transition:"color 0.15s",position:"relative",whiteSpace:"nowrap"}}>
             {t}
@@ -11578,6 +11583,7 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
   // gets an empty array and the cells render exactly as they always have.
   const [compareRows,setCompareRows] = useState([]);
   useEffect(()=>{
+    if(!CREW_ENABLED) return; // parked: no fetch → no friend ticks ever render
     let live = true;
     crewApi("crew-compare").then(r=>{ if(live&&r&&Array.isArray(r.peers)) setCompareRows(r.peers); }).catch(()=>{});
     return ()=>{ live = false; };
@@ -12343,7 +12349,7 @@ export const takeCrewInvite = () => {
 export const APP_INSTALL_URL = "https://app.trainwilco.com";
 // Fire immediately: the param has to be captured before anything reroutes or
 // tidies the URL, and long before the Crew tab exists.
-try{ captureCrewInvite(); }catch(_){ }
+try{ if(CREW_ENABLED) captureCrewInvite(); }catch(_){ }
 // Same contract, same reason, for a notification's `?n=` destination (T51).
 try{ captureNotificationTarget(); }catch(_){ }
 

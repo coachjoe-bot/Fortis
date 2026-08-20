@@ -381,5 +381,28 @@ ok(!wouldBlockCompare({ compareA: false, compareB: false, aInEnabledSchool: fals
 // link, or a school that is NOT crew-enabled, must no longer block comparison.
 ok(!wouldBlockCompare({ compareA: true, compareB: true, aInEnabledSchool: false, bInEnabledSchool: false }), "a leftover coach link no longer bars an individual athlete from comparison");
 
+// ── CREW PARK (Will, 08-20: hidden everywhere, code kept) ─────────────────────
+// The helpers above stay pure and tested — that's the point of parking instead
+// of deleting. These contracts pin the park itself: the flag is OFF, and every
+// caller gates on it, so no surface can leak while the code stays healthy.
+console.log("crew park (CREW_ENABLED=false):");
+{
+  const { CREW_ENABLED } = await import("../src/flags.js");
+  ok(CREW_ENABLED === false, "the flag is OFF — Crew is parked");
+  const { readFileSync } = await import("node:fs");
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const app = read("../src/App.jsx");
+  ok(app.includes('CREW_ENABLED&&athlete?.crew_allowed!==false?["crew"]:[]'), "MY LOG tab list gates on the flag");
+  ok(app.includes("if(CREW_ENABLED && crewMoments.length) crewWriteMoments"), "moment writes gate on the flag");
+  ok(app.includes("if(!CREW_ENABLED) return; // parked: no fetch → no friend ticks"), "Benchmarks compare loader gates on the flag");
+  ok(app.includes("CREW_ENABLED&&crew&&crew.text"), "old digests' crew blips don't resurface");
+  ok(app.includes("if(CREW_ENABLED) captureCrewInvite()"), "?crew= invite capture gates on the flag");
+  ok(read("../api/data.js").includes('if (!CREW_ENABLED) return res.status(403)'), "the gateway refuses the whole crew op family");
+  ok(read("../api/trigger-proof-feed.js").includes("CREW_ENABLED ? await buildCrewBlip"), "proof feed stops writing crew blips");
+  const inv = (await import("../src/features.js")).FEATURE_INVENTORY;
+  ok(!/crew/i.test(inv), "Joe's feature inventory no longer claims Crew");
+  ok(read("../src/coach.jsx").includes("{CREW_ENABLED&&<>"), "the coach Settings crew toggle is hidden");
+}
+
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} crew checks pass.`);
