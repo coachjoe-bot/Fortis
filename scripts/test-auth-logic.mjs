@@ -127,7 +127,7 @@ console.log("create-athlete rate-limit contract:");
 {
   const { readFileSync } = await import("node:fs");
   const identity = readFileSync(new URL("../api/identity.js", import.meta.url), "utf8");
-  check("school signups get roster headroom (40/hr), solo stays 10", /max: body\.isSchool \? 40 : 10/.test(identity), true);
+  check("every signup gets roster headroom (40/hr per IP — Will's 08-20 widening)", /max: 40,\n    windowMin: 60/.test(identity), true);
   check("the refusal copy states the real one-hour window", identity.includes("wait an hour"), true);
   const supa = readFileSync(new URL("../api/_supa.js", import.meta.url), "utf8");
   check("rateLimit supports a per-limiter message", /message \|\| "Too many attempts/.test(supa), true);

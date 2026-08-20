@@ -292,14 +292,15 @@ async function createAthleteAction(req, res, body) {
   const a = body.athlete || {};
   const name = str(a.name, { max: 100, name: "Name" });
   const email = str(a.email, { max: 200, name: "Email" });
-  // Per-IP signup cap. 10/hr bricked a real roster: a team signing up together at
-  // practice shares ONE school-wifi NAT IP, so athlete #11 of a 15-kid roster was
-  // refused (proven live in the T57 s6 team-scale dry run: #11-15 all 429'd).
-  // A school signup (team code resolved -> isSchool) gets headroom for a full
-  // roster + retries; the flag is client-claimable, but 40/hr/IP is still a hard
-  // anti-spam wall and creation stays otherwise validated. Solo signups keep 10.
+  // Per-IP signup cap. This limiter ONLY binds signups sharing one network
+  // address (a school gym's wifi NAT, a launch-event router) — phones on
+  // cellular are distinct IPs and never touch it. 10/hr bricked a real roster
+  // (T57 s6 dry run: athlete #11-15 of a 15-signup wave all 429'd), and Will's
+  // 08-20 ruling widened it for INDIVIDUAL athletes too: any crowd on shared
+  // wifi — team night, gym table — must clear. 40/hr/IP covers a full roster
+  // plus retries while staying a hard wall against bulk fake-account spam.
   await rateLimit(`create-athlete:${clientIp(req)}`, {
-    max: body.isSchool ? 40 : 10,
+    max: 40,
     windowMin: 60,
     message: "Too many new accounts from this network. Please wait an hour and try again.",
   });
