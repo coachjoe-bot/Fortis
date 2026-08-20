@@ -338,6 +338,22 @@ console.log("stripFailedAttempts:");
      "Quick Log declares an edited weight is not a new percentage base");
   ok(/WHERE THE ATHLETE IS IN THEIR PROGRAM/.test(src),
      "chat receives the resolved program position block");
+
+  // W41 (Will, 08-19): an RPE prescription resolves a suggested load off the
+  // athlete's actual/est. 1RM once one exists; a never-logged lift stays a
+  // visible blank with the RPE kept ("@ ___ (RPE 8)"), never a guessed number.
+  ok((src.match(/leave the pounds blank, "@ ___ \(RPE 8\)"/g)||[]).length >= 1,
+     "chat opener: RPE with no known 1RM stays a blank with the RPE visible");
+  ok(/@ ___ \(RPE 8\)"\./.test(src),
+     "Quick Log draft: RPE with no cheat-sheet entry stays a blank with the RPE visible");
+  ok((src.match(/RPE and reps imply off that base/g)||[]).length === 2,
+     "both hierarchies resolve RPE off the actual-1RM-else-est. base");
+  ok(/percentage or RPE target into a weight/.test(src),
+     "cheat-sheet framing permits RPE resolution, not just percentages");
+  ok(/cheat sheet exists ONLY for steps 2 and 3/.test(src),
+     "Quick Log cheat-sheet scope covers the RPE step");
+  ok(/RPE resolved off the lift's "\(actual 1RM\)" else "\(est\.\)" cheat-sheet entry/.test(src),
+     "Quick Log edit prompt carries the RPE base rule");
 }
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
