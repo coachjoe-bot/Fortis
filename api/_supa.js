@@ -353,14 +353,16 @@ export async function askClaudeServer({
 // ── Rate limiting (backed by the `rate_limits` table) ────────────────────────
 // Counts attempts for `key` within the window; throws 429 when over `max`.
 // Stateless functions can't hold counters in memory, so we use the DB.
-export async function rateLimit(key, { max = 5, windowMin = 15 } = {}) {
+export async function rateLimit(key, { max = 5, windowMin = 15, message } = {}) {
   const since = new Date(Date.now() - windowMin * 60_000).toISOString();
   const rows = await sbSelect(
     "rate_limits",
     `?key=eq.${encodeURIComponent(key)}&created_at=gte.${encodeURIComponent(since)}&select=id`
   );
   if (rows.length >= max) {
-    throw httpErr(429, "Too many attempts. Please wait 15 minutes and try again.");
+    // The message must state the REAL window: the old fixed "15 minutes" copy on
+    // a 60-minute limiter had someone retrying at minute 16 into another refusal.
+    throw httpErr(429, message || "Too many attempts. Please wait 15 minutes and try again.");
   }
   await sbInsert("rate_limits", { key });
 }

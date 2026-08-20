@@ -118,5 +118,20 @@ console.log("\ntokenAthleteId — who may drive a billing call:");
   check("an expired token → PIN fallback", tokenAthleteId(authFor("athlete", "ath-9", ["v1", "athlete", "ath-9", String(Date.now() - 1000), "sig"].join(".")), "ath-9"), null);
 }
 
+
+// ── create-athlete rate-limit contract (T57 s6 team-scale dry run) ───────────
+// The live dry run proved a roster on one school-wifi IP bricks at athlete #11
+// under a flat 10/hr cap. These pin the fix at the source level: school signups
+// carry roster headroom, and the refusal copy states the real one-hour window.
+console.log("create-athlete rate-limit contract:");
+{
+  const { readFileSync } = await import("node:fs");
+  const identity = readFileSync(new URL("../api/identity.js", import.meta.url), "utf8");
+  check("school signups get roster headroom (40/hr), solo stays 10", /max: body\.isSchool \? 40 : 10/.test(identity), true);
+  check("the refusal copy states the real one-hour window", identity.includes("wait an hour"), true);
+  const supa = readFileSync(new URL("../api/_supa.js", import.meta.url), "utf8");
+  check("rateLimit supports a per-limiter message", /message \|\| "Too many attempts/.test(supa), true);
+}
+
 console.log(`\n${fail === 0 ? "All" : ""} ${pass} auth-logic checks pass${fail ? `, ${fail} FAILED` : "."}`);
 process.exit(fail === 0 ? 0 : 1);

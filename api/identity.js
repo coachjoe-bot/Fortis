@@ -292,7 +292,17 @@ async function createAthleteAction(req, res, body) {
   const a = body.athlete || {};
   const name = str(a.name, { max: 100, name: "Name" });
   const email = str(a.email, { max: 200, name: "Email" });
-  await rateLimit(`create-athlete:${clientIp(req)}`, { max: 10, windowMin: 60 });
+  // Per-IP signup cap. 10/hr bricked a real roster: a team signing up together at
+  // practice shares ONE school-wifi NAT IP, so athlete #11 of a 15-kid roster was
+  // refused (proven live in the T57 s6 team-scale dry run: #11-15 all 429'd).
+  // A school signup (team code resolved -> isSchool) gets headroom for a full
+  // roster + retries; the flag is client-claimable, but 40/hr/IP is still a hard
+  // anti-spam wall and creation stays otherwise validated. Solo signups keep 10.
+  await rateLimit(`create-athlete:${clientIp(req)}`, {
+    max: body.isSchool ? 40 : 10,
+    windowMin: 60,
+    message: "Too many new accounts from this network. Please wait an hour and try again.",
+  });
 
   // Duplicate handling. A shared NAME is allowed — blocking it made every common-name
   // collision a permanently lost signup, which bites hardest on the school rosters
