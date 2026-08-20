@@ -238,7 +238,10 @@ export function buildTodayOpener({ name, dAgo, draft, unit = "lbs" }) {
   const lead = (dAgo != null && dAgo >= 4)
     ? `${name}. ${dAgo} days since your last log — let's get back on it. Here's today${label}:`
     : `What's up, ${name}. Here's today${label}:`;
-  return `${lead}\n\n${body || d}\n\nRun it top to bottom and log it here when you're done -- or tell me if you're switching anything up.`;
+  // T57 (Will's 08-19 spec): the opener ends on the question the three tap
+  // chips answer. The chips are UI (App.jsx openerChoicePending), never model
+  // text — this line just has to match them.
+  return `${lead}\n\n${body || d}\n\nLog it here when you're done. Starting this workout now?`;
 }
 
 // ── 3. OFFLINE SEND QUEUE ────────────────────────────────────────────────────
