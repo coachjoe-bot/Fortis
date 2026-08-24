@@ -66,7 +66,7 @@ async function login(page) {
   await page.getByPlaceholder(/name/i).first().fill(NAME);
   await page.locator('input[type="password"], input[inputmode="numeric"]').first().fill(PIN);
   await page.getByRole("button", { name: /Let's Get to Work/i }).click();
-  await expect(page.getByText("COACH JOE-BOT")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("WILCO", { exact: true })).toBeVisible({ timeout: 30_000 });
   for (const label of [/Not now/i, /No thanks/i, /^Later$/i]) {
     const b = page.getByRole("button", { name: label }).first();
     if (await b.isVisible().catch(() => false)) await b.click().catch(() => {});

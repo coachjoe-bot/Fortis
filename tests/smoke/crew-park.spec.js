@@ -30,7 +30,7 @@ test("a crew deep link falls back to the workouts tab", async ({ page }) => {
   await page.getByPlaceholder("Your name, or the email you signed up with").fill(athlete.name);
   await page.getByPlaceholder("----").fill("1234");
   await page.getByRole("button", { name: "Let's Get to Work ->" }).click();
-  await page.getByText("COACH JOE-BOT").waitFor();
+  await page.getByText("WILCO", { exact: true }).waitFor();
   await expect(page.getByText("MY WORKOUT LOG")).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "crew", exact: true })).toHaveCount(0);
   await expect(page.getByText("Total Workouts")).toBeVisible(); // landed on workouts

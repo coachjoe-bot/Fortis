@@ -155,7 +155,7 @@ test.describe("auto-show after signup + dismissal persistence — iOS Safari UA"
     await page.getByRole("button", { name: "Start with Free →" }).click();
 
     // Landed in the app.
-    await page.getByText("COACH JOE-BOT").waitFor();
+    await page.getByText("WILCO", { exact: true }).waitFor();
 
     // Install prompt auto-shows once, post-signup, on an iOS Safari UA.
     await expect(page.getByText("PUT WILCO ON YOUR HOME SCREEN")).toBeVisible();

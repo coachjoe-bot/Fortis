@@ -48,33 +48,36 @@ test("inside the trial window a free-pick athlete gets the full Pro surface", as
   await expect(page.getByText(/trial ends|days left/i)).toHaveCount(0);
 });
 
-test("an expired trial silently reverts, and the workout log survives read-only", async ({ page }) => {
+test("an expired trial reverts to chat-only: every tab gone, one Joe notice, once", async ({ page }) => {
+  // Will 08-24 (supersedes the 08-19 read-only ruling): free after the trial
+  // loses ALL tabs — history stays safe in the DB and returns on upgrade — and
+  // Joe opens with a one-time line explaining the trial ended.
   const athlete = makeAthlete({ tier: "free", trial_ends_at: PAST, total_sessions_logged: 2, program_text: null });
   await mockApi(page, { athlete });
   await serveWorkouts(page, workoutRows());
 
   await loginAsAthlete(page, athlete);
-  // The Pro surfaces are simply gone — no banner, no countdown, no upsell modal.
-  await expect(page.getByText(/COACH JOE/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("WILCO", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "PROGRESS" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "MY LOG" })).toHaveCount(0);
 
-  // …except MY LOG: history they logged during the trial stays viewable.
-  const myLog = page.getByRole("button", { name: "MY LOG" });
-  await expect(myLog).toBeVisible();
-  await myLog.click();
-  await expect(page.getByText("MY WORKOUT LOG")).toBeVisible();
-  await expect(page.getByText("Bench Press").first()).toBeVisible({ timeout: 15000 });
-  // Read-only: the per-session edit affordance is hidden for free.
-  await expect(page.getByRole("button", { name: "✎ Edit" })).toHaveCount(0);
+  // The one-time notice from Joe names the trial and points at Settings.
+  await expect(page.getByText(/Pro trial just wrapped up/)).toBeVisible({ timeout: 15000 });
+
+  // Shown exactly once in the transcript, and the once-ever stamp is down so
+  // no future boot appends it again (the restored transcript carries the line).
+  await expect(page.getByText(/Pro trial just wrapped up/)).toHaveCount(1);
+  const stamp = await page.evaluate((id) => localStorage.getItem(`wilco_trial_ended_${id}`), athlete.id);
+  expect(stamp).toBe("1");
 });
 
-test("an expired trial with nothing logged shows the plain free surface (no MY LOG)", async ({ page }) => {
+test("an expired trial with nothing logged shows the same chat-only surface", async ({ page }) => {
   const athlete = makeAthlete({ tier: "free", trial_ends_at: PAST, total_sessions_logged: 0, program_text: null });
   await mockApi(page, { athlete });
 
   await loginAsAthlete(page, athlete);
-  await expect(page.getByText(/COACH JOE/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("WILCO", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "MY LOG" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
 });

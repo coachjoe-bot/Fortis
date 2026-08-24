@@ -315,5 +315,5 @@ export async function loginAsAthlete(page, athlete) {
   await page.getByPlaceholder("----").fill("1234");
   await page.getByRole("button", { name: "Let's Get to Work ->" }).click();
   // Athlete main surface = the Coach Joe-Bot chat header.
-  await page.getByText("COACH JOE-BOT").waitFor();
+  await page.getByText("WILCO", { exact: true }).waitFor();
 }

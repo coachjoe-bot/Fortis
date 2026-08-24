@@ -16,7 +16,7 @@ async function loginVia(page, athlete, target) {
   await page.getByPlaceholder("Your name, or the email you signed up with").fill(athlete.name);
   await page.getByPlaceholder("----").fill("1234");
   await page.getByRole("button", { name: "Let's Get to Work ->" }).click();
-  await page.getByText("COACH JOE-BOT").waitFor();
+  await page.getByText("WILCO", { exact: true }).waitFor();
 }
 
 test("a feed push lands ON the Proof tab, not the app root", async ({ page }) => {

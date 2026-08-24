@@ -9,7 +9,7 @@ test("athlete login lands on the Coach Joe-Bot main screen", async ({ page }) =>
   await loginAsAthlete(page, athlete);
 
   // Header identity: coach bot title, athlete name, tier badge.
-  await expect(page.getByText("COACH JOE-BOT")).toBeVisible();
+  await expect(page.getByText("WILCO", { exact: true })).toBeVisible();
   await expect(page.getByText(athlete.name, { exact: true })).toBeVisible();
   await expect(page.getByText("PRO", { exact: true })).toBeVisible();
 

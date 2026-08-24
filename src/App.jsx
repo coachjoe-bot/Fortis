@@ -6578,6 +6578,32 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     return ()=>clearTimeout(t);
   },[historyLoaded,offline]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Trial-ended notice (Will 08-24, W18-3 follow-up) ────────────────────────
+  // The card-less free-pick trial reverts silently by design (effectiveTier just
+  // starts answering "free"), so without this the athlete opens to an app with
+  // every tab gone and no explanation. One deterministic line from Joe, shown
+  // once ever: raw tier free + a server-stamped trial_ends_at in the past.
+  // Paid-path trials never hit this (their tier was pro/elite through Stripe).
+  // Composed INSIDE the boot paths rather than as a separate effect: the boot
+  // effect double-runs under StrictMode in dev, and the second run's
+  // setMessages([...]) replaced anything an independent effect had appended.
+  // The ref keeps the two boot invocations idempotent (both include the line
+  // in the same page load); the localStorage stamp stops future loads — where
+  // the restored transcript already carries the line.
+  const trialNoticeShownRef = useRef(false);
+  const withTrialNotice = (msgs) => {
+    if((athlete.tier||"free")!=="free" || !athlete.trial_ends_at) return msgs;
+    const ends = Date.parse(athlete.trial_ends_at);
+    if(!Number.isFinite(ends) || ends > Date.now()) return msgs;
+    const KEY = `wilco_trial_ended_${athlete.id}`;
+    try{
+      if(!trialNoticeShownRef.current && localStorage.getItem(KEY)) return msgs;
+      localStorage.setItem(KEY,"1");
+    }catch(_){ return msgs; }
+    trialNoticeShownRef.current = true;
+    return [...msgs,{role:"assistant",content:`Quick heads up, ${athlete.name}: your 7-day Pro trial just wrapped up. Everything you logged is saved, and you and I can still talk training right here anytime. When you want your program, your log, and your progress charts back, Pro is one tap away in Settings.`}];
+  };
+
   // Drain the offline queue one message at a time, each through the normal send()
   // path — so a replayed workout gets the same parsing, session-gap check and PR
   // detection a live one would. One per pass, gated on nothing else being in
@@ -6645,7 +6671,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const storedChat = localStorage.getItem(chatStorageKey);
         const storedMsgs = storedChat ? JSON.parse(storedChat) : null;
         if(storedMsgs?.length>0){
-          setMessages(storedMsgs);
+          setMessages(withTrialNotice(storedMsgs));
           // Even when we restore today's cached chat, still load the workout history
           // and latest proof digest (in parallel) so the log + Proof tab aren't empty.
           // get-athlete rides along for the same reason it does on the cold path: the
@@ -6815,7 +6841,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // Not eligible for the opener: the same greeting the warm-reopen path used,
         // so if the snapshot already painted one this produces the identical string
         // and nothing on screen visibly rewrites itself. (src/boot.js, test-boot.mjs)
-        setMessages([{role:"assistant",content:bootGreeting(athlete.name, tier, lastLog)}]);
+        setMessages(withTrialNotice([{role:"assistant",content:bootGreeting(athlete.name, tier, lastLog)}]));
         setOpenerLoading(false);
       } catch(e){
         // A boot batch that died on the network is the offline open the SW was
@@ -7943,11 +7969,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     const logKeywords = ["show me my log","my log","my workout log","show my workouts","view my workouts","workout history","my history","show my history","see my log","all my workouts","see my workouts","show my log"];
     if(msg.length<=40 && logKeywords.some(kw=>msg.toLowerCase().includes(kw))){
       setInput("");
-      // Free = read-only history (08-19 ruling): an expired-trial athlete with
-      // logged sessions still gets to LOOK at them — the modal opens read-only.
-      // A free athlete with nothing logged keeps the upsell line.
-      if(effectiveTier(athlete)==="free" && !((athlete.total_sessions_logged||0)>0 || workoutHistory.length>0)){
-        setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:`Your workout log is a Pro feature, ${athlete.name}. Upgrade to Pro to save your history between sessions and view your full log.`}]);
+      // Free = no log access (Will 08-24, supersedes the 08-19 read-only ruling):
+      // the modal is a Pro surface; history stays safe and returns on upgrade.
+      if(effectiveTier(athlete)==="free"){
+        setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:(athlete.total_sessions_logged||0)>0||workoutHistory.length>0
+          ? `Your log is a Pro feature, ${athlete.name}. Everything you logged is saved and waiting, upgrade in Settings and it's all back.`
+          : `Your workout log is a Pro feature, ${athlete.name}. Upgrade to Pro to save your history between sessions and view your full log.`}]);
       } else {
         setMessages(prev=>[...prev,{role:"user",content:msg},{role:"assistant",content:`Here's your full workout log, ${athlete.name}.`}]);
         setShowLog(true);
@@ -8889,7 +8916,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       <div style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:IS_DARK?"1px solid rgba(120,150,210,.16)":`1px solid ${CA.border}`,paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
         {/* Row 1: identity */}
         <div style={{display:"flex",alignItems:"baseline",gap:10,minWidth:0}}>
-          <div style={{...DISP,fontSize:15,color:CA.cyan,letterSpacing:0.5,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>COACH JOE-BOT</div>
+          {/* Brand, not persona (Will, 08-24): the surface is WILCO; Joe stays the
+              voice inside the conversation, more subtle than a masthead. */}
+          <div style={{...DISP,fontSize:15,color:CA.cyan,letterSpacing:0.5,lineHeight:1,flexShrink:0,whiteSpace:"nowrap"}}>WILCO</div>
           {(historyLoaded||warm)&&(
           <div style={{display:"flex",alignItems:"baseline",gap:4,flexShrink:0}} title="Workouts logged">
             <span style={{color:CA.muted,fontSize:9,letterSpacing:1,fontWeight:600}}>WORKOUTS:</span>
@@ -8948,10 +8977,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               edition from Joe was invisible unless the athlete happened to open MY
               LOG first. Same 6px accent dot, on the door instead of behind it —
               proofDigest is already in scope right here. */}
-          {/* MY LOG stays visible for a free athlete WITH history (read-only —
-              free = read-only history, 08-19 ruling); the modal itself hides its
-              write affordances for them and self-loads the rows on open. */}
-          {(effectiveTier(athlete)!=="free"||(athlete.total_sessions_logged||0)>0)&&(
+          {/* Free = NO tabs at all (Will, 08-24, supersedes the 08-19 read-only
+              ruling): when the trial reverts, every tab goes with it. History
+              stays safe in the DB and comes back on upgrade. */}
+          {effectiveTier(athlete)!=="free"&&(
             <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
               style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>
