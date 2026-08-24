@@ -18,13 +18,18 @@
 // @capacitor/local-notifications; ios/ is deliberately untouched while the T23
 // submission is in flight.
 
-import { qlLocalDay } from "./quicklog.js";
+import { qlLocalDay, QL_RESUME_MS } from "./quicklog.js";
 
 export const SESSION_CARD_TAG = "wilco-session-card";
 // An abandoned session shouldn't haunt the lock screen: past this age the card
 // is stale and gets cleared on the next app open (the web platform has no
 // self-expiring notifications, so expiry is enforced at boot).
-export const SESSION_CARD_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+// The cap is the Quick Log draft's own resume window — the card is a projection
+// of that draft, so their lives must match. The old 3h cap died before the 8h
+// draft (and before iOS's own 8h Live Activity limit): a native Live Activity
+// stayed pinned while activeSessionCard() already said dead, so the mirror
+// stopped, the sheet regenerated freely, and lock screen and app disagreed.
+export const SESSION_CARD_MAX_AGE_MS = QL_RESUME_MS;
 
 const cardKey = (athleteId) => `wilco_sessioncard_${athleteId}`;
 const declineKey = (athleteId) => `wilco_sessioncard_declined_${athleteId}`;

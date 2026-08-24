@@ -5696,7 +5696,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [loading,setLoading] = useState(false);
   const [videoLoading,setVideoLoading] = useState(false);
   const [prStamp,setPrStamp] = useState(null);   // {exercise,weight,unit} → "NEW MAX" stamp overlay when a PR lands
-  const [logStamp,setLogStamp] = useState(null); // {n} → "WORKOUT #N" stamp when a normal session logs (defers to a PR stamp)
+  const [logStamp,setLogStamp] = useState(null); // {n} → "WORKOUT #N" stamp when a normal session logs
+  // The WORKOUT #N stamp send() fired at parse time (stamp-first choreography,
+  // Will 08-24): {msg, n, clearsAt}. finalizeWorkout consumes it so the same log
+  // never stamps twice, and times the NEW MAX stamp to follow it.
+  const instantStampRef = useRef(null);
   const [workoutHistory,setWorkoutHistory] = useState(()=>snapshot?.workouts||[]);
   const [historyLoaded,setHistoryLoaded] = useState(false);
   // True when there's on-device data worth painting before the network answers.
@@ -5989,7 +5993,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // Joe wrote in chat can park that draft mid-workout like anyone else, so the
     // RESUME LOG label has to be reachable for them too.
     if(!athlete?.id || !historyLoaded || !(athlete.temp_program_text||athlete.program_text||findChatProgram(messages))){ setQuickLogParked(false); return; }
-    const parked = qlLoad(athlete.id, workoutHistory);
+    const parked = qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)});
     // A PRE-BUILT draft is not "the workout you started" — nobody started it. It
     // opens instantly, but the button keeps saying LOG so RESUME stays a
     // true statement about the athlete's own unfinished work.
@@ -6388,19 +6392,22 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setTour({...t0, idx:t0.idx+1, part:0}); // → script step (invisible blocker)
     setTourChat([{role:"user",content:TOUR_QL_FIXTURE.draft}]);
     await tourWait(700); if(!tourRef.current) return;
-    setTourTyping(true); await tourWait(1200); setTourTyping(false);
-    if(!tourRef.current) return;
-    setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.reply}]);
-    // Both stamps, in the real send()'s order and timing: NEW MAX (2600ms), 300ms
-    // of clear air, then WORKOUT #N (2200ms). The tour was firing only the PR
-    // stamp, so the count stamp a real PR day shows never appeared here.
-    setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
-    await tourWait(2900); if(!tourRef.current){ setPrStamp(null); return; }
+    setTourTyping(true); await tourWait(900);
+    if(!tourRef.current){ setTourTyping(false); return; }
+    // Both stamps, in the real send()'s order and timing (stamp-first
+    // choreography, Will 08-24): WORKOUT #N lands first (2200ms) — the instant
+    // "logged" gratification, while Joe is still typing — the reply arrives as
+    // it fades, then NEW MAX (2600ms) after 300ms of clear air.
     // T55: the tour used to hardcode "WORKOUT #1" — indistinguishable from the
     // counter resetting when an athlete with real history replays the tour on a
     // fresh install. Show what a real log WOULD stamp: their next number.
     setLogStamp({n:Math.max(TOUR_SCRIPT.session, headerSessionCount+1)}); setTimeout(()=>setLogStamp(null),2200);
-    await tourWait(2600); if(!tourRef.current){ setLogStamp(null); return; }
+    await tourWait(2300); if(!tourRef.current){ setLogStamp(null); setTourTyping(false); return; }
+    setTourTyping(false);
+    setTourChat(c=>[...c,{role:"assistant",content:TOUR_SCRIPT.reply}]);
+    await tourWait(300); if(!tourRef.current) return;
+    setPrStamp(TOUR_SCRIPT.pr); setTimeout(()=>setPrStamp(null),2600);
+    await tourWait(2900); if(!tourRef.current){ setPrStamp(null); return; }
     const t = tourRef.current; if(!t) return;
     // "See that?…" is a TOUR CARD now, not a third chat bubble — the tutorial
     // explains what just happened instead of Joe narrating his own mechanics.
@@ -6553,7 +6560,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(prebuiltRef.current || !historyLoaded || offline) return;
     if(effectiveTier(athlete)==="free") return;
     if(!(athlete.temp_program_text||athlete.program_text)) return;
-    if(qlLoad(athlete.id, workoutHistory)) return;      // already have a draft to open
+    if(qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)})) return;      // already have a draft to open
     if(!qlPrebuildEligible(athlete.id)) return;
     prebuiltRef.current = true;
     // Deliberately late: the boot batch, the digest read and any restored chat all
@@ -6564,7 +6571,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       try{
         const res = await generateQuickLogDraft({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
         if(res.rest || !res.draft.trim()) return;
-        if(qlLoad(athlete.id, workoutHistory)) return;   // they opened the sheet while we were drafting
+        if(qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)})) return;   // they opened the sheet while we were drafting
         qlSave(athlete.id, workoutHistory, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)});
       }catch(_){ /* silent: the sheet just drafts on open, exactly as before */ }
     }, 8000);
@@ -6786,7 +6793,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               });
               openerSave(openerAthlete.id, opener, undefined, openerAthlete.temp_program_text||openerAthlete.program_text||"");
               // Prime the Quick Log sheet with the same session so it opens instantly.
-              try{ if(!qlLoad(openerAthlete.id, histForDraft)) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
+              try{ if(!qlLoad(openerAthlete.id, histForDraft, {cardActive: !!activeSessionCard(openerAthlete.id)})) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
               // T57: the opener ends on "Starting this workout now?" — surface the
               // three chips. If the athlete typed during generation the chips are
@@ -7006,14 +7013,31 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         if(prevCount<INSTALL_MILESTONE && newCount>=INSTALL_MILESTONE) offerSecondChanceInstall(newCount);
       } catch(_){}
 
+      // ── Total Workouts stamp — FIRST, before PR detection (Will, 08-24) ────
+      // The order is workout-number-then-NEW-MAX, and the workout stamp usually
+      // already fired: send() presses it on at parse time (stamp-first
+      // choreography), seconds before this function even runs. Consume that
+      // record here so the same log can never stamp twice; the paths that skip
+      // the instant stamp (session-gap "same or new?" confirm, correction
+      // re-logs) fire it now instead. Either way logStampClearsAt tells the PR
+      // block below when the screen is clear for NEW MAX.
+      let logStampClearsAt = 0;
+      {
+        const inst = instantStampRef.current && instantStampRef.current.msg===msg ? instantStampRef.current : null;
+        if(inst){
+          instantStampRef.current = null;
+          logStampClearsAt = inst.clearsAt;
+        } else if(loggedSessionNumber){
+          setLogStamp({n:loggedSessionNumber});
+          haptic(30);
+          logStampClearsAt = Date.now()+2200;
+          setTimeout(()=>setLogStamp(null),2200);
+        }
+      }
+
       // Auto PR detection (estimated 1RM, from any logged set — handles variable weight/reps via set_details)
       const newPRs = [];
       let manualMap = {};
-      // When the NEW MAX stamp will be off screen. Drives the hand-off to the
-      // WORKOUT #N stamp below so the two never overlap — the PR ack in between is
-      // an awaited model call of unpredictable length, so a fixed delay would
-      // either collide with the PR stamp or leave dead air after it.
-      let prStampClearsAt = 0;
       if(parsed.exercises?.length>0 || parsed.pr_attempts?.length>0){
         const [existingPRs, existingManual] = await Promise.all([
           sbRead("prs",`?athlete_id=eq.${updatedAthlete.id}`),
@@ -7257,11 +7281,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           }
         }
 
-        // Stamp the biggest of this batch straight onto the chat — "NEW MAX",
-        // pressed on (aStamp), auto-clears. Fires with the congrats haptic.
+        // Stamp the biggest of this batch onto the chat — "NEW MAX", pressed on
+        // (aStamp), auto-clears. SECOND in the sequence (Will, 08-24): it waits
+        // for the WORKOUT #N stamp plus 300ms of clear air, so the two read as
+        // logged-then-celebrated rather than one stamp mutating into another.
+        // On a slow path the workout stamp is long gone and this fires straight
+        // away — the max() keeps that case from waiting for nothing.
         {
           const topPR=[...newPRs].sort((a,b)=>b.diff-a.diff)[0];
-          if(topPR){ setPrStamp({exercise:topPR.exercise,weight:topPR.weight,unit:topPR.unit}); prStampClearsAt = Date.now()+2600; setTimeout(()=>setPrStamp(null),2600); }
+          if(topPR){
+            const firePr = ()=>{
+              setPrStamp({exercise:topPR.exercise,weight:topPR.weight,unit:topPR.unit});
+              haptic(60); // one strong buzz, synced to the NEW MAX stamp
+              setTimeout(()=>setPrStamp(null),2600);
+            };
+            const wait = Math.max(0, logStampClearsAt + 300 - Date.now());
+            if(wait>0) setTimeout(firePr, wait); else firePr();
+          }
         }
         // T55: no second "Atta boy" bubble. The main coaching reply (already on
         // screen — finalizeWorkout runs after it settles) acknowledges the PR
@@ -7270,7 +7306,6 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // ("That's how you"). The NEW MAX stamp + haptic remain the celebration.
         // The only text still owed is the propagation note — appended to the
         // coaching reply, not posted as its own message.
-        haptic(60); // one strong buzz, synced to the NEW MAX stamp
         if(propagationLog.length>0){
           const propagationNote = `I've updated your future ${propagationLog.map(l=>l.split(":")[0]).join(", ")} targets based on your new max.`;
           setMessages(prev=>{
@@ -7296,24 +7331,6 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         }]),900);
       }
 
-      // Total Workouts stamp — a logged session presses its lifetime number onto the
-      // chat, NEW MAX-style. A PR day now shows BOTH (Will, 2026-07-27): the max
-      // first, then the workout number behind it. It used to be suppressed entirely
-      // whenever a PR landed, which meant the athletes having their best days were
-      // the ones who never saw their count move.
-      if(loggedSessionNumber){
-        const showLogStamp = ()=>{
-          setLogStamp({n:loggedSessionNumber});
-          haptic(30);
-          setTimeout(()=>setLogStamp(null),2200);
-        };
-        // 300ms of clear air between the two so they read as a sequence rather than
-        // one stamp mutating into another. The PR ack above is awaited, so on a slow
-        // model call the NEW MAX stamp is already long gone and this fires straight
-        // away — the max() is what keeps that case from waiting for nothing.
-        const wait = Math.max(0, prStampClearsAt + 300 - Date.now());
-        if(wait>0) setTimeout(showLogStamp, wait); else showLogStamp();
-      }
       // WILCO Crew V1 — write whatever moments this turn detected (pr/week/
       // milestone/goal). Fire-and-forget: never awaited, a failure here must
       // never surface as "hit a snag" on an otherwise-successful log.
@@ -7404,7 +7421,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // screen can never show two different sessions.
   const pinSessionCard = async (a, msgs) => {
     let draftText = null, week = null;
-    const parked = qlLoad(a.id, workoutHistory);
+    const parked = qlLoad(a.id, workoutHistory, {cardActive: !!activeSessionCard(a.id)});
     if(parked && !parked.targetDate){
       draftText = parked.draft;
       week = parked.position?.week ?? null;
@@ -7959,11 +7976,22 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // when followUp's setMessages happened to force a parent render. It also
       // mutated live state in place.
       const parsedP = parseWorkout(msg,athlete.name,athlete.sport,knownExerciseNames(workoutHistory));
+      // ── Stamp-first choreography (Will, 08-24) ────────────────────────────
+      // A message that reads as a workout log holds the coaching reply OFF
+      // screen and fires the WORKOUT #N stamp the moment the parse confirms a
+      // new session — the stamp is the instant gratification for logging, and
+      // the reply landing right behind it (instead of racing ahead of it) is
+      // what makes Joe read as having actually thought about the session.
+      // Deterministic pre-gate (Quick Log sends + looksLikeWorkoutLog) so
+      // normal chat still streams the moment the first token arrives.
+      const holdReply = fromQuickLog || looksLikeWorkoutLog(msg);
+      let bubbleShown = !holdReply;
       // Stream the coaching reply into a live-updating bubble: append an empty
       // assistant message and grow it as deltas arrive. On ANY stream failure (or an
       // empty stream), fall back to the one-shot call and replace the placeholder —
-      // a broken stream must never leave a blank reply.
-      setMessages(prev=>[...prev,{role:"assistant",content:""}]);
+      // a broken stream must never leave a blank reply. (Held replies append the
+      // bubble in releaseReply instead.)
+      if(bubbleShown) setMessages(prev=>[...prev,{role:"assistant",content:""}]);
       let firstDelta = true;
       // SSE chunks arrive far faster than frames render (~100-400 per reply); a
       // setState per chunk meant a full React commit + transcript persist per
@@ -7984,12 +8012,61 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       };
       let streamedText = ""; // full text received so far — survives a mid-stream death (A28)
       const applyDelta = (chunk)=>{
-        if(firstDelta){ firstDelta = false; setLoading(false); } // hide the typing dot once text starts
         streamedText += chunk;
+        if(!bubbleShown) return; // held: text accumulates off screen, typing dot stays up
+        if(firstDelta){ firstDelta = false; setLoading(false); } // hide the typing dot once text starts
         deltaBuf += chunk;
         if(deltaRaf==null) deltaRaf = requestAnimationFrame(flushDelta);
       };
       let reply="";
+      // Put a held reply on screen. Safe at any point in the stream's life:
+      // mid-stream it appends the text so far and live streaming continues into
+      // the bubble; after settle it appends the final reply. Idempotent.
+      // `released` gates everything downstream of the parse (follow-up bubbles,
+      // the gap-check question, finalizeWorkout's propagation note) so nothing
+      // can post — or append to the wrong bubble — before the coach reply is on
+      // screen.
+      let releaseResolve = null;
+      const released = holdReply ? new Promise(r=>{ releaseResolve = r; }) : Promise.resolve();
+      const releaseReply = ()=>{
+        if(bubbleShown){ releaseResolve && releaseResolve(); return; }
+        bubbleShown = true;
+        if(deltaRaf!=null){ cancelAnimationFrame(deltaRaf); deltaRaf = null; }
+        deltaBuf = ""; // already inside streamedText — flushing it again would double-append
+        firstDelta = false;
+        setLoading(false);
+        setMessages(prev=>[...prev,{role:"assistant",content:(reply && reply.trim()) ? reply : streamedText}]);
+        releaseResolve && releaseResolve();
+      };
+      // The stamp decision, hooked straight onto the parse promise — NOT awaited
+      // after the reply stream, so the stamp lands as soon as the log is
+      // recognized, seconds before Joe finishes talking. Session-number
+      // prediction mirrors finalizeWorkout's fallback math: does this row start
+      // a new 3h bucket, and if so, what number is it (floored at the stored
+      // lifetime count so a capped history window can't under-number it).
+      const instantStamp = {fired:false};
+      const releaseAfter = (ms)=>{ if(ms>0) setTimeout(releaseReply, ms); else releaseReply(); };
+      const tryInstantStamp = (p)=>{
+        if(instantStamp.fired || !holdReply) return;
+        try{
+          const isRealLog = p && (p.exercises?.length>0 || p.run_data || p.practice_data);
+          // A correction or a program paste can parse with exercises but never
+          // reaches finalizeWorkout as a new session — no stamp for those.
+          const divertsFromFinalize = p && (p.log_correction?.is_mistake_fix || p.is_program_update || p.is_temp_program_update || p.program_create_request);
+          if(!isRealLog || divertsFromFinalize || effectiveTier(updatedAthlete)==="free"){ releaseAfter(0); return; }
+          const row = {athlete_id:updatedAthlete.id, parsed_data:p, created_at:new Date().toISOString()};
+          const before = groupIntoSessions(workoutHistory).length;
+          const after = groupIntoSessions([row, ...workoutHistory]).length;
+          if(after<=before){ releaseAfter(0); return; } // lands in an existing session bucket — no new number, and the 1-3h gap check below may still ask
+          const n = Math.max((updatedAthlete.total_sessions_logged||0)+1, after);
+          instantStamp.fired = true;
+          instantStampRef.current = {msg, n, clearsAt: Date.now()+2200};
+          setLogStamp({n}); haptic(30);
+          setTimeout(()=>setLogStamp(null),2200);
+          releaseAfter(2300); // reply lands as the stamp fades out
+        }catch(_){ releaseAfter(0); }
+      };
+      parsedP.then(tryInstantStamp).catch(()=>{ releaseReply(); });
       try {
         reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
@@ -8011,8 +8088,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext);
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
-      setLoading(false);
+      // A held reply keeps the typing dot up until releaseReply shows the bubble
+      // (the settle writes above are no-ops while it's hidden — the last message
+      // is still the athlete's own).
+      if(bubbleShown) setLoading(false);
       const parsed = await parsedP;
+      // Held replies: wait for the bubble before anything else can post. The
+      // release is always scheduled by tryInstantStamp (every path calls
+      // releaseAfter) or by the parse rejecting, so this cannot hang.
+      await released;
       // The Quick Log sheet already resolved (and SHOWED) the day this session was
       // trained, and the athlete could edit it. That is a stated fact, so it wins
       // over whatever the parser re-inferred from the log text — which usually
@@ -8793,7 +8877,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         <div className="stampstage">
           <div className="stamp hit" style={{borderColor:CA.accent,boxShadow:`0 0 40px ${CA.accent}`}}>
             <div style={{...DISP,fontSize:20,letterSpacing:3,color:CA.cyan,lineHeight:1}}>WORKOUT</div>
-            <div style={{...DISP,fontSize:52,letterSpacing:1,color:"#fff",lineHeight:0.9,marginTop:2}}>#{logStamp.n}</div>
+            {/* Theme-aware ink: the light theme's stamp card is WHITE (CA.navy2), so a
+                hardcoded #fff rendered the number invisible — Will's 08-24 screenshot
+                showed WORKOUT / blank / LOGGED WITH WILCO. Dark keeps the original white. */}
+            <div style={{...DISP,fontSize:52,letterSpacing:1,color:IS_DARK?"#fff":CA.accent,lineHeight:0.9,marginTop:2}}>#{logStamp.n}</div>
             <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:9,letterSpacing:1,color:CA.muted2,marginTop:6}}>LOGGED WITH WILCO</div>
           </div>
         </div>
@@ -10187,7 +10274,14 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
   useEffect(()=>{
     if(demo || !hasProgram || booted.current || !historyLoaded) return;
     booted.current = true;
-    const parked = qlLoad(athlete.id, workoutHistory);
+    // While a lock-screen card / Live Activity is pinned, the sheet must open on
+    // EXACTLY what the card shows — the in-app button and the Live Activity tap
+    // are the same quick log (Will, 08-24). An active card therefore relaxes the
+    // draft's expiry (qlLoad) and vetoes the silent position-conflict regenerate
+    // below: a replaced draft would flow straight onto the pinned card via the
+    // mirror effect and "reset" it mid-workout.
+    const cardActive = !!activeSessionCard(athlete.id);
+    const parked = qlLoad(athlete.id, workoutHistory, {cardActive});
     if(!parked){ generate(); return; }
     (async ()=>{
       // Before resuming, ask the resolver where the athlete is NOW and compare
@@ -10204,7 +10298,10 @@ function QuickLogSheet({athlete, workoutHistory, historyLoaded, messages, goals,
         const ctx = await quickLogBuildCtx({athlete, workoutHistory, messages, goals, contextNotes});
         ctxRef.current = ctx;  // bonus: a resumed draft's first edit no longer refetches context
         const cur = quickLogPosOf(ctx);
-        conflict = qlPositionConflict(parked.position, cur);
+        // cardActive: the pinned card shows this draft — resuming it beats being
+        // "right" about the day. A wrong day is one Start-fresh tap away; a reset
+        // card mid-workout is work destroyed.
+        conflict = qlPositionConflict(parked.position, cur) && !cardActive;
         draftPosRef.current = conflict ? cur : (parked.position || cur);
       }catch(_){ draftPosRef.current = parked.position || null; }
       if(conflict){ generate(); return; }

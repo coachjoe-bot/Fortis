@@ -40,16 +40,25 @@ export const qlStamp = (workoutHistory) => {
 // The resumable draft, or null. Every rejection path (missing, corrupt, expired, stale,
 // empty) returns null so the caller just redrafts — a lost draft is never worth an error
 // state in front of someone mid-workout.
-export const qlLoad = (athleteId, workoutHistory) => {
+export const qlLoad = (athleteId, workoutHistory, {cardActive=false} = {}) => {
   try{
     const d = JSON.parse(localStorage.getItem(qlKey(athleteId))||"null");
     if(!d || typeof d.draft!=="string" || !d.draft.trim()) return null;
     // Athlete-edited drafts survive the rolling window OR the same local day,
     // whichever is longer; prebuilt drafts get the window only (nobody loses
     // work if a speculative draft regenerates).
+    //
+    // cardActive: a pinned lock-screen card / Live Activity is a live projection
+    // of THIS draft (T40 invariant: the sheet and the lock screen never show two
+    // different sessions). While one is up, the draft it projects must not
+    // expire out from under it — otherwise opening the sheet in-app regenerates
+    // and the mirror effect "resets" the pinned card mid-workout (Will, 08-24).
+    // The card's own lifecycle (clear-on-log, same-day age cap, boot expiry)
+    // bounds how long this leniency can last, and the history stamp below still
+    // applies — though a real log also takes the card down, so they can't fight.
     const withinWindow = Date.now()-(d.savedAt||0) < QL_RESUME_MS;
     const sameLocalDay = !!d.savedAt && qlLocalDay(d.savedAt) === qlLocalDay();
-    if(d.prebuilt ? !withinWindow : !(withinWindow || sameLocalDay)) return null;
+    if(!cardActive && (d.prebuilt ? !withinWindow : !(withinWindow || sameLocalDay))) return null;
     if(d.stamp !== qlStamp(workoutHistory)) return null;
     return {
       draft: d.draft,

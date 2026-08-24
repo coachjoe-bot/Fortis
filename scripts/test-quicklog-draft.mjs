@@ -68,6 +68,22 @@ check("a prebuilt draft just past the window is gone", qlLoad(ATH, HIST) === nul
 reset(); writeAged(26*60*60*1000);
 check("yesterday's draft never comes back", qlLoad(ATH, HIST) === null);
 
+// ─── cardActive: a pinned lock-screen card / Live Activity (Will, 08-24) ─────
+// The card is a projection of the draft, so while one is up the draft cannot
+// expire out from under it — otherwise the in-app QUICK LOG button regenerates,
+// the mirror effect rewrites the pinned card, and the athlete's lock screen
+// "resets" mid-workout. The history stamp still wins: a real log invalidates
+// the draft (and clears the card, upstream).
+reset(); store.set(qlKey(ATH), JSON.stringify({...DRAFT, prebuilt:true, savedAt: Date.now()-(QL_RESUME_MS+60*1000), stamp: qlStamp(HIST)}));
+check("card active: an expired prebuilt draft still resumes", qlLoad(ATH, HIST, {cardActive:true}) !== null);
+reset(); writeAged(26*60*60*1000);
+check("card active: even yesterday's draft resumes (the card's own expiry bounds this)", qlLoad(ATH, HIST, {cardActive:true}) !== null);
+reset(); qlSave(ATH, HIST, DRAFT);
+check("card active: a real session logged since STILL drops the draft (double-log guard outranks the card)",
+  qlLoad(ATH, [{id:"w10", parsed_data:{exercises:[{name:"Bench Press", sets:3, reps:5, weight:185}]}}, ...HIST], {cardActive:true}) === null);
+reset();
+check("card active: no saved draft is still no draft", qlLoad(ATH, HIST, {cardActive:true}) === null);
+
 // Staleness — they logged a REAL session through chat while the draft sat parked.
 // THE double-log guard. Only rows that are real training count: the workouts
 // table holds a row for EVERY chat message, and fingerprinting the raw list let a

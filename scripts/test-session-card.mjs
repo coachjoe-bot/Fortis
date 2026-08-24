@@ -89,7 +89,7 @@ console.log("sessionCardIsLive:");
   const now = Date.now();
   const today = new Date(now).toLocaleDateString();
   ok(sessionCardIsLive({ day: today, startedAt: now - 60_000 }, now), "fresh same-day card is live");
-  ok(!sessionCardIsLive({ day: today, startedAt: now - SESSION_CARD_MAX_AGE_MS - 1 }, now), "a >3h card is stale");
+  ok(!sessionCardIsLive({ day: today, startedAt: now - SESSION_CARD_MAX_AGE_MS - 1 }, now), "a card past the age cap is stale");
   ok(!sessionCardIsLive({ day: "1/1/2020", startedAt: now - 60_000 }, now), "yesterday's card is stale whatever its age");
   ok(!sessionCardIsLive(null, now), "no state → not live");
 }
