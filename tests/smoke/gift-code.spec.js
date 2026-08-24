@@ -22,7 +22,7 @@ async function applyCodeAtCheckout(page, code) {
 
 test("a 3-month prize code discloses three free months, not one", async ({ page }) => {
   await mockApi(page, {
-    athlete: makeAthlete({ tier: "free", stripe_subscription_id: null }),
+    athlete: makeAthlete({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z", stripe_subscription_id: null }),
     giftResult: {
       valid: true,
       promotionCodeId: "promo_smoketest",
@@ -31,7 +31,7 @@ test("a 3-month prize code discloses three free months, not one", async ({ page 
       terms: { freeForever: false, freeMonths: 3, amountOff: 0, percentOff: 100, repeating: true, forever: false },
     },
   });
-  await loginAsAthlete(page, makeAthlete({ tier: "free", stripe_subscription_id: null }));
+  await loginAsAthlete(page, makeAthlete({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z", stripe_subscription_id: null }));
   await applyCodeAtCheckout(page, "GRIP-TEST-CHAMP");
 
   // T37's card-first checkout replaced the long dated disclosure with the label
@@ -41,8 +41,8 @@ test("a 3-month prize code discloses three free months, not one", async ({ page 
 });
 
 test("the classic one-month gift code still reads as one free month", async ({ page }) => {
-  await mockApi(page, { athlete: makeAthlete({ tier: "free", stripe_subscription_id: null }) });
-  await loginAsAthlete(page, makeAthlete({ tier: "free", stripe_subscription_id: null }));
+  await mockApi(page, { athlete: makeAthlete({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z", stripe_subscription_id: null }) });
+  await loginAsAthlete(page, makeAthlete({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z", stripe_subscription_id: null }));
   await applyCodeAtCheckout(page, "WILCO-ABCDE");
 
   await expect(page.getByRole("button", { name: "Start First Month Free →" })).toBeVisible();

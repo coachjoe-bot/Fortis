@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { mockApi, makeAthlete, loginAsAthlete } from "./mocks.js";
 
 test("upgrade payment step renders, and a blocked Stripe.js shows the failure state with Retry", async ({ page }) => {
-  const athlete = makeAthlete({ tier: "free", stripe_subscription_id: null });
+  const athlete = makeAthlete({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z", stripe_subscription_id: null });
   const { calls } = await mockApi(page, {
     athlete,
     blockStripeJs: true,

@@ -18,18 +18,25 @@
 
 export const TRIAL_DAYS = 7;
 
-// The tier the app should BEHAVE as. Elevates only a stored-free athlete inside
-// an unexpired trial window; pro/elite/school always pass through unchanged.
+// The tier the app should BEHAVE as. Elevates a stored-free athlete inside an
+// unexpired trial window — and GRANDFATHERED free accounts (Will's 08-24 ruling,
+// final): a free athlete with NO trial_ends_at predates the W18-3 trial system
+// (identity.js stamps every non-school signup at creation), and those accounts
+// keep Pro access for free, permanently. Only a LAPSED stamp locks an account
+// down to the bare free surface. pro/elite/school pass through unchanged.
 export function effectiveTier(a) {
   const t = (a && a.tier) || "free";
-  if (t === "free" && a && a.trial_ends_at) {
+  if (t === "free" && a) {
+    if (!a.trial_ends_at) return "pro"; // grandfathered pre-trial account
     const ends = Date.parse(a.trial_ends_at);
     if (Number.isFinite(ends) && ends > Date.now()) return "pro";
   }
   return t;
 }
 
-// Is this athlete currently riding the card-less free-pick trial?
+// Is this athlete currently riding the card-less free-pick trial? Requires a
+// live stamp: a grandfathered account (no stamp, permanent free Pro) is NOT on
+// a trial and must never see trial countdown copy.
 export function trialActive(a) {
-  return ((a && a.tier) || "free") === "free" && effectiveTier(a) === "pro";
+  return ((a && a.tier) || "free") === "free" && !!(a && a.trial_ends_at) && effectiveTier(a) === "pro";
 }

@@ -154,8 +154,11 @@ check("day count is rendered, not rounded away", G({ dAgo: 12 }).includes("12 da
 const elig = (o) => B.openerEligibleFor({ first_chat_complete: true, tier: "pro", program_text: "Day 1 Bench 5x5", ...o });
 check("paid + program + returning → eligible", elig({}) === true);
 check("temp program alone counts", elig({ program_text: undefined, temp_program_text: "Hotel: DB press" }) === true);
-check("free tier → not eligible", elig({ tier: "free" }) === false);
-check("missing tier defaults to free → not eligible", elig({ tier: undefined }) === false);
+// Will 08-24: a free athlete with NO trial stamp is GRANDFATHERED free Pro —
+// the opener treats them as paid. Only a lapsed stamp locks the opener out.
+check("grandfathered free (no stamp) → eligible", elig({ tier: "free" }) === true);
+check("lapsed trial → not eligible", elig({ tier: "free", trial_ends_at: "2020-01-01T00:00:00.000Z" }) === false);
+check("missing tier defaults to free → grandfathered, eligible", elig({ tier: undefined }) === true);
 check("no program on file → not eligible", elig({ program_text: undefined }) === false);
 check("first chat not done → not eligible", elig({ first_chat_complete: false }) === false);
 check("null athlete → not eligible", B.openerEligibleFor(null) === false);

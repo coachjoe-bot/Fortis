@@ -18,8 +18,8 @@ const past   = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 console.log("effectiveTier:");
 eq(effectiveTier({ tier: "free", trial_ends_at: future }), "pro",  "free inside the trial window presents as pro");
 eq(effectiveTier({ tier: "free", trial_ends_at: past }),   "free", "expired trial silently answers free again");
-eq(effectiveTier({ tier: "free", trial_ends_at: null }),   "free", "no stamp (pre-W18 account) stays free");
-eq(effectiveTier({ tier: "free" }),                        "free", "missing column stays free");
+eq(effectiveTier({ tier: "free", trial_ends_at: null }),   "pro",  "no stamp (pre-W18 account) = GRANDFATHERED free Pro (Will 08-24, final)");
+eq(effectiveTier({ tier: "free" }),                        "pro",  "missing column = grandfathered free Pro");
 eq(effectiveTier({ tier: "pro",   trial_ends_at: past }),  "pro",  "a paid tier is never touched by the clock");
 eq(effectiveTier({ tier: "elite", trial_ends_at: future }), "elite", "elite passes through unchanged");
 eq(effectiveTier({ tier: "school", trial_ends_at: future }), "school", "school passes through unchanged");
@@ -32,6 +32,7 @@ ok(trialActive({ tier: "free", trial_ends_at: future }) === true,  "free + futur
 ok(trialActive({ tier: "free", trial_ends_at: past }) === false,   "expired = not active");
 ok(trialActive({ tier: "pro",  trial_ends_at: future }) === false, "paid tier is never 'on the free trial'");
 ok(trialActive(null) === false, "null athlete = not active");
+ok(trialActive({ tier: "free", trial_ends_at: null }) === false, "grandfathered (no stamp) is free Pro, NOT a trial - no countdown copy");
 eq(TRIAL_DAYS, 7, "the trial is 7 days (Will's ruling — not 14, not 30)");
 
 // ── source contracts ─────────────────────────────────────────────────────────
