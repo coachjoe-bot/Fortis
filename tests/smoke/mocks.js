@@ -306,8 +306,8 @@ export async function loginAsCoach(page, coach) {
   await page.getByText("WILCO COACH").waitFor();
 }
 
-export async function loginAsAthlete(page, athlete) {
-  await page.goto("/");
+export async function loginAsAthlete(page, athlete, path = "/") {
+  await page.goto(path);
   await page.getByRole("button", { name: "Athlete Login" }).click();
   // Relight (08-07) reworded the login field; "Exact name you signed up with"
   // now lives on the forgot-PIN form and matched an invisible input here.

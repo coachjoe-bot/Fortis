@@ -69,7 +69,19 @@ import { draftChangeRequest, fileChangeRequest, flagToSource } from "./changeReq
 import { FEATURE_INVENTORY } from "./features.js";
 import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayUnit, toDisplay, roundStat } from "./units.js";
 import { effectiveTier, trialActive } from "./tiers.js";
-import { CREW_ENABLED } from "./flags.js";
+import { CREW_ENABLED, MASTERMIND_ENABLED, CHAT_FIRST_ENABLED } from "./flags.js";
+import { buildMastermindStatic } from "./ai/card.js";
+import { validateFact, findDuplicate, matchFacts, buildMemoryBlock, activeFacts } from "./memory.js";
+
+// T58 rollout gates, resolved once per load. ?mastermind=1 / ?chatfirst=1 are
+// preview overrides (never persisted) so Will can drive both on a web preview
+// before any flag flips; the real switches live in src/flags.js.
+const urlFlag = (k) => { try { return new URLSearchParams(window.location.search).has(k); } catch(_) { return false; } };
+const MASTERMIND_ON = MASTERMIND_ENABLED || urlFlag("mastermind");
+// Chat-first ships NATIVE-FIRST (Will 08-24): flag AND native iOS, with the URL
+// override for web previews. app.trainwilco.com keeps the tab UI either way
+// until Will flips CHAT_FIRST for web deliberately.
+export const CHAT_FIRST_ON = (CHAT_FIRST_ENABLED && isNativeIOS()) || urlFlag("chatfirst");
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
@@ -1469,7 +1481,7 @@ const aiContinue = async ({model,maxTokens,sysDynamic,sysCached,content,partial,
 // array of base64 JPEG strings (same shape as askClaude's) — the server's stream path
 // forwards `messages` verbatim same as the JSON path, so image content blocks work
 // unmodified; this just builds the same multi-block content array askClaude does.
-export const askClaudeStream = async (system, user, {maxTokens=600, model="claude-sonnet-5", feature="other", onDelta, images=[]}={}) => {
+export const askClaudeStream = async (system, user, {maxTokens=600, model="claude-sonnet-5", feature="other", onDelta, images=[], toolset, onToolUse}={}) => {
   const sysCached  = (system && typeof system === "object") ? (system.cached||"")  : "";
   const sysDynamic = (system && typeof system === "object") ? (system.dynamic||"") : system;
   const content = [];
@@ -1480,13 +1492,15 @@ export const askClaudeStream = async (system, user, {maxTokens=600, model="claud
   const r = await fetch("/api/claude",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({auth:CURRENT_AUTH,model,max_tokens:maxTokens,stream:true,system:sysDynamic,...(sysCached?{system_cached:sysCached}:{}),messages:[{role:"user",content}],feature})
+    // toolset is a NAME the server resolves against its own registry
+    // (api/_tools.js) — the client never defines tool schemas.
+    body:JSON.stringify({auth:CURRENT_AUTH,model,max_tokens:maxTokens,stream:true,system:sysDynamic,...(sysCached?{system_cached:sysCached}:{}),...(toolset?{toolset}:{}),messages:[{role:"user",content}],feature})
   });
   if(!r.ok || !r.body) throw new Error(`stream failed (${r.status})`);
   const reader = r.body.getReader();
   const decoder = new TextDecoder();
   AI_META.stopReason = null;
-  let buf="", full="";
+  let buf="", full="", toolCount=0;
   for(;;){
     const {done,value} = await reader.read();
     if(done) break;
@@ -1501,10 +1515,16 @@ export const askClaudeStream = async (system, user, {maxTokens=600, model="claud
       if(evLine && evLine.includes("error")) throw new Error("stream_interrupted");
       let obj; try{ obj=JSON.parse(dataLine.slice(5).trim()); }catch{ continue; }
       if(obj && typeof obj.text==="string" && obj.text){ full+=obj.text; if(onDelta) onDelta(obj.text); }
+      // T58: complete tool_use blocks relayed by the proxy. input === null means
+      // the block's JSON was clipped mid-stream — skip it rather than act on
+      // garbage (the model's TEXT already answered the athlete either way).
+      if(obj && obj.tool_use && onToolUse){ toolCount++; if(obj.tool_use.input!==null) { try{ onToolUse(obj.tool_use); }catch(_){} } }
       if(obj && obj.stop_reason) AI_META.stopReason = obj.stop_reason;
     }
   }
-  if(!full.trim()) throw new Error("empty stream");
+  // A tool-only turn (rare: the model acted without prose) is not an error —
+  // send() falls back to a one-shot reply only when there's also no tool call.
+  if(!full.trim() && !toolCount) throw new Error("empty stream");
   // T55: clipped stream → one non-streaming continuation, appended through the same
   // onDelta path so the UI renders it as part of the same reply.
   if(AI_META.stopReason==="max_tokens"){
@@ -1843,7 +1863,11 @@ ${Object.entries(JOEBOT_GOALS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}
 SPORT PRIORITIES (apply the athlete's sport from the session context):
 ${Object.entries(JOEBOT_SPORTS).map(([k,v])=>`- ${k}: ${v}`).join("\n")}`;
 
-const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null) => {
+// opts (T58): { mastermind, memoryRows, onToolUse } — mastermind swaps the
+// static persona block for the unified card (src/ai/card.js), attaches the
+// server-registered toolset, and injects the fact store; everything else
+// (dynamic tail, streaming, history window) is shared with the legacy path.
+const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athleteGoals=[], athleteContext=null, onDelta=null, opts={}) => {
   // Both call sites pass `history` already ending with the current message, and
   // the current message is appended again explicitly in userMsg below — so the
   // window must EXCLUDE the last element or every prompt carries the athlete's
@@ -2006,6 +2030,17 @@ ${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you s
   let contextMemory = "";
   if(athleteContext){
     contextMemory = `\n\nATHLETE CONTEXT (from monthly recap history: preferences, injuries, goals stated over time):\n${athleteContext}\nUse this as background, do not repeat it back, just let it inform your responses.`;
+  }
+
+  // T58 mastermind: the unified card replaces the legacy persona block, the fact
+  // store replaces the raw context blob (which rides inside the block until its
+  // content migrates), and the server-registered toolset arms Joe's hands.
+  if(opts.mastermind){
+    const memBlock = buildMemoryBlock(opts.memoryRows||[], athleteContext||"");
+    const sysObjM = {cached:buildMastermindStatic(), dynamic:sys+goalsContext+memBlock};
+    const userMsgM = `${hist}\n\n${athlete.name}: ${message}`;
+    if(onDelta) return askClaudeStream(sysObjM, userMsgM, {maxTokens:900, model:"claude-sonnet-5", feature:"mastermind_chat", onDelta, toolset:"mastermind_athlete", onToolUse:opts.onToolUse});
+    return askClaude(sysObjM, userMsgM, 900, [], "claude-sonnet-5", "mastermind_chat");
   }
 
   const sysObj = {cached:JOEBOT_STATIC_SYS, dynamic:sys+goalsContext+contextMemory};
@@ -6604,6 +6639,145 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     return [...msgs,{role:"assistant",content:`Quick heads up, ${athlete.name}: your 7-day Pro trial just wrapped up. Everything you logged is saved, and you and I can still talk training right here anytime. When you want your program, your log, and your progress charts back, Pro is one tap away in Settings.`}];
   };
 
+  // ── T58 MASTERMIND: the fact store + the master's hands ─────────────────────
+  // memoryRows = this athlete's active facts (athlete_memory), injected into
+  // every mastermind turn and mutated by the remember/forget tools. Loaded
+  // lazily post-boot; the flag off = zero reads, zero behavior change.
+  const [memoryRows,setMemoryRows] = useState([]);
+  useEffect(()=>{
+    if(!MASTERMIND_ON || !historyLoaded) return;
+    let dead = false;
+    sbRead("athlete_memory",`?athlete_id=eq.${athlete.id}&status=eq.active&order=updated_at.desc&limit=60`)
+      .then(rows=>{ if(!dead && Array.isArray(rows)) setMemoryRows(activeFacts(rows)); })
+      .catch(()=>{});
+    return ()=>{ dead = true; };
+  },[historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Executes the master's non-parse tool calls after the reply is on screen.
+  // set_position / propose_preference are NOT handled here — they merge into
+  // `parsed` inside send() so they ride the existing, tested branches (position
+  // write + pref chip). Everything here is additive and fire-and-forget; every
+  // failure is reported, never surfaced mid-conversation.
+  const executeMasterTools = async (calls, updatedAthlete, msgs) => {
+    for(const tc of calls){
+      try{
+        if(tc.name==="remember_fact"){
+          const v = validateFact(tc.input||{});
+          if(!v.ok) continue;
+          const dup = findDuplicate(memoryRows, v.content);
+          const stamp = new Date().toISOString();
+          if(dup){
+            await sbUpdate("athlete_memory", dup.id, {kind:tc.input.kind, expires_at:tc.input.expires_at||null, updated_at:stamp});
+            setMemoryRows(rows=>rows.map(r=>r.id===dup.id?{...r, kind:tc.input.kind, expires_at:tc.input.expires_at||null, updated_at:stamp}:r));
+          } else {
+            const ins = await sbInsert("athlete_memory",{athlete_id:updatedAthlete.id, content:v.content, kind:tc.input.kind, expires_at:tc.input.expires_at||null, source:"athlete_said"});
+            const row = Array.isArray(ins)?ins[0]:ins;
+            if(row && row.id) setMemoryRows(rows=>[row, ...rows]);
+          }
+        } else if(tc.name==="forget_fact"){
+          const m = matchFacts(memoryRows, tc.input && tc.input.match);
+          if(!m.ok) continue;
+          for(const r of m.rows) await sbUpdate("athlete_memory", r.id, {status:"deleted", updated_at:new Date().toISOString()});
+          const gone = new Set(m.rows.map(r=>r.id));
+          setMemoryRows(rows=>rows.filter(r=>!gone.has(r.id)));
+        } else if(tc.name==="pin_session_card"){
+          const had = activeSessionCard(updatedAthlete.id);
+          if(had) await refreshSessionCard(updatedAthlete, msgs);
+          else await pinSessionCard(updatedAthlete);
+          if(CHAT_FIRST_ON) openDockFromStore();
+        } else if(tc.name==="clear_session_card"){
+          clearSessionCard(updatedAthlete.id);
+          if(CHAT_FIRST_ON){ setSheetOpen(false); setDockWorkout(null); }
+        } else if(tc.name==="prefill_log_sheet"){
+          const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:msgs, goals:athleteGoals, contextNotes:athleteContext});
+          if(!gen.rest && gen.draft){
+            qlSave(updatedAthlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+            if(CHAT_FIRST_ON) openDockFromStore();
+          }
+        }
+      }catch(e){ reportError("ai", e, { component:"master_tool", meta:{ tool: tc.name } }); }
+    }
+  };
+
+  // ── T58 CHAT-FIRST: the dock + the inline log sheet ─────────────────────────
+  // The LOG tab dissolves into chat (Will's approved mockup): a bar titled with
+  // the session appears above the composer when a workout starts, the sheet
+  // slides up under the header (one editable sheet + focus note), the composer
+  // becomes edits-only while it's up, and FINISH WORKOUT sends the log through
+  // the normal Quick Log pure-log path and clears the lock-screen card. Every
+  // edit auto-saves through the same qlSave park the old sheet used, open or
+  // closed. Native-first: all of it gates on CHAT_FIRST_ON.
+  const [dockWorkout,setDockWorkout] = useState(null); // {title} — text lives in sheetState + the ql park
+  const [sheetOpen,setSheetOpen] = useState(false);
+  const [sheetState,setSheetState] = useState({draft:"",notes:""});
+  const [sheetDate,setSheetDate] = useState("");       // "" = today, else YYYY-MM-DD (the tappable date)
+  const [sheetBusy,setSheetBusy] = useState(false);
+  const hdrRef = useRef(null);
+  const composerRef = useRef(null);
+  const dockTitleOf = (draft) => {
+    const first = String(draft||"").split("\n").map(s=>s.trim()).find(Boolean) || "Today's Session";
+    return first.length>36 ? first.slice(0,35)+"…" : first;
+  };
+  // Surface the bar from whatever draft the ql store holds (the opener, the
+  // master's prefill tool, and the background pre-build all park there).
+  const openDockFromStore = () => {
+    if(!CHAT_FIRST_ON) return false;
+    try{
+      const rec = qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)});
+      if(rec && rec.draft){ setSheetState({draft:rec.draft, notes:rec.notes||""}); setDockWorkout({title:dockTitleOf(rec.draft)}); return true; }
+    }catch(_){}
+    return false;
+  };
+  // Reopen the bar on boot when a session is mid-flight (an active lock-screen
+  // card = they started and haven't logged). Edits kept: the park survives.
+  useEffect(()=>{
+    if(!CHAT_FIRST_ON || !historyLoaded) return;
+    if(activeSessionCard(athlete.id)) openDockFromStore();
+  },[historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sheetTypeEdit = (draft) => {   // direct typing on the sheet — auto-saves as it's made
+    setSheetState(s=>({...s, draft}));
+    setDockWorkout(w=>w?{title:dockTitleOf(draft)}:w);
+    try{ qlSave(athlete.id, workoutHistory, {draft, notes:sheetState.notes, undoStack:[], prebuilt:true}); }catch(_){}
+  };
+  // "Tell Joe what to change" — the composer while the sheet is up. Same call
+  // and reply contract as the old sheet's instruction box (QL_EDIT_SYS).
+  const sheetInstruction = async (ins) => {
+    setSheetBusy(true);
+    try{
+      const ctx = await quickLogBuildCtx({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
+      const revised = await askClaude(QL_EDIT_SYS,
+        `Today is ${qlTodayStr()}.\n\n${qlCtxBlock(ctx)}\n\nCURRENT FOCUS NOTE:\n${sheetState.notes||"(none)"}\n\nCURRENT DRAFT:\n${sheetState.draft.trim()||"(empty)"}\n\nATHLETE'S INSTRUCTION:\n${ins}`,
+        800, [], "claude-sonnet-5", "quick_log_edit");
+      const { notes:newNotes, log:t } = splitQuickLogReply(revised);
+      if(t){
+        const nextNotes = newNotes===null ? sheetState.notes : newNotes;
+        setSheetState({draft:t, notes:nextNotes});
+        setDockWorkout(w=>w?{title:dockTitleOf(t)}:w);
+        try{ qlSave(athlete.id, workoutHistory, {draft:t, notes:nextNotes, undoStack:[], prebuilt:true}); }catch(_){}
+      }
+    }catch(_){ /* draft unchanged; they can rephrase */ }
+    setSheetBusy(false);
+  };
+  // FINISH WORKOUT: send as-is (blanks included) through the pure-log path,
+  // clear the lock-screen card, take the bar down.
+  const finishWorkout = () => {
+    const draft = sheetState.draft.trim();
+    if(!draft || sheetBusy) return;
+    setSheetOpen(false); setDockWorkout(null);
+    quickLogPending.current = draft;
+    if(sheetState.notes) quickLogNote.current = {text:draft, note:sheetState.notes};
+    if(sheetDate) quickLogDate.current = {text:draft, date:sheetDate};
+    setSheetDate("");
+    try{ clearSessionCard(athlete.id); }catch(_){}
+    try{ qlMarkUsed(athlete.id); qlClear(athlete.id); }catch(_){}
+    send(draft);
+  };
+  // The ✕: off the screen, card down, edits kept in the park (ask Joe to bring it back).
+  const dismissDock = () => {
+    setSheetOpen(false); setDockWorkout(null); setSheetDate("");
+    try{ clearSessionCard(athlete.id); }catch(_){}
+  };
+
   // Drain the offline queue one message at a time, each through the normal send()
   // path — so a replayed workout gets the same parsing, session-gap check and PR
   // detection a live one would. One per pass, gated on nothing else being in
@@ -7491,6 +7665,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(choice==="yes"){
       if(!sessionCardSupported()){
         setMessages(prev=>[...prev,{role:"assistant",content:"Let's get it. Log it here when you're done."}]);
+        if(CHAT_FIRST_ON) openDockFromStore();
         return;
       }
       setLoading(true);
@@ -7500,6 +7675,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           res.rest ? "Today reads as a rest day on your program, nothing to pin. Enjoy it."
           : res.shown ? "Let's get it. Today's session is on your lock screen and it clears itself when you log."
           : "Let's get it. Couldn't pin it to your lock screen though, your device is blocking WILCO notifications. Turn them on in your phone's settings and ask me again."}]);
+        // Chat-first: starting = the bar comes up with the Live Activity (Will's
+        // Q1 ruling) — the pin path just parked the fresh draft.
+        if(CHAT_FIRST_ON && !res.rest) openDockFromStore();
       }catch(_){
         setMessages(prev=>[...prev,{role:"assistant",content:"Let's get it. Couldn't pin the lock-screen card just now, ask me again in a minute."}]);
       }
@@ -7839,6 +8017,14 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const send = async (overrideText) => {
     const msg = (typeof overrideText==="string" ? overrideText : input).trim();
     if(!msg||loading||videoLoading||!historyLoaded) return;
+    // ── T58 chat-first: sheet up = the composer is edits-only (Will's Q2
+    // ruling). Typed text routes to the draft editor, never to chat; the
+    // FINISH path bypasses via overrideText.
+    if(CHAT_FIRST_ON && sheetOpen && typeof overrideText!=="string"){
+      setInput("");
+      sheetInstruction(msg);
+      return;
+    }
     // The athlete is talking — the opener's still-generating session must not land
     // on top of their conversation. Cancel its typing indicator; the in-flight
     // generateQuickLogDraft still caches for the day but won't paint into chat
@@ -8094,8 +8280,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         }catch(_){ releaseAfter(0); }
       };
       parsedP.then(tryInstantStamp).catch(()=>{ releaseReply(); });
+      // T58: the master's tool calls, collected as the reply streams. Empty on
+      // the legacy path (flag off = no toolset = the model can't call anything).
+      const masterToolCalls = [];
+      const masterOpts = MASTERMIND_ON ? {mastermind:true, memoryRows, onToolUse:(tc)=>masterToolCalls.push(tc)} : {};
       try {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta);
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta,masterOpts);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
       // Stream over (success or death): cancel any queued frame so a late flush
       // can't race the settle/fallback writes below, then settle the bubble.
@@ -8112,7 +8302,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         reply = streamedText;
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       } else {
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext);
+        // One-shot fallback: mastermind persona/memory ride along, tools don't
+        // (the JSON path returns text only) — a dropped stream costs the turn's
+        // actions, never the reply.
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows}:{});
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       // A held reply keeps the typing dot up until releaseReply shows the bubble
@@ -8129,6 +8322,28 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // over whatever the parser re-inferred from the log text — which usually
       // states no date at all, since the sheet's draft is just exercises and loads.
       if (quickLogFor) parsed.log_date = quickLogFor;
+
+      // ── T58: apply the master's tool calls ────────────────────────────────
+      // Position + preference merge INTO `parsed` so they ride the existing,
+      // tested branches below (override write, signal counting, confirm chip).
+      // The tool wins over the parser's own read of the same message — one
+      // brain's deliberate call beats a second brain's inference. The rest
+      // (memory, session card, log sheet) execute fire-and-forget: additive,
+      // reversible, and already spoken for in Joe's streamed reply.
+      if(MASTERMIND_ON && masterToolCalls.length){
+        for(const tc of masterToolCalls){
+          if(tc.name==="set_position" && tc.input && (tc.input.week!=null || tc.input.day!=null)){
+            parsed.program_position_claim = {
+              week: tc.input.week ?? parsed.program_position_claim?.week ?? null,
+              day:  tc.input.day  ?? parsed.program_position_claim?.day  ?? null,
+            };
+          } else if(tc.name==="propose_preference" && tc.input && tc.input.field){
+            parsed.preference_request = { field: tc.input.field, value: tc.input.value };
+          }
+        }
+        const rest = masterToolCalls.filter(tc=>tc.name!=="set_position" && tc.name!=="propose_preference");
+        if(rest.length) executeMasterTools(rest, updatedAthlete, newMsgs);
+      }
 
       // Notes that used to be appended to the reply text before showing it now post
       // as their own follow-up bubbles (the reply is already on screen). finalReply
@@ -8254,18 +8469,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:newMsgs, goals:athleteGoals, contextNotes:athleteContext});
             if(!gen.rest && gen.draft){
               qlSave(updatedAthlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+              // Chat-first: the corrected session's bar comes up right here —
+              // day-correct-then-start is Will's Q1 flow, the sheet wording
+              // replaces the retired Quick Log tab language.
+              const loadedWhere = CHAT_FIRST_ON ? "It's loaded below" : "That session is loaded in your Quick Log";
               if(sessionCardSupported() && (notifPermission()==="granted" || isNativeIOS())){
                 chipSetThisSend = true;
                 const card = buildSessionCard(gen.draft, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
                 const shown = card ? await showSessionCard(updatedAthlete.id, card) : false;
-                followUp(shown ? "Swapped. That session is loaded in your Quick Log and on your lock screen; it clears itself when you log."
-                  : "Swapped. That session is loaded in your Quick Log.");
+                followUp(shown ? `Swapped. ${loadedWhere} and on your lock screen; it clears itself when you log.`
+                  : `Swapped. ${loadedWhere}.`);
               } else if(sessionCardSupported()){
                 setSessionCardPending(true); chipSetThisSend = true;
-                followUp("Swapped, that session is loaded in your Quick Log. Want it on your lock screen too? You'll get the notifications prompt first.");
+                followUp(`Swapped, ${loadedWhere.toLowerCase().replace("it's","it is")}. Want it on your lock screen too? You'll get the notifications prompt first.`);
               } else {
-                followUp("Swapped. That session is loaded in your Quick Log.");
+                followUp(`Swapped. ${loadedWhere}.`);
               }
+              if(CHAT_FIRST_ON) openDockFromStore();
             }
           }catch(_){ /* the reply above already answered; the draft just didn't rebuild */ }
         }
@@ -8884,10 +9104,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
     setVideoLoading(false);
   };
 
-  const quick = ["What's my programmed workout for today?","Review my program and tell me what you think.","No squat rack today","My knee is sore","I'm at the hotel gym","I can't do pull-ups","Bench alternative?"];
+  // The quick-suggestion marquee is DEAD (Will 08-24, T58): nothing auto-scrolls
+  // above the composer. Features surface themselves when the moment calls for
+  // them — that judgment is the AI's job now, not a ticker's.
 
   return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,maxWidth:600,margin:"0 auto"}}>
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,maxWidth:600,margin:"0 auto",position:"relative"}}>
       <style>{GS}{GSA}</style>
       {/* PR "NEW MAX" stamp — pressed straight on (cyan) when a logged lift beats the old best */}
       {prStamp&&(
@@ -8913,7 +9135,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         </div>
       )}
       {/* Header */}
-      <div style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:IS_DARK?"1px solid rgba(120,150,210,.16)":`1px solid ${CA.border}`,paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
+      <div ref={hdrRef} style={{background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",borderBottom:IS_DARK?"1px solid rgba(120,150,210,.16)":`1px solid ${CA.border}`,paddingTop:"calc(10px + env(safe-area-inset-top, 0px))",paddingBottom:"10px",paddingLeft:"14px",paddingRight:"14px",display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
         {/* Row 1: identity */}
         <div style={{display:"flex",alignItems:"baseline",gap:10,minWidth:0}}>
           {/* Brand, not persona (Will, 08-24): the surface is WILCO; Joe stays the
@@ -8958,7 +9180,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         {/* Light brand (Will, 08-11): no emojis, one shared type register
             (10.5/0.3 DISP). Dark keeps the original stretched ⚡ button.
             Label shortened QUICK LOG → LOG (Will, 08-20). */}
-        {effectiveTier(athlete)!=="free"&&(
+        {effectiveTier(athlete)!=="free"&&!CHAT_FIRST_ON&&(
           <button data-tour="quicklog-btn" onClick={()=>{track("screen_view","nav",{screen:"quick_log"});setShowQuickLog(true);}} title={quickLogParked?"Pick up the workout you started":"Prefill today's workout log"}
             style={{flex:1,minWidth:0,marginRight:"auto",background:CA_BTN,boxShadow:`0 0 10px ${CA_GLOW}`,border:"none",color:CA.onAccent,borderRadius:8,padding:IS_DARK?"6px 8px":"6px 10px",cursor:"pointer",fontSize:IS_DARK?10:10.5,...DISP,letterSpacing:0.3,display:"flex",alignItems:"center",justifyContent:"center",gap:4,whiteSpace:"nowrap"}}>
             {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ LOG"):(quickLogParked?"RESUME":"LOG")}
@@ -9418,20 +9640,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             </>)}
           </div>
         )
-      ):(
-        <div style={{padding:"0 0 5px",overflow:"hidden",flexShrink:0,WebkitMaskImage:"linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)",maskImage:"linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)"}}>
-          <div className="a-ticker" style={{alignItems:"center"}}>
-            {/* Second copy exists only for the seamless -50% marquee loop —
-                hidden from screen readers so nothing reads twice (T57). */}
-            {[...quick,...quick].map((p,idx)=>(
-              <span key={idx} aria-hidden={idx>=quick.length||undefined} onClick={()=>setInput(p)} title="Tap to use" style={{display:"inline-flex",alignItems:"center",cursor:"pointer",whiteSpace:"nowrap"}}>
-                <span style={{color:CA.muted2,fontSize:12.5,padding:"0 14px",fontWeight:500}}>{p}</span>
-                <span aria-hidden style={{width:1,height:12,background:CA.cyan,boxShadow:`0 0 6px ${CA.cyan}`,flexShrink:0}}/>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      ):null}
 
       {/* Input area */}
       {/* ⚠️ paddingBottom is a FLAT "8px" ON PURPOSE. Do NOT change it to
@@ -9440,7 +9649,63 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           the "safety space" Will has had removed 3× now (47941e6). The textbook
           iOS pattern is wrong for this app; leave it flat. Same rule for every
           bottom bar / modal footer below. */}
-      <div data-tour="chat-input" style={{padding:"6px 14px 8px",flexShrink:0,borderTop:"1px solid rgba(120,150,210,.16)",background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)"}}>
+      {/* ── T58 chat-first: the workout bar (collapsed) ─────────────────────── */}
+      {CHAT_FIRST_ON && dockWorkout && !sheetOpen && (
+        <div style={{padding:"0 8px 6px",flexShrink:0}}>
+          <div onClick={()=>setSheetOpen(true)} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter") setSheetOpen(true); }}
+            style={{background:CA_BTN,color:CA.onAccent,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",boxShadow:`0 4px 14px ${CA_GLOW}`}}>
+            <button onClick={e=>{e.stopPropagation();dismissDock();}} aria-label="Take it off the screen"
+              style={{background:"none",border:"none",color:"inherit",opacity:.7,fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0}}>✕</button>
+            <span style={{...DISP,fontSize:12.5,letterSpacing:0.6,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{dockWorkout.title}</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▲</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── T58 chat-first: the log sheet (slides under the header) ─────────── */}
+      {CHAT_FIRST_ON && dockWorkout && (
+        <div aria-hidden={!sheetOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
+          top:(hdrRef.current?.offsetHeight??96),bottom:(composerRef.current?.offsetHeight??86),
+          transform:sheetOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease",
+          pointerEvents:sheetOpen?"auto":"none",visibility:sheetOpen?"visible":"hidden",
+          background:CA.navy,display:"flex",flexDirection:"column"}}>
+          <div onClick={()=>setSheetOpen(false)} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter") setSheetOpen(false); }}
+            style={{background:CA_BTN,color:CA.onAccent,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",flexShrink:0}}>
+            <span style={{...DISP,fontSize:13,letterSpacing:0.6}}>{dockWorkout.title}</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▼</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
+            {sheetState.notes ? (
+              <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"9px 11px",fontSize:12,color:CA.muted2,lineHeight:1.5,marginBottom:10,whiteSpace:"pre-wrap"}}>{sheetState.notes}</div>
+            ) : null}
+            {/* ONE editable sheet, never per-exercise boxes (Will's rev-2 fix). */}
+            <textarea value={sheetState.draft} onChange={e=>sheetTypeEdit(e.target.value)} spellCheck={false}
+              aria-label="Today's workout log"
+              style={{width:"100%",minHeight:280,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:12,fontSize:13.5,lineHeight:1.7,color:CA.text,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+            {sheetBusy && <div style={{color:CA.muted,fontSize:12,marginTop:6}}>Joe's updating the sheet…</div>}
+          </div>
+          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <span style={{display:"flex",alignItems:"center",gap:6}}>
+              <input type="date" aria-label="Logging for date"
+                value={sheetDate || localISODate(new Date())}
+                min={localISODate(new Date(Date.now()-14*24*60*60*1000))}
+                max={localISODate(new Date())}
+                onChange={e=>setSheetDate(e.target.value===localISODate(new Date())?"":e.target.value)}
+                style={{border:`1px solid ${CA.border}`,borderRadius:6,background:CA.navy,color:CA.text,fontSize:12,padding:"3px 5px",fontFamily:"inherit"}}/>
+              <span title="Logging a workout for another day? Adjust the date." aria-label="Logging a workout for another day? Adjust the date."
+                style={{width:15,height:15,borderRadius:"50%",border:`1px solid ${CA.muted}`,color:CA.muted,fontSize:10,lineHeight:"13px",textAlign:"center",cursor:"help",flexShrink:0}}>i</span>
+            </span>
+            <button onClick={finishWorkout} disabled={sheetBusy||!sheetState.draft.trim()}
+              style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:(sheetBusy||!sheetState.draft.trim())?"not-allowed":"pointer",opacity:(sheetBusy||!sheetState.draft.trim())?0.6:1}}>
+              Finish Workout
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div ref={composerRef} data-tour="chat-input" style={{padding:"6px 14px 8px",flexShrink:0,borderTop:"1px solid rgba(120,150,210,.16)",background:`${CA.navy2}D9`,backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",position:"relative",zIndex:45}}>
         <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
           {/* Video upload button */}
           <input ref={videoInputRef} type="file" accept="video/*" style={{display:"none"}} onChange={handleVideoUpload}/>
@@ -9452,14 +9717,18 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             🎬
           </button>
           <textarea value={input} onChange={e=>setInput(e.target.value)}
-            placeholder={sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
+            placeholder={CHAT_FIRST_ON&&sheetOpen?"Tell Joe what to change…":sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
             style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"10px 14px",color:CA.text,fontSize:14,outline:"none",resize:"none",lineHeight:1.5}}/>
-          <button onClick={send} disabled={loading||videoLoading||!input.trim()||!historyLoaded}
+          <button onClick={send} disabled={loading||videoLoading||!input.trim()||!historyLoaded||sheetBusy}
             style={{background:CA_BTN,boxShadow:`0 0 12px ${CA_GLOW}`,border:"none",borderRadius:12,width:44,height:44,cursor:(loading||!input.trim())?"not-allowed":"pointer",opacity:(loading||!input.trim())?0.5:1,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:CA.onAccent,fontWeight:700}}>
             →
           </button>
         </div>
-        <div style={{color:CA.muted,fontSize:10,marginTop:6,textAlign:"center"}}>Type naturally to log workouts, or use ⚡ Quick Log · 🎬 upload a video for form review (MP4 works best)</div>
+        {!(CHAT_FIRST_ON&&sheetOpen)&&(
+          <div style={{color:CA.muted,fontSize:10,marginTop:6,textAlign:"center"}}>{CHAT_FIRST_ON
+            ? "Type naturally to log workouts · 🎬 upload a video for form review (MP4 works best)"
+            : "Type naturally to log workouts, or use the LOG button · 🎬 upload a video for form review (MP4 works best)"}</div>
+        )}
       </div>
 
       {/* Form-review movement modal — MUST render here at the root, NOT inside the
@@ -9509,7 +9778,11 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               {/* PHASES folded into DRAFTS (Will, 07-30): four subtabs made this
                   section heavy, and past phases are read-only history that belongs
                   under the drafts they came from, not beside them as a peer. */}
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["phases","PHASES"]].map(([k,label])=>(
+              {/* T58 chat-first: PHASES reads as PAST BLOCKS (it already holds
+                  drafts + parked interviews + closed phases — Will's Q6: one
+                  list). BUILDER stays until Builder-mode-in-chat ships (3b),
+                  then this bar is MY PROGRAM · PAST BLOCKS only. */}
+              {[["program","MY PROGRAM"],["builder","BUILDER"],["phases",CHAT_FIRST_ON?"PAST BLOCKS":"PHASES"]].map(([k,label])=>(
                 <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'Inter'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}

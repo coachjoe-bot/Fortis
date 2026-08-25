@@ -71,6 +71,9 @@ const WRITABLE = new Set([
   // for those two, and can never be bypassed by a client crafting a raw
   // insert/update/delete against them.
   "crew_edges", "crew_moments", "crew_reactions",
+  // T58 mastermind memory: per-athlete durable facts (the row-per-fact successor
+  // to the athlete_context blob). Athlete-owned; kind/status enum-pinned below.
+  "athlete_memory",
 ]);
 
 // ─── Phase 1b(b): scoped READS ────────────────────────────────────────────────
@@ -125,6 +128,9 @@ const READ_OWN_COL = {
   program_modifications: "athlete_id",
   // T53: typed training preferences (athlete reads own; coach reads roster's).
   athlete_training_prefs: "athlete_id",
+  // T58 mastermind memory (athlete reads own; coach reads roster's, same trust
+  // as athlete_context — memory is athlete-visible by design).
+  athlete_memory: "athlete_id",
 };
 
 // Tables read/written by COACH callers scoped to their OWN coach_id (not their
@@ -144,6 +150,7 @@ const ATHLETE_OWN_COL = {
   athlete_goals: "athlete_id",
   program_modifications: "athlete_id",
   athlete_context: "athlete_id",
+  athlete_memory: "athlete_id",
   push_subscriptions: "athlete_id",
   proof_digests: "athlete_id",
   legal_acceptances: "athlete_id",
@@ -181,6 +188,19 @@ const ATHLETE_OWN_COL = {
 // what the client (or an AI extractor parsing free-text chat) sends. Columns NOT
 // listed are denied; tables not in this map keep plain row-only scoping.
 const ATHLETE_COL_ALLOW = {
+  // T58 mastermind memory: the model writes these through tool handlers, so pin
+  // the vocabulary server-side — content bounded, kind/status enums, expires_at
+  // must parse. (athlete_id is forced by ATHLETE_OWN_COL ownership above.)
+  athlete_memory: {
+    cols: new Set(["content", "kind", "expires_at", "source", "status", "updated_at"]),
+    values: {
+      content: (v) => typeof v === "string" && v.trim().length > 0 && v.length <= 240,
+      kind: (v) => ["pinned", "contextual", "situational"].includes(v),
+      source: (v) => ["athlete_said", "inferred"].includes(v),
+      status: (v) => ["active", "deleted"].includes(v),
+      expires_at: (v) => v == null || Number.isFinite(Date.parse(v)),
+    },
+  },
   athletes: {
     cols: new Set([
       // profile / onboarding (set during signup + profile completion)

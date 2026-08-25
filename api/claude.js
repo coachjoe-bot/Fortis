@@ -16,6 +16,7 @@
 
 import { waitUntil } from "@vercel/functions";
 import { applyCors, httpErr, authCaller, tryTokenAuth, rateLimit, sbSelect, sbInsert, logError, authThrottle, clientIp } from "./_supa.js";
+import { toolsetFor } from "./_tools.js";
 
 const enc = encodeURIComponent;
 
@@ -59,7 +60,7 @@ const ALLOWED_MODELS = new Set([
 // says I never logged a lift while quoting the log" report came from. The
 // conversational surfaces get full effort; extraction stays cheap. Thinking stays
 // explicitly disabled everywhere (streaming + JSON parsing depend on it).
-const HIGH_EFFORT_FEATURES = new Set(["joebot_chat", "coach_checkin"]);
+const HIGH_EFFORT_FEATURES = new Set(["joebot_chat", "coach_checkin", "mastermind_chat"]);
 const MEDIUM_EFFORT_FEATURES = new Set(["proof_weekly", "proof_monthly", "proof_coach"]);
 function modelParams(model, feature) {
   if (model === "claude-sonnet-5" || model === "claude-sonnet-4-6") {
@@ -113,6 +114,10 @@ const FEATURES = new Set([
   // Program Builder: block-summary one-liner (Phase B), interview+extractor
   // calls, and full-draft generation (Phase C — src/builder.jsx).
   "program_summary", "program_build", "program_draft",
+  // T58 mastermind: the tool-carrying chat turn (Sonnet, high effort). Same
+  // conversational surface as joebot_chat; split so cost/behavior of the
+  // agentic path is separately measurable during rollout.
+  "mastermind_chat",
 ]);
 
 // Snapshot the segmentation fields AT CALL TIME so cost stays correctly attributed
@@ -224,6 +229,12 @@ export default async function handler(req, res) {
     // 4) Forward ONLY the fields we build here — strip anything else the client
     //    sent. Inference params (effort/thinking) are server-chosen per model.
     const payload = { model, max_tokens, messages: body.messages, ...modelParams(model, feature) };
+    // T58: tools by NAME only — the registry (api/_tools.js) holds the schemas,
+    // so a client can request a known toolset or nothing; never its own tools.
+    if (typeof body.toolset === "string") {
+      const tools = toolsetFor(body.toolset);
+      if (tools) payload.tools = tools;
+    }
     // Prompt caching: `system_cached` is a STATIC system prefix (identical across
     // calls — e.g. the workout-parse rulebook) marked ephemeral so Anthropic caches
     // it (~90% input discount on hits, 5-min TTL); `system` stays the per-call
@@ -269,6 +280,7 @@ export default async function handler(req, res) {
         "X-Accel-Buffering": "no", // ask proxies not to buffer, so deltas flush live
       });
       const usage = { input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null };
+      const toolBlocks = {}; // index -> {id, name, json} while a tool_use block streams
       let resolvedModel = model, aborted = false;
       const reader = upstream.body.getReader();
       // Cancel the upstream Anthropic stream the MOMENT the client disconnects —
@@ -304,6 +316,20 @@ export default async function handler(req, res) {
               usage.cache_creation_input_tokens = mu.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
             } else if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
               res.write(`data: ${JSON.stringify({ text: ev.delta.text || "" })}\n\n`);
+            } else if (ev.type === "content_block_start" && ev.content_block?.type === "tool_use") {
+              // T58: accumulate tool_use blocks (name + streamed input JSON) and
+              // emit each as ONE complete frame at content_block_stop — the
+              // client executes tools after the reply settles, so it never needs
+              // partial JSON. Keyed by block index; text blocks are untouched.
+              toolBlocks[ev.index] = { id: ev.content_block.id, name: ev.content_block.name, json: "" };
+            } else if (ev.type === "content_block_delta" && ev.delta?.type === "input_json_delta") {
+              if (toolBlocks[ev.index]) toolBlocks[ev.index].json += ev.delta.partial_json || "";
+            } else if (ev.type === "content_block_stop" && toolBlocks[ev.index]) {
+              const tb = toolBlocks[ev.index]; delete toolBlocks[ev.index];
+              let input = {}; try { input = tb.json ? JSON.parse(tb.json) : {}; } catch { input = null; }
+              // input null = malformed JSON from a clipped stream — forward it
+              // flagged so the client can skip rather than act on garbage.
+              try { res.write(`data: ${JSON.stringify({ tool_use: { id: tb.id, name: tb.name, input } })}\n\n`); } catch {}
             } else if (ev.type === "message_delta") {
               if (ev.usage) usage.output_tokens = ev.usage.output_tokens ?? usage.output_tokens;
               // T55: forward the stop reason so the client can detect a max_tokens
