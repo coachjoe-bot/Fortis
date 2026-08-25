@@ -110,7 +110,7 @@ export { isFullProgramEcho };
 // Boot layer: is this build still the deployed one, the warm-reopen snapshot, and
 // the offline send queue. Storage/pure rules with their own suite (test-boot.mjs).
 import {
-  runningAssetPaths, isStaleBuild, buildGreeting, openerEligibleFor, buildTodayOpener,
+  runningAssetPaths, isStaleBuild, buildGreeting, openerEligibleFor, buildTodayOpener, draftInUnit,
   saveSnapshot, loadSnapshot, pruneSnapshots,
   queueOutbox, readOutbox, shiftOutbox,
 } from "./boot.js";
@@ -6362,7 +6362,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(cancelled) return;
       const plugin = window.Capacitor?.Plugins?.SessionCard;
       if(plugin?.addListener){
-        Promise.resolve(plugin.addListener("openQuickLog", () => setShowQuickLog(true)))
+        Promise.resolve(plugin.addListener("openQuickLog", () => openLogSurfaceRef.current()))
           .then(h => { if(cancelled) h?.remove?.(); else handle = h; })
           .catch(()=>{});
         return;
@@ -6391,7 +6391,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(!isAthleteTarget(target)) return; // a coach- target on an athlete session: ignore, don't guess
     track("notification_opened","nav",{target});
     if(target==="program"){ setShowProgram(true); setProgramTab("program"); }
-    else if(target==="quicklog"){ setShowQuickLog(true); }
+    else if(target==="quicklog"){ openLogSurfaceRef.current(); }
     else if(target==="log"){ setMyLogTab("workouts"); setShowLog(true); }
     else if(target==="proof"){ setMyLogTab("proof"); setShowLog(true); }
     else if(target==="crew"){ setMyLogTab(!CREW_ENABLED||athlete?.crew_allowed===false?"workouts":"crew"); setShowLog(true); }
@@ -6713,8 +6713,46 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [sheetState,setSheetState] = useState({draft:"",notes:""});
   const [sheetDate,setSheetDate] = useState("");       // "" = today, else YYYY-MM-DD (the tappable date)
   const [sheetBusy,setSheetBusy] = useState(false);
+  const [sheetInfo,setSheetInfo] = useState(false);    // the date ⓘ hint — a TAP toggle (title= does nothing on iOS)
   const hdrRef = useRef(null);
   const composerRef = useRef(null);
+  // The sheets' top/bottom, MEASURED. Reading offsetHeight at render time went
+  // stale the moment the sheet opened: opening unmounts the composer's hint
+  // line, the composer shrinks, and the stale bottom left a gap under the
+  // footer with the chat showing through it (Will's phone, 08-25).
+  const [sheetFrame,setSheetFrame] = useState({top:96,bottom:86});
+  useEffect(()=>{
+    if(!CHAT_FIRST_ON) return;
+    const measure = () => setSheetFrame(f=>{
+      const top = hdrRef.current?.offsetHeight ?? f.top;
+      const bottom = composerRef.current?.offsetHeight ?? f.bottom;
+      return (top===f.top && bottom===f.bottom) ? f : {top,bottom};
+    });
+    measure();
+    const ro = typeof ResizeObserver!=="undefined" ? new ResizeObserver(measure) : null;
+    if(ro){ if(hdrRef.current) ro.observe(hdrRef.current); if(composerRef.current) ro.observe(composerRef.current); }
+    window.addEventListener("resize", measure);
+    return ()=>{ ro?.disconnect(); window.removeEventListener("resize", measure); };
+  },[]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Keep the Live Activity tracking the sheet: every draft change re-renders the
+  // pinned card from the text itself — deterministic, no AI turn, debounced so
+  // typing doesn't hammer the native bridge. (Chat-driven changes still go
+  // through refreshSessionCard; this covers direct edits, which never updated
+  // the card at all — Will's "not adjusting as quickly as I adjust the log".)
+  const cardSyncRef = useRef(null);
+  useEffect(()=>()=>clearTimeout(cardSyncRef.current),[]);
+  const syncCardFromDraft = (draft) => {
+    if(!CHAT_FIRST_ON || !activeSessionCard(athlete.id)) return;
+    clearTimeout(cardSyncRef.current);
+    cardSyncRef.current = setTimeout(()=>{
+      try{
+        if(!activeSessionCard(athlete.id)) return;
+        const rec = qlLoad(athlete.id, workoutHistory, {cardActive:true});
+        const card = buildSessionCard(draft, {week: rec?.position?.week ?? null});
+        if(card) showSessionCard(athlete.id, card);
+      }catch(_){}
+    }, 600);
+  };
   const dockTitleOf = (draft) => {
     const first = String(draft||"").split("\n").map(s=>s.trim()).find(Boolean) || "Today's Session";
     return first.length>36 ? first.slice(0,35)+"…" : first;
@@ -6725,10 +6763,41 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     if(!CHAT_FIRST_ON) return false;
     try{
       const rec = qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)});
-      if(rec && rec.draft){ setSheetState({draft:rec.draft, notes:rec.notes||""}); setDockWorkout({title:dockTitleOf(rec.draft)}); return true; }
+      if(rec && rec.draft){
+        // The draft engine writes lbs; the sheet follows the Settings unit
+        // (Will 08-25: chat converted, the log and the card didn't). Idempotent,
+        // so an already-converted park passes straight through.
+        const draft = draftInUnit(rec.draft, athlete.weight_unit);
+        setSheetState({draft, notes:rec.notes||""}); setDockWorkout({title:dockTitleOf(draft)});
+        return true;
+      }
     }catch(_){}
     return false;
   };
+  // The Live Activity tap + the quicklog push target land HERE under chat-first:
+  // main chat with the log sheet open (Will 08-25 — never the old Quick Log
+  // screen). With no park to restore, the sheet opens busy and drafts in place.
+  const openLogSurface = () => {
+    if(!CHAT_FIRST_ON){ setShowQuickLog(true); return; }
+    setShowQuickLog(false); setShowProgram(false); setShowLog(false); setShowProgress(false); setShowSettings(false);
+    if(openDockFromStore()){ setPgOpen(false); setSheetOpen(true); return; }
+    (async()=>{
+      setDockWorkout({title:"Today's Session"}); setPgOpen(false); setSheetOpen(true); setSheetBusy(true);
+      try{
+        const gen = await generateQuickLogDraft({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
+        if(!gen.rest && gen.draft){
+          try{ qlSave(athlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)}); }catch(_){}
+          const draft = draftInUnit(gen.draft, athlete.weight_unit);
+          setSheetState({draft, notes:gen.notes||""}); setDockWorkout({title:dockTitleOf(draft)});
+        } else { setSheetOpen(false); setDockWorkout(null); }
+      }catch(_){ setSheetOpen(false); setDockWorkout(null); }
+      setSheetBusy(false);
+    })();
+  };
+  // The native openQuickLog listener attaches ONCE (empty deps) — it calls
+  // through this ref so it never runs a stale closure over athlete/history.
+  const openLogSurfaceRef = useRef(openLogSurface);
+  openLogSurfaceRef.current = openLogSurface;
   // Reopen the bar on boot when a session is mid-flight (an active lock-screen
   // card = they started and haven't logged). Edits kept: the park survives.
   useEffect(()=>{
@@ -6739,6 +6808,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setSheetState(s=>({...s, draft}));
     setDockWorkout(w=>w?{title:dockTitleOf(draft)}:w);
     try{ qlSave(athlete.id, workoutHistory, {draft, notes:sheetState.notes, undoStack:[], prebuilt:true}); }catch(_){}
+    syncCardFromDraft(draft);
   };
   // "Tell Joe what to change" — the composer while the sheet is up. Same call
   // and reply contract as the old sheet's instruction box (QL_EDIT_SYS).
@@ -6746,15 +6816,21 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setSheetBusy(true);
     try{
       const ctx = await quickLogBuildCtx({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
+      // A kg athlete's draft already carries kg suffixes — the unit line keeps
+      // the model writing them explicitly instead of dropping back to bare
+      // (implied-lbs) numbers; draftInUnit below is the deterministic backstop.
+      const unitLine = athlete.weight_unit==="kg" ? "\n\nThis athlete works in KG: write every weight with an explicit kg suffix." : "";
       const revised = await askClaude(QL_EDIT_SYS,
-        `Today is ${qlTodayStr()}.\n\n${qlCtxBlock(ctx)}\n\nCURRENT FOCUS NOTE:\n${sheetState.notes||"(none)"}\n\nCURRENT DRAFT:\n${sheetState.draft.trim()||"(empty)"}\n\nATHLETE'S INSTRUCTION:\n${ins}`,
+        `Today is ${qlTodayStr()}.${unitLine}\n\n${qlCtxBlock(ctx)}\n\nCURRENT FOCUS NOTE:\n${sheetState.notes||"(none)"}\n\nCURRENT DRAFT:\n${sheetState.draft.trim()||"(empty)"}\n\nATHLETE'S INSTRUCTION:\n${ins}`,
         800, [], "claude-sonnet-5", "quick_log_edit");
-      const { notes:newNotes, log:t } = splitQuickLogReply(revised);
+      const { notes:newNotes, log } = splitQuickLogReply(revised);
+      const t = log ? draftInUnit(log, athlete.weight_unit) : log;
       if(t){
         const nextNotes = newNotes===null ? sheetState.notes : newNotes;
         setSheetState({draft:t, notes:nextNotes});
         setDockWorkout(w=>w?{title:dockTitleOf(t)}:w);
         try{ qlSave(athlete.id, workoutHistory, {draft:t, notes:nextNotes, undoStack:[], prebuilt:true}); }catch(_){}
+        syncCardFromDraft(t);
       }
     }catch(_){ /* draft unchanged; they can rephrase */ }
     setSheetBusy(false);
@@ -6764,7 +6840,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const finishWorkout = () => {
     const draft = sheetState.draft.trim();
     if(!draft || sheetBusy) return;
-    setSheetOpen(false); setDockWorkout(null);
+    clearTimeout(cardSyncRef.current); // a queued card re-render must not outlive the card
+    setSheetOpen(false); setDockWorkout(null); setSheetInfo(false);
     quickLogPending.current = draft;
     if(sheetState.notes) quickLogNote.current = {text:draft, note:sheetState.notes};
     if(sheetDate) quickLogDate.current = {text:draft, date:sheetDate};
@@ -6775,7 +6852,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   };
   // The ✕: off the screen, card down, edits kept in the park (ask Joe to bring it back).
   const dismissDock = () => {
-    setSheetOpen(false); setDockWorkout(null); setSheetDate("");
+    clearTimeout(cardSyncRef.current);
+    setSheetOpen(false); setDockWorkout(null); setSheetDate(""); setSheetInfo(false);
     try{ clearSessionCard(athlete.id); }catch(_){}
   };
 
@@ -7798,7 +7876,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       week = gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null;
       qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
     }
-    const card = buildSessionCard(draftText, {week});
+    // The card shows the numbers in the athlete's unit, same as the sheet —
+    // the raw draft engine writes lbs (Will 08-25; idempotent on kg parks).
+    const card = buildSessionCard(draftInUnit(draftText, a.weight_unit), {week});
     if(!card) return {shown:false};
     return {shown: await showSessionCard(a.id, card)};
   };
@@ -7868,8 +7948,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       const gen = await generateQuickLogDraft({athlete:a, workoutHistory, messages: msgs||messages, goals:athleteGoals, contextNotes:athleteContext});
       if(gen.rest || !gen.draft){ await clearSessionCard(a.id); return; }
       qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
-      const card = buildSessionCard(gen.draft, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
+      const card = buildSessionCard(draftInUnit(gen.draft, a.weight_unit), {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
       if(card) await showSessionCard(a.id, card);
+      // Chat-first: a chat-driven regenerate lands on the OPEN surfaces too —
+      // park and card refreshed above, so a raised bar/sheet must follow.
+      if(CHAT_FIRST_ON && dockWorkout){
+        const shown = draftInUnit(gen.draft, a.weight_unit);
+        setSheetState({draft:shown, notes:gen.notes||""});
+        setDockWorkout({title:dockTitleOf(shown)});
+      }
     }catch(_){ /* keep the last pinned content */ }
   };
 
@@ -9376,10 +9463,14 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {IS_DARK?(quickLogParked?"⚡ RESUME":"⚡ LOG"):(quickLogParked?"RESUME":"LOG")}
           </button>
         )}
-        <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:5,flexShrink:0}}>
+        {/* Chat-first dissolved the LOG button, which used to anchor this row's
+            left side — without it the group sat right-pinned over dead space
+            (Will 08-25 "the top section looks rough"). Native chat-first spreads
+            the three tabs into a balanced full-width bar; web keeps its layout. */}
+        <div style={{display:"flex",alignItems:"center",gap:IS_DARK?6:5,...(CHAT_FIRST_ON?{flex:1,minWidth:0,justifyContent:"flex-end"}:{flexShrink:0})}}>
           {effectiveTier(athlete)!=="free"&&(
             <button data-tour="program-btn" onClick={()=>{track("screen_view","nav",{screen:"program"});setShowProgram(true);}} title="View or edit your training program"
-              style={{background:athlete.temp_program_text?`${CA.amber}15`:(IS_DARK?(athlete.program_text?CA.navy2:CA.navy3):CA.navy3),border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:IS_DARK?"4px 8px":"6px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+              style={{background:athlete.temp_program_text?`${CA.amber}15`:(IS_DARK?(athlete.program_text?CA.navy2:CA.navy3):CA.navy3),border:`1px solid ${athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.border}`,borderRadius:8,padding:IS_DARK?"4px 8px":"6px 8px",color:athlete.temp_program_text?CA.amber:athlete.program_text?CA.blue:CA.muted,fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4,...(CHAT_FIRST_ON?{flex:1,minWidth:0,whiteSpace:"nowrap"}:{})}}>
               {IS_DARK
                 ? (athlete.temp_program_text?"✈️ Temp Program":"📋 "+(athlete.program_text?"Program":"Add Program"))
                 : (athlete.temp_program_text?"Temp Program":(athlete.program_text?"Program":"Add Program"))}
@@ -9395,12 +9486,12 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           {effectiveTier(athlete)!=="free"&&(
             <button data-tour="mylog-btn" onClick={()=>{track("screen_view","nav",{screen:"log"});setShowLog(true);}}
               title={proofDigest&&!proofDigest.is_read?"New letter from Coach Joe":"Your workout log"}
-              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>
+              style={{position:"relative",background:CA.navy3,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,...(CHAT_FIRST_ON?{flex:1,minWidth:0,whiteSpace:"nowrap"}:{})}}>
               MY LOG
               {proofDigest&&!proofDigest.is_read&&<span style={{position:"absolute",top:-3,right:-3,width:8,height:8,borderRadius:"50%",background:CA.accent,boxShadow:`0 0 6px ${CA.accent}`,display:"block"}}/>}
             </button>
           )}
-          {effectiveTier(athlete)!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3}}>PROGRESS</button>}
+          {effectiveTier(athlete)!=="free"&&<button data-tour="progress-btn" onClick={()=>{track("screen_view","nav",{screen:"progress"});setShowProgress(true);}} style={{background:CA.navy3,border:`1px solid ${CA.blue}`,color:CA.blue,borderRadius:8,padding:"6px 8px",cursor:"pointer",fontSize:10.5,...DISP,letterSpacing:IS_DARK?0.5:0.3,...(CHAT_FIRST_ON?{flex:1,minWidth:0,whiteSpace:"nowrap"}:{})}}>PROGRESS</button>}
           <button onClick={()=>setShowSettings(true)} title="Settings" style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:14,lineHeight:1}}>⚙</button>
           {!isMobile&&<button onClick={onLogout} style={{background:"none",border:`1px solid ${CA.border}`,color:CA.muted,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12}}>Log Out</button>}
         </div>
@@ -9908,8 +9999,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* ── T58/3b: the program sheet ────────────────────────────────────────── */}
       {CHAT_FIRST_ON && dockProgram && (
         <div aria-hidden={!pgOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
-          top:(hdrRef.current?.offsetHeight??96),bottom:(composerRef.current?.offsetHeight??86),
-          transform:pgOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease",
+          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          /* visibility rides the transition: hidden may only land AFTER the
+             slide-down finishes, or closing pops instead of animating. */
+          transform:pgOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
           pointerEvents:pgOpen?"auto":"none",visibility:pgOpen?"visible":"hidden",
           background:CA.navy,display:"flex",flexDirection:"column"}}>
           <div onClick={()=>setPgOpen(false)} role="button" tabIndex={0}
@@ -9954,8 +10047,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* ── T58 chat-first: the log sheet (slides under the header) ─────────── */}
       {CHAT_FIRST_ON && dockWorkout && (
         <div aria-hidden={!sheetOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
-          top:(hdrRef.current?.offsetHeight??96),bottom:(composerRef.current?.offsetHeight??86),
-          transform:sheetOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease",
+          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          /* visibility rides the transition — see the program sheet above. */
+          transform:sheetOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
           pointerEvents:sheetOpen?"auto":"none",visibility:sheetOpen?"visible":"hidden",
           background:CA.navy,display:"flex",flexDirection:"column"}}>
           <div onClick={()=>setSheetOpen(false)} role="button" tabIndex={0}
@@ -9974,7 +10068,15 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               style={{width:"100%",minHeight:280,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:12,fontSize:13.5,lineHeight:1.7,color:CA.text,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
             {sheetBusy && <div style={{color:CA.muted,fontSize:12,marginTop:6}}>Joe's updating the sheet…</div>}
           </div>
-          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div style={{position:"relative",flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            {/* The ⓘ is a TAP toggle: title= tooltips don't exist on iOS, so the
+                hint renders as its own bubble above the footer (Will 08-25). */}
+            {sheetInfo && (
+              <div onClick={()=>setSheetInfo(false)}
+                style={{position:"absolute",bottom:"100%",left:10,right:10,marginBottom:6,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:8,padding:"8px 11px",color:CA.muted2,fontSize:12,lineHeight:1.5,boxShadow:"0 4px 14px rgba(0,0,0,.18)"}}>
+                Logging a workout for another day? Adjust the date.
+              </div>
+            )}
             <span style={{display:"flex",alignItems:"center",gap:6}}>
               <input type="date" aria-label="Logging for date"
                 value={sheetDate || localISODate(new Date())}
@@ -9982,8 +10084,8 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 max={localISODate(new Date())}
                 onChange={e=>setSheetDate(e.target.value===localISODate(new Date())?"":e.target.value)}
                 style={{border:`1px solid ${CA.border}`,borderRadius:6,background:CA.navy,color:CA.text,fontSize:12,padding:"3px 5px",fontFamily:"inherit"}}/>
-              <span title="Logging a workout for another day? Adjust the date." aria-label="Logging a workout for another day? Adjust the date."
-                style={{width:15,height:15,borderRadius:"50%",border:`1px solid ${CA.muted}`,color:CA.muted,fontSize:10,lineHeight:"13px",textAlign:"center",cursor:"help",flexShrink:0}}>i</span>
+              <button onClick={()=>setSheetInfo(v=>!v)} aria-label="What is this date for?"
+                style={{width:18,height:18,borderRadius:"50%",border:`1px solid ${CA.muted}`,background:"none",color:CA.muted,fontSize:10,lineHeight:1,padding:0,textAlign:"center",cursor:"pointer",flexShrink:0}}>i</button>
             </span>
             <button onClick={finishWorkout} disabled={sheetBusy||!sheetState.draft.trim()}
               style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:(sheetBusy||!sheetState.draft.trim())?"not-allowed":"pointer",opacity:(sheetBusy||!sheetState.draft.trim())?0.6:1}}>

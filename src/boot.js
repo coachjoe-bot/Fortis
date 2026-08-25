@@ -228,6 +228,24 @@ export function displayWeights(text, unit = "lbs") {
   return out;
 }
 
+// The chat-first sheet + lock-screen card show the draft ITSELF (it stays
+// editable and loggable), so unlike displayWeights this keeps the number-FIRST
+// shape and just moves the numbers into the athlete's unit with an explicit
+// suffix: "@ 185 (75%)" -> "@ 85 kg (75%)". Idempotent (kg-tagged numbers pass
+// through) because parks round-trip through it, and one-way lbs->kg by the same
+// contract as displayWeights: draft-engine numbers are lbs unless a line says
+// otherwise, while a number the ATHLETE typed with a unit is already the truth.
+export function draftInUnit(text, unit = "lbs") {
+  if (unit !== "kg") return String(text || "");
+  const cv = (w) => String(Math.round((Number(w) / LBS_PER_KG) / 2.5) * 2.5);
+  let out = String(text || "");
+  out = out.replace(/@\s*(\d+(?:\.\d+)?)\s*lbs\b/gi, (_m, w) => `@ ${cv(w)} kg`);
+  // Bare "@ N" (implied lbs): converts unless the number already carries a unit
+  // or IS a percentage. The \b stops partial-number backtracking (see above).
+  out = out.replace(/@\s*(\d+(?:\.\d+)?)\b(?!\s*(?:lbs\b|kgs?\b|%))/gi, (_m, w) => `@ ${cv(w)} kg`);
+  return out;
+}
+
 // Frame the resolved draft as a session to RUN, not a log to type. The draft's
 // first line is the program day label ("Day 5 – Push B"); we weave that into the
 // lead and show the exercises below it. A lapsed athlete still gets the nudge.

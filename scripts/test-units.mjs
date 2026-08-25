@@ -12,7 +12,7 @@ import {
   LBS_PER_KG, toLbs, toKg, toDisplay, roundStat, roundLoad, fmtWeightIn,
   setDisplayUnit, getDisplayUnit, unitLabel, displayStat,
 } from "../src/units.js";
-import { displayWeights } from "../src/boot.js";
+import { displayWeights, draftInUnit } from "../src/boot.js";
 
 let pass = 0, fail = 0;
 const ok = (cond, name) => { if (cond) { pass++; } else { fail++; console.error(`✗ ${name}`); } };
@@ -61,6 +61,20 @@ eq(displayWeights("Bench 3x5 @ 225", "kg"), "Bench 3x5 @ 102.5 kg", "kg mode con
 eq(displayWeights("Bench 3x5 @ 185 (75%)", "kg"), "Bench 3x5 @ 75% (85 kg)", "kg mode converts %-sourced loads");
 eq(displayWeights("Squat 5x3 @ 100kg", "kg"), "Squat 5x3 @ 100kg", "already-kg lines pass through");
 eq(displayWeights("Row 3x8 @ 135 lbs", "kg"), "Row 3x8 @ 60 kg", "explicit-lbs lines convert in kg mode");
+
+// 4b ── draftInUnit: the SHEET/CARD converter — number-FIRST shape preserved
+// (the text stays the editable, loggable draft), explicit kg suffix, idempotent.
+eq(draftInUnit("Bench 3x5 @ 185 (75%)", "kg"), "Bench 3x5 @ 85 kg (75%)", "kg draft keeps number-first, converts, tags kg");
+eq(draftInUnit("Bench 3x5 @ 225", "kg"), "Bench 3x5 @ 102.5 kg", "bare load converts to 2.5 kg steps");
+eq(draftInUnit("Row 3x8 @ 135 lbs", "kg"), "Row 3x8 @ 60 kg", "explicit-lbs converts");
+eq(draftInUnit("Bench 5x5 @ 185 (RPE 8)", "kg"), "Bench 5x5 @ 85 kg (RPE 8)", "RPE-sourced converts, tag kept");
+eq(draftInUnit("Squat 5x3 @ 100 kg", "kg"), "Squat 5x3 @ 100 kg", "already-kg passes through (idempotent)");
+eq(draftInUnit(draftInUnit("Bench 3x5 @ 185 (75%)", "kg"), "kg"), "Bench 3x5 @ 85 kg (75%)", "double application is a no-op");
+eq(draftInUnit("Weighted Dips 3x8 @ ___", "kg"), "Weighted Dips 3x8 @ ___", "blanks untouched");
+eq(draftInUnit("Push-ups 3x20\nPlank 3x60s\nWeighted Pull-ups 3x8 +25", "kg"), "Push-ups 3x20\nPlank 3x60s\nWeighted Pull-ups 3x8 +25", "no-@ lines untouched");
+eq(draftInUnit("Bench 3x5 @ 185 (75%)", "lbs"), "Bench 3x5 @ 185 (75%)", "lbs mode is identity");
+eq(draftInUnit("Day 2 – Pull\n\nDeadlift 3x5 @ 315 (80%)\nBarbell Row 3x10 @ 135 (last time)", "kg"),
+   "Day 2 – Pull\n\nDeadlift 3x5 @ 142.5 kg (80%)\nBarbell Row 3x10 @ 60 kg (last time)", "multi-line draft converts per line");
 
 // 5 ── stray-constant gate: no 2.2… conversion literal outside units.js
 const roots = ["src", "api"];
