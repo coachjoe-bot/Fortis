@@ -1,0 +1,351 @@
+<title>WILCO Program Recs</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<style>
+  :root{
+    --paper:#F1EFEA; --panel:#FFFFFF; --ink:#26303B; --muted:#75808C;
+    --line:#E2DCCE; --navy:#28508B; --navy-deep:#1E3C68; --navy-soft:#E9EFF7;
+    --clay:#A6503F; --clay-soft:#F7E9E4; --chip:#F5F3EE; --good:#2E7D4F;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--paper);color:var(--ink);font-family:'Inter',-apple-system,'Segoe UI',sans-serif;margin:0;line-height:1.55}
+  .wrap{max-width:1060px;margin:0 auto;padding:48px 24px 90px}
+  .kick{font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--navy)}
+  h1{font-size:44px;font-weight:800;letter-spacing:-1.2px;margin:10px 0 14px;text-wrap:balance}
+  .lede{font-size:17px;color:var(--ink);max-width:62ch;margin:0 0 6px}
+  .lede b{color:var(--navy-deep)}
+  .sub{font-size:13.5px;color:var(--muted);max-width:68ch}
+  h2{font-size:22px;font-weight:800;letter-spacing:-0.4px;margin:0 0 4px;text-wrap:balance}
+  .scene{display:flex;gap:36px;align-items:flex-start;margin-top:64px}
+  .scene .notes{flex:1;min-width:260px;position:sticky;top:24px}
+  .scenenum{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:2px;color:var(--navy);text-transform:uppercase;margin-bottom:8px}
+  .scenenum s{display:inline-block;width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;text-decoration:none;font-size:11px;display:inline-flex;align-items:center;justify-content:center}
+  .notes p{font-size:14px;color:var(--ink);margin:10px 0;max-width:52ch}
+  .notes p.dim{color:var(--muted);font-size:13px}
+  .callout{border-left:3px solid var(--navy);background:var(--panel);border-radius:0 10px 10px 0;padding:10px 14px;font-size:13px;margin:12px 0}
+  /* &#9472;&#9472; phone frame &#9472;&#9472; */
+  .phone{width:392px;flex-shrink:0;background:#EFEDE8;border:1px solid #D9D4C8;border-radius:34px;overflow:hidden;box-shadow:0 18px 44px rgba(38,48,59,.13);display:flex;flex-direction:column;position:relative}
+  .ph-status{display:flex;justify-content:space-between;padding:12px 24px 4px;font-size:12px;font-weight:700;background:#FAF9F6}
+  .ph-hdr{background:#FAF9F6;border-bottom:1px solid var(--line);padding:8px 14px 10px}
+  .ph-row1{display:flex;align-items:baseline;gap:8px}
+  .brand{font-weight:800;letter-spacing:.5px;color:#4A6FA8;font-size:15px}
+  .wo{font-size:8.5px;letter-spacing:1px;font-weight:600;color:var(--muted);text-transform:uppercase}
+  .wo b{font-size:15px;color:var(--navy);letter-spacing:0;margin-left:2px}
+  .whoname{flex:1;color:var(--muted);font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .pro{font-size:8.5px;font-weight:700;letter-spacing:1px;color:var(--navy);border:1px solid var(--navy);background:var(--navy-soft);border-radius:4px;padding:1px 6px}
+  .navrow{display:flex;gap:5px;margin-top:9px}
+  .navbtn{flex:1;text-align:center;font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--navy);border:1px solid var(--navy);background:var(--panel);border-radius:8px;padding:6px 4px}
+  .navbtn.q{flex:0 0 34px;color:var(--muted);border-color:var(--line)}
+  .ph-body{flex:1;padding:12px 12px 8px;display:flex;flex-direction:column;gap:10px;min-height:430px}
+  .bub{background:var(--panel);border:1px solid #E7E3D9;border-radius:16px;padding:11px 14px;font-size:12.5px;max-width:88%;line-height:1.5}
+  .bub.joe{border-top-left-radius:4px}
+  .bub.me{align-self:flex-end;background:var(--navy-soft);border-color:#CBD9EC;border-top-right-radius:4px}
+  .avline{display:flex;gap:8px;align-items:flex-start}
+  .av{width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+  .spacer{flex:1}
+  /* bars above the composer */
+  .bar{display:flex;align-items:center;gap:9px;background:var(--navy);color:#fff;border-radius:12px;padding:10px 12px;margin:0 2px;box-shadow:0 4px 14px rgba(40,80,139,.28)}
+  .bar .x{opacity:.75;font-size:12px}
+  .bar .t{flex:1;font-size:11.5px;font-weight:700;letter-spacing:.7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .car{font-size:10px;opacity:.85}
+  .bar.rec{background:var(--panel);color:var(--navy-deep);border:1.5px solid var(--navy);box-shadow:0 4px 14px rgba(40,80,139,.15)}
+  .bar.rec .pulse{width:7px;height:7px;border-radius:50%;background:var(--navy);flex-shrink:0}
+  .composer{background:#FAF9F6;border-top:1px solid var(--line);padding:8px 10px 14px;display:flex;gap:7px;align-items:center}
+  .cbtn{width:36px;height:36px;border-radius:10px;background:var(--chip);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+  .cinput{flex:1;background:var(--chip);border:1px solid var(--line);border-radius:11px;padding:9px 12px;font-size:12px;color:var(--muted)}
+  .send{width:36px;height:36px;border-radius:10px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0}
+  /* &#9472;&#9472; the rec sheet &#9472;&#9472; */
+  .sheethdr{background:var(--navy);color:#fff;padding:11px 14px;display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;letter-spacing:.8px}
+  .sheet{background:#EFEDE8;flex:1;display:flex;flex-direction:column}
+  .sheetbody{flex:1;padding:10px;display:flex;gap:8px;align-items:flex-start}
+  .swapcol{flex:1.55;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .whycol{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+  .collab{font-size:8.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);padding-left:2px}
+  .swap{background:var(--panel);border:1px solid #E7E3D9;border-radius:12px;overflow:hidden}
+  .swap .old{background:var(--clay-soft);border-bottom:1px dashed #E4C4BB;padding:9px 11px;font-size:11.5px;color:var(--clay);position:relative}
+  .swap .old .tag,.swap .new .tag{font-size:7.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;display:block;margin-bottom:3px;opacity:.75}
+  .swap .old .txt{text-decoration:line-through;text-decoration-thickness:1px;text-decoration-color:#C88373}
+  .swap .new{background:var(--navy-soft);padding:9px 11px;font-size:11.5px;color:var(--navy-deep);position:relative}
+  .swap .new .edit{position:absolute;top:8px;right:9px;font-size:10px;opacity:.6}
+  .swap .new .txt{border-bottom:1px dashed #9FB6D6;padding-bottom:1px}
+  .scopechips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-size:9.5px;font-weight:600;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:20px;padding:4px 9px}
+  .chip.on{border-color:var(--navy);color:var(--navy);background:var(--navy-soft);font-weight:700}
+  .whycard{background:var(--panel);border:1px solid #E7E3D9;border-radius:12px;padding:10px 11px;font-size:11px;line-height:1.55;color:var(--ink)}
+  .whycard .q{color:var(--muted);font-style:italic}
+  .durcard{background:var(--panel);border:1px solid #E7E3D9;border-radius:12px;padding:9px 11px;display:flex;flex-direction:column;gap:6px}
+  .sheetfoot{background:var(--panel);border-top:1px solid var(--line);padding:9px 12px;display:flex;gap:8px;align-items:center}
+  .ghostbtn{flex:1;text-align:center;font-size:10.5px;font-weight:700;letter-spacing:.6px;color:var(--navy);border:1px solid var(--navy);border-radius:9px;padding:9px 6px;background:var(--panel)}
+  .primbtn{flex:1.2;text-align:center;font-size:10.5px;font-weight:700;letter-spacing:.6px;color:#fff;background:var(--navy);border-radius:9px;padding:10px 6px}
+  /* past blocks rows */
+  .pbrow{background:var(--panel);border:1px solid #E7E3D9;border-radius:12px;padding:11px 13px;display:flex;align-items:center;gap:10px}
+  .pbrow .ic{width:30px;height:30px;border-radius:8px;background:var(--chip);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+  .pbrow .m{flex:1;min-width:0}
+  .pbrow .m b{font-size:12px;display:block}
+  .pbrow .m span{font-size:10.5px;color:var(--muted)}
+  .pill{font-size:8px;font-weight:700;letter-spacing:1px;border-radius:4px;padding:2px 6px;flex-shrink:0}
+  .pill.rec{color:var(--navy);border:1px solid var(--navy);background:var(--navy-soft)}
+  .pill.dr{color:#8A6D1C;border:1px solid #C9A94E;background:#FAF3DF}
+  .pill.iv{color:var(--muted);border:1px solid var(--line);background:var(--chip)}
+  .pill.bk{color:var(--good);border:1px solid #7FB396;background:#E9F3EC}
+  /* stays/goes strip */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
+  .card{background:var(--panel);border:1px solid #E7E3D9;border-radius:14px;padding:16px 18px}
+  .card h3{margin:0 0 8px;font-size:13px;letter-spacing:1.2px;text-transform:uppercase}
+  .card ul{margin:0;padding-left:18px;font-size:13.5px}
+  .card li{margin:6px 0}
+  .stay h3{color:var(--good)} .go h3{color:var(--clay)}
+  /* questions */
+  .qa{margin-top:26px;display:flex;flex-direction:column;gap:14px}
+  .qcard{background:var(--panel);border:1px solid #E7E3D9;border-radius:14px;padding:16px 20px}
+  .qcard .qn{font-size:11px;font-weight:800;letter-spacing:1.5px;color:var(--navy)}
+  .qcard p{margin:6px 0;font-size:14px;max-width:78ch}
+  .qcard .rec{font-size:13px;color:var(--muted)}
+  .qcard .rec b{color:var(--navy-deep)}
+  .rule{border:none;border-top:1px solid var(--line);margin:64px 0 0}
+  @media(max-width:820px){.scene{flex-direction:column}.scene .notes{position:static}.phone{width:100%;max-width:392px}.grid2{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+  <div class="kick">WILCO &#183; Mastermind &#183; Next Build</div>
+  <h1>Program Recs</h1>
+  <p class="lede">The AI stops editing your program at you mid-chat. Instead it stages a <b>Program Rec</b> &#8212; a ride-along surface like the workout log: a bar at the bottom, a sheet that slides up, an &#10005; that parks it. Open it on your own time and see <b>exactly which lines change, side by side</b>, widen or shrink the change yourself, and decide how long it lives.</p>
+  <p class="sub">Field Mode and PR propagation stay as they are. This replaces the check-in injury card and the pain / plateau / equipment mid-chat offers &#8212; and it becomes the mastermind's one and only way to touch a program.</p>
+
+  <div class="grid2">
+    <div class="card stay">
+      <h3>&#10003; Stays as-is</h3>
+      <ul>
+        <li><b>Field Mode</b> &#8212; temp program for hotel gyms, auto, expires on its own.</li>
+        <li><b>PR propagation</b> &#8212; a new PR quietly moves that lift's reference max, nothing else.</li>
+      </ul>
+    </div>
+    <div class="card go">
+      <h3>&#8594; Becomes a Program Rec</h3>
+      <ul>
+        <li><b>Check-in injury tweak</b> &#8212; no more apply-card at the end of the check-in.</li>
+        <li><b>Pain / plateau / equipment offers</b> &#8212; no more mid-chat staging right after a log.</li>
+        <li><b>Mastermind program edits</b> &#8212; the new program tool can only ever stage a Rec, never write directly. "Swap Thursday with what I logged today" lands here.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; SCENE 1 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div class="scene">
+    <div class="phone">
+      <div class="ph-status"><span>9:41</span><span>&#120313;&#120313; &#7140; &#9646;</span></div>
+      <div class="ph-hdr">
+        <div class="ph-row1"><span class="brand">WILCO</span><span class="wo">Workouts:<b>46</b></span><span class="whoname">Will Higgins</span><span class="pro">PRO</span></div>
+        <div class="navrow"><span class="navbtn">PROGRAM</span><span class="navbtn">MY LOG</span><span class="navbtn">PROGRESS</span><span class="navbtn q">&#9881;</span></div>
+      </div>
+      <div class="ph-body">
+        <div class="avline"><span class="av">J</span><div class="bub joe">WORKOUT #46 in the books. Bench moved clean at 200 even with the modified setup.</div></div>
+        <div class="avline"><span class="av">J</span><div class="bub joe">About that left pec &#8212; I put together a <b>program rec</b> to help it out. It's below whenever you're ready, no rush.</div></div>
+        <div class="spacer"></div>
+        <div class="bar rec"><span class="x">&#10005;</span><span class="pulse"></span><span class="t">PROGRAM REC &#8212; LEFT PEC</span><span class="car">&#9650;</span></div>
+        <div class="composer"><span class="cbtn">&#127916;</span><span class="cinput">Tell Coach Joe about your workout&#8230;</span><span class="send">&#8594;</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="scenenum"><s>1</s> The nudge, not the interruption</div>
+      <h2>Joe mentions it. The Rec waits.</h2>
+      <p>No apply-card in the middle of the thread, and never while a workout bar is up. Joe drops one line &#8212; <i>"check the program rec I made to help out that left pec"</i> &#8212; and the Rec bar slides in at the bottom, same family as the workout bar and program-draft bar.</p>
+      <p class="dim">The Rec bar is the white/outlined variant so it never fights the navy workout bar when they stack. &#10005; parks it to Past Blocks (scene 5). It survives app restarts until you deal with it.</p>
+      <div class="callout">Check-ins end the same way: the check-in wraps normally, and the Rec is waiting at the bottom instead of gating the close.</div>
+    </div>
+  </div>
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; SCENE 2 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div class="scene">
+    <div class="phone">
+      <div class="ph-status"><span>9:41</span><span>&#120313;&#120313; &#7140; &#9646;</span></div>
+      <div class="ph-hdr">
+        <div class="ph-row1"><span class="brand">WILCO</span><span class="wo">Workouts:<b>46</b></span><span class="whoname">Will Higgins</span><span class="pro">PRO</span></div>
+        <div class="navrow"><span class="navbtn">PROGRAM</span><span class="navbtn">MY LOG</span><span class="navbtn">PROGRESS</span><span class="navbtn q">&#9881;</span></div>
+      </div>
+      <div class="sheet">
+        <div class="sheethdr"><span>PROGRAM REC &#8212; LEFT PEC</span><span>&#9660;</span></div>
+        <div class="sheetbody">
+          <div class="swapcol">
+            <span class="collab">What changes &#183; 3 lines</span>
+            <div class="swap">
+              <div class="old"><span class="tag">Week 1 &#183; Saturday &#8212; replacing</span><span class="txt">Recovery bench 3x5 at 140, controlled, full range</span></div>
+              <div class="new"><span class="tag">With</span><span class="edit">&#9999;&#65039;</span><span class="txt">Floor press 3x5, clean weight through the top, no grinding reps</span></div>
+            </div>
+            <div class="swap">
+              <div class="old"><span class="tag">Week 2 &#183; Saturday &#8212; replacing</span><span class="txt">Recovery bench 3x5 at 140</span></div>
+              <div class="new"><span class="tag">With</span><span class="edit">&#9999;&#65039;</span><span class="txt">Floor press 3x5, clean weight through the top</span></div>
+            </div>
+            <div class="swap">
+              <div class="old"><span class="tag">Week 3 &#183; Saturday &#8212; replacing</span><span class="txt">Recovery bench 3x5 at 140</span></div>
+              <div class="new"><span class="tag">With</span><span class="edit">&#9999;&#65039;</span><span class="txt">Floor press 3x5, clean weight through the top</span></div>
+            </div>
+            <span class="collab" style="margin-top:2px">Scope</span>
+            <div class="scopechips">
+              <span class="chip on">These lifts only</span><span class="chip">Whole day</span><span class="chip">+ Add another swap</span>
+            </div>
+          </div>
+          <div class="whycol">
+            <span class="collab">Why</span>
+            <div class="whycard">
+              <span class="q">"Left pec still has pain, I modified chest work yesterday."</span><br><br>
+              Floor press cuts the bottom-range stretch that's been aggravating the pec, keeps your pressing volume identical, and doesn't touch Tuesday's real bench work &#8212; that stays the plan for 250.
+            </div>
+            <span class="collab">How long</span>
+            <div class="durcard">
+              <span class="chip on">Until the pec clears</span>
+              <span class="chip">2 weeks</span>
+              <span class="chip">Permanent</span>
+            </div>
+          </div>
+        </div>
+        <div class="sheetfoot"><span class="ghostbtn">Save for Later</span><span class="primbtn">Apply to Program</span></div>
+      </div>
+      <div class="composer"><span class="cbtn">&#127916;</span><span class="cinput">Tell Joe what to change&#8230;</span><span class="send">&#8594;</span></div>
+    </div>
+    <div class="notes">
+      <div class="scenenum"><s>2</s> The Rec sheet</div>
+      <h2>Only the lines that change &#8212; before over after, reason beside.</h2>
+      <p>Tap the bar and the sheet slides up under the header, same maneuver as the log sheet. It never shows the full program: the left column lists <b>each exact program line being replaced</b> (clay, struck through) with its replacement directly beneath (navy). Tap any replacement to edit it in place, or use the composer below &#8212; "tell Joe what to change" revises the Rec, not the chat.</p>
+      <p>The right rail is the case for the change, quoting what you actually said, plus <b>How long</b> &#8212; the answer to "changes feel permanent when they shouldn't be." A Rec applied "until the pec clears" gets tracked at check-ins and Joe proposes the revert the same way.</p>
+      <p class="dim">Apply is surgical: only the struck lines are swapped, character-for-character, in your saved program. No AI rewrite of the whole document at apply time &#8212; what you see is exactly what lands, and the Program tab reflects it immediately.</p>
+    </div>
+  </div>
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; SCENE 3 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div class="scene">
+    <div class="phone">
+      <div class="ph-status"><span>9:42</span><span>&#120313;&#120313; &#7140; &#9646;</span></div>
+      <div class="ph-hdr">
+        <div class="ph-row1"><span class="brand">WILCO</span><span class="wo">Workouts:<b>46</b></span><span class="whoname">Will Higgins</span><span class="pro">PRO</span></div>
+        <div class="navrow"><span class="navbtn">PROGRAM</span><span class="navbtn">MY LOG</span><span class="navbtn">PROGRESS</span><span class="navbtn q">&#9881;</span></div>
+      </div>
+      <div class="sheet">
+        <div class="sheethdr"><span>PROGRAM REC &#8212; LEFT PEC</span><span>&#9660;</span></div>
+        <div class="sheetbody">
+          <div class="swapcol">
+            <span class="collab">What changes &#183; Whole day &#183; Wk 1 Tuesday</span>
+            <div class="swap">
+              <div class="old"><span class="tag">Replacing</span><span class="txt">Bench 5x2 at 200</span></div>
+              <div class="new"><span class="tag">With</span><span class="edit">&#9999;&#65039;</span><span class="txt">Larsen press 5x2 at 170, feet up, no arch</span></div>
+            </div>
+            <div class="swap">
+              <div class="old"><span class="tag">Replacing</span><span class="txt">Dips 3x6 bodyweight, upper arm to parallel only, no deep stretch</span></div>
+              <div class="new"><span class="tag">With</span><span class="edit">&#9999;&#65039;</span><span class="txt">Close-grip pin press 3x6, pins at chest height</span></div>
+            </div>
+            <div class="swap">
+              <div class="new" style="border-radius:12px"><span class="tag">Adding to this day</span><span class="edit">&#9999;&#65039;</span><span class="txt">Band pull-aparts 3x20, rear delt focus</span></div>
+            </div>
+            <span class="collab" style="margin-top:2px">Scope</span>
+            <div class="scopechips">
+              <span class="chip">These lifts only</span><span class="chip on">Whole day</span><span class="chip on">+ Added 1</span>
+            </div>
+          </div>
+          <div class="whycol">
+            <span class="collab">Why</span>
+            <div class="whycard">
+              You widened this from the bench line to all of Tuesday. Every pressing slot now avoids the deep-stretch position; the added pull-aparts balance the pressing while the pec calms down.
+            </div>
+            <span class="collab">How long</span>
+            <div class="durcard"><span class="chip on">Until the pec clears</span><span class="chip">2 weeks</span><span class="chip">Permanent</span></div>
+          </div>
+        </div>
+        <div class="sheetfoot"><span class="ghostbtn">Save for Later</span><span class="primbtn">Apply to Program</span></div>
+      </div>
+      <div class="composer"><span class="cbtn">&#127916;</span><span class="cinput">Tell Joe what to change&#8230;</span><span class="send">&#8594;</span></div>
+    </div>
+    <div class="notes">
+      <div class="scenenum"><s>3</s> You control the blast radius</div>
+      <h2>Widen it, shrink it, add to it.</h2>
+      <p>The AI proposed the smallest change; you disagree with the size, not the idea. Tap <b>Whole day</b> and the highlight grows &#8212; Joe re-drafts replacements for the newly included lines and the WHY updates to match. <b>+ Add another swap</b> lets you point at any other program line (or add a brand-new line, shown here) and pull it into the same Rec.</p>
+      <p class="dim">Scope is also conversational: "widen this to the whole day" in the composer does the same thing. Chips for thumbs, composer for nuance.</p>
+    </div>
+  </div>
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; SCENE 4 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div class="scene">
+    <div class="phone">
+      <div class="ph-status"><span>6:18</span><span>&#120313;&#120313; &#7140; &#9646;</span></div>
+      <div class="ph-hdr">
+        <div class="ph-row1"><span class="brand">WILCO</span><span class="wo">Workouts:<b>46</b></span><span class="whoname">Will Higgins</span><span class="pro">PRO</span></div>
+        <div class="navrow"><span class="navbtn">PROGRAM</span><span class="navbtn">MY LOG</span><span class="navbtn">PROGRESS</span><span class="navbtn q">&#9881;</span></div>
+      </div>
+      <div class="ph-body">
+        <div class="bub me">Swap Thursday's workout for the exercises from what I logged today</div>
+        <div class="avline"><span class="av">J</span><div class="bub joe">Can do. Today was sprints, weighted sit-ups and pallof &#8212; I've drafted Thursday rebuilt off that session, sets and loads carried straight from your log. Check the rec below and make sure I read it right.</div></div>
+        <div class="spacer"></div>
+        <div class="bar rec"><span class="x">&#10005;</span><span class="pulse"></span><span class="t">PROGRAM REC &#8212; THURSDAY REBUILD</span><span class="car">&#9650;</span></div>
+        <div class="composer"><span class="cbtn">&#127916;</span><span class="cinput">Tell Coach Joe about your workout&#8230;</span><span class="send">&#8594;</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="scenenum"><s>4</s> Mastermind-native</div>
+      <h2>Asked-for edits take the same door.</h2>
+      <p>This is the mastermind's program tool (the P2v2 write-tool). It can read your log &#8212; sets, reps, loads &#8212; and draft the change, but the tool's <b>only power is staging a Rec</b>. It can never write the program directly. Whether Joe volunteers a change or you demand one, everything funnels through the same reviewable surface.</p>
+      <p class="dim">That's the confidence answer: one door, always visible, always inspectable line-by-line before anything lands. It also means one code path to test instead of five.</p>
+    </div>
+  </div>
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; SCENE 5 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div class="scene">
+    <div class="phone">
+      <div class="ph-status"><span>6:20</span><span>&#120313;&#120313; &#7140; &#9646;</span></div>
+      <div class="ph-hdr">
+        <div class="ph-row1"><span class="brand">WILCO</span><span class="wo">Workouts:<b>46</b></span><span class="whoname">Will Higgins</span><span class="pro">PRO</span></div>
+        <div class="navrow"><span class="navbtn" style="background:var(--navy);color:#fff">MY PROGRAM</span><span class="navbtn">PAST BLOCKS</span></div>
+      </div>
+      <div class="ph-body" style="gap:8px">
+        <div class="pbrow"><span class="ic">&#129657;</span><div class="m"><b>Left pec &#8212; floor press swap</b><span>Program Rec &#183; saved Aug 25 &#183; until pec clears</span></div><span class="pill rec">REC</span></div>
+        <div class="pbrow"><span class="ic">&#128203;</span><div class="m"><b>Thursday rebuild</b><span>Program Rec &#183; dismissed Aug 25</span></div><span class="pill rec">REC</span></div>
+        <div class="pbrow"><span class="ic">&#9997;&#65039;</span><div class="m"><b>Fall strength block</b><span>Builder draft &#183; Aug 22</span></div><span class="pill dr">DRAFT</span></div>
+        <div class="pbrow"><span class="ic">&#9208;</span><div class="m"><b>Builder interview</b><span>Paused &#183; 60% blueprint</span></div><span class="pill iv">PAUSED</span></div>
+        <div class="pbrow"><span class="ic">&#127937;</span><div class="m"><b>Summer block</b><span>Closed Aug 16 &#183; 6 weeks</span></div><span class="pill bk">BLOCK</span></div>
+        <div class="spacer"></div>
+        <div class="composer" style="border-radius:0"><span class="cbtn">&#127916;</span><span class="cinput">Tell Coach Joe about your workout&#8230;</span><span class="send">&#8594;</span></div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="scenenum"><s>5</s> Nothing is lost, nothing nags</div>
+      <h2>&#10005; parks it in Past Blocks.</h2>
+      <p>Dismissed and saved-for-later Recs live beside Builder drafts, paused interviews and closed blocks &#8212; tap one to reopen the sheet exactly where it was. An applied Rec with a duration also shows here, with its "until" condition, and reverting is one tap.</p>
+      <p class="dim">Past Blocks becomes the single drawer for every program-shaped object that isn't your live program.</p>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <!-- &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; QUESTIONS &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472; -->
+  <div style="margin-top:44px">
+    <div class="kick">Decisions needed</div>
+    <h2 style="margin-top:8px">Seven questions before this gets built</h2>
+  </div>
+  <div class="qa">
+    <div class="qcard"><div class="qn">Q1 &#183; TIMING</div>
+      <p>When exactly does the bar drop? Never mid-workout is settled &#8212; but is it (a) immediately after the log/check-in wraps, (b) held until the NEXT app open, or (c) case-by-case (injury recs right away, plateau/equipment recs next open)?</p>
+      <p class="rec"><b>My rec:</b> (a) for injury &#8212; the context is fresh and it's safety-relevant &#8212; and (c)'s deferral for plateau/equipment, which have no urgency.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q2 &#183; DURATION</div>
+      <p>Does every Rec carry a "How long" (until-cleared / N weeks / permanent) with Joe proposing the revert as a new Rec when the condition lifts? And does "until cleared" get judged by check-in answers, or by you saying so in chat?</p>
+      <p class="rec"><b>My rec:</b> yes on every Rec, defaulting per trigger (injury &#8594; until cleared, plateau &#8594; rest of block, explicit asks &#8594; permanent). Check-in answers AND chat both count as the clearing signal.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q3 &#183; COACH-LOCKED ATHLETES</div>
+      <p>Today a locked athlete's pain flag files a change request to the coach. In the new world, does the athlete see the same Rec sheet read-only ("sent to Coach Reed") while the coach keeps the staged-merge panel &#8212; or does the coach's surface get rebuilt as this same side-by-side too?</p>
+      <p class="rec"><b>My rec:</b> athlete sees the Rec read-only with its status; rebuilding the coach panel onto this component is a fast follow, not v1.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q4 &#183; PHONE LAYOUT</div>
+      <p>The side-by-side (swaps left, WHY right) is drawn exactly as you described. On a 390-point phone that means small type in the WHY rail. Alternative: WHY as a collapsible strip above the swaps that opens full-width. Keep the true side-by-side, or stack it?</p>
+      <p class="rec"><b>My rec:</b> keep side-by-side &#8212; the reasoning being visible WHILE you read the swap is the point &#8212; but let the WHY rail collapse to a &#9432; tab once read.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q5 &#183; EDITS ARE FINAL</div>
+      <p>When you edit a replacement line directly, apply uses your text verbatim &#8212; no AI cleanup pass. When you widen scope, Joe re-drafts only the newly included lines and never touches ones you already hand-edited. Confirm both?</p>
+      <p class="rec"><b>My rec:</b> yes to both &#8212; hand edits are sacred, and apply is a deterministic line-swap so what you approved is byte-for-byte what lands.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q6 &#183; HOW MANY AT ONCE</div>
+      <p>Can two Recs be live at once (bars stack like the workout + program bars do), or is it one active Rec with the rest parked in Past Blocks automatically?</p>
+      <p class="rec"><b>My rec:</b> one bar on screen max; a second Rec auto-parks with a one-line note from Joe. Keeps the bottom of the screen calm.</p>
+    </div>
+    <div class="qcard"><div class="qn">Q7 &#183; EXPIRY</div>
+      <p>Do parked Recs go stale &#8212; auto-archived when the block they reference ends (their line references may no longer exist) &#8212; or live forever until you delete them?</p>
+      <p class="rec"><b>My rec:</b> a Rec whose target lines vanish (block ended, program rewritten) gets marked "outdated" but stays visible &#8212; Joe can re-draft it against the new program in one tap.</p>
+    </div>
+  </div>
+</div>
