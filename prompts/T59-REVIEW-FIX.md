@@ -48,8 +48,15 @@ touching the web/legacy path still follows branch → preview → Will.
 8. OTA needs a full close + reopen to apply (stage-then-apply); "old UI on
    first open" is that, not a failed deploy.
 
-## FINDINGS (Will pastes here)
-- …
+## FINDINGS (Will's 08-25 phone batch — ALL 7 FIXED, wave 1, main `8b52cbe`)
+1. ✅ Sheet slides up but POPS closed → visibility now rides the .3s transition (both sheets).
+2. ✅ Live Activity tap opened the OLD Quick Log screen → `openLogSurface`: chat + sheet open (also the quicklog push target).
+3. ✅ Footer looked like something was behind it → stale render-time offsetHeight; ResizeObserver-measured sheet frame.
+4. ✅ Date ⓘ did nothing → tap-toggled hint bubble (no hover on iOS).
+5. ✅ kg in chat / lbs in log + Live Activity → `draftInUnit` (boot.js) at dock entry + card builds + QL-edit reply. NOTE: Will's row is `weight_unit=kg` — all three now speak kg until he flips Settings.
+6. ✅ Top section rough → native chat-first header nav is a balanced full-width bar (web untouched).
+7. ✅ Live Activity lagged sheet edits → debounced (600ms) deterministic card re-render on every edit; chat regens also refresh a raised sheet. (Only fix not sim-provable — needs a pinned activity; confirm on the phone.)
+Ladder run: build · 33 unit (+11 draftInUnit) · 46 smoke (+2) · push main · chunk grep ×3 markers (App chunk resolves via index-*.js!) · sim native-gate real eyes · live 6/6.
 
 ## Working rules
 - Fix root causes; extend the owning truth suite for every fix (unit or smoke),
