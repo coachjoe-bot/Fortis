@@ -114,6 +114,17 @@ export async function mockApi(page, options = {}) {
     coach = null,
     parseResult = emptyParse,
     chatReply = "Solid work. Keep stacking sessions.",
+    // T58/3b Builder-mode-in-chat: per-feature AI responses. The extractor
+    // (Haiku, feature program_build) fills EVERY athlete cell in one answer so
+    // specs reach the read-back gate in a single turn; the interviewer (Sonnet,
+    // same feature) asks with chips; program_draft returns the block text.
+    builderExtract = { cells: {
+        goal: "Bench 225x1 by Oct 1", schedule: "4 days/week, 60 min", timeline: "2026-09-01 to 2026-10-01",
+        equipment: "Full gym", red_flags: "None", non_negotiables: "None", recovery: "Sleep 8h, low stress",
+        prep: "Standard warm-up", handoff: "First block",
+      }, goal_smart: { ok: true } },
+    builderQuestion = "What's the one number and date we're chasing this block?\nCHIPS: Bench 225 by Oct 1 | Squat 315 by Halloween",
+    builderDraftText = "=== BLOCK INFO ===\nGoal: Bench 225x1 by Oct 1\nRuns: 2026-09-01 to 2026-10-01\n\nWEEK 1\nDay 1 - Push\nBench Press 3x5 @ 185",
     blockStripeJs = false,
     subscriptionDelayMs = 300,
     giftResult = {
@@ -224,7 +235,13 @@ export async function mockApi(page, options = {}) {
       ? JSON.stringify(parseResult)
       : body.feature === "goal_parse"
         ? JSON.stringify({ goal_text: "get stronger", goal_type: "strength", target_metric: null, target_value: null, target_date: null })
-        : chatReply;
+        : body.feature === "program_build" && body.model === "claude-haiku-4-5"
+          ? JSON.stringify(builderExtract)
+          : body.feature === "program_build"
+            ? builderQuestion
+            : body.feature === "program_draft"
+              ? builderDraftText
+              : chatReply;
     return route.fulfill(json({
       id: "msg_smoketest",
       type: "message",

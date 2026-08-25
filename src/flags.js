@@ -13,15 +13,18 @@
 // scripts/test-crew.mjs, so flipping this back on is a one-line deploy.
 export const CREW_ENABLED = false;
 
-// T58 mastermind (Will, 08-24): the tool-carrying chat brain — Joe decides what
-// to DO (position, memory, session card, log sheet, preferences) as well as
-// what to say. OFF by default; a preview session can force it per-load with
-// ?mastermind=1 (resolved in App.jsx, never persisted).
-export const MASTERMIND_ENABLED = false;
+// T58/T59 mastermind (Will, 08-24): the tool-carrying chat brain — Joe decides
+// what to DO (position, memory, session card, log sheet, preferences) as well
+// as what to say. NATIVE-GATED in App.jsx (flag AND isNativeIOS(), or the
+// ?mastermind=1 preview override) — flipped ON 08-25 on Will's "deploy it to
+// the TestFlight version" ruling; he is the only TestFlight tester. Web chat
+// keeps the legacy brain until he flips it there.
+export const MASTERMIND_ENABLED = true;
 
-// T58 chat-first UI (Will, 08-24): LOG/Builder/Drafts tabs dissolve into chat
-// (dock bars + sheets). Ships NATIVE-FIRST: the real gate is this flag AND
-// isNativeIOS() (or the ?chatfirst=1 preview override) — web keeps the current
-// tabs until Will flips it there. Keep OFF until App Review clears build 8:
-// OTA reaches installed apps, including a reviewer's.
-export const CHAT_FIRST_ENABLED = false;
+// T58/T59 chat-first UI (Will, 08-24): LOG/Builder/Drafts tabs dissolve into
+// chat (dock bars + sheets + Builder mode). NATIVE-FIRST: the real gate is
+// this flag AND isNativeIOS() (or the ?chatfirst=1 preview override) — web
+// keeps the current tabs. Flipped ON 08-25 for Will's TestFlight morning test.
+// ⚠️ Before Add for Review: either the App Store screenshots get retaken on
+// this UI or this flips back off — the reviewer's build OTAs to it.
+export const CHAT_FIRST_ENABLED = true;

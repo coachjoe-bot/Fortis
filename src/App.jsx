@@ -71,13 +71,14 @@ import { toLbs, fmtWeightIn, displayStat, unitLabel, setDisplayUnit, getDisplayU
 import { effectiveTier, trialActive } from "./tiers.js";
 import { CREW_ENABLED, MASTERMIND_ENABLED, CHAT_FIRST_ENABLED } from "./flags.js";
 import { buildMastermindStatic } from "./ai/card.js";
+import { blueprintPct } from "./programBuilder.js";
 import { validateFact, findDuplicate, matchFacts, buildMemoryBlock, activeFacts } from "./memory.js";
 
 // T58 rollout gates, resolved once per load. ?mastermind=1 / ?chatfirst=1 are
 // preview overrides (never persisted) so Will can drive both on a web preview
 // before any flag flips; the real switches live in src/flags.js.
 const urlFlag = (k) => { try { return new URLSearchParams(window.location.search).has(k); } catch(_) { return false; } };
-const MASTERMIND_ON = MASTERMIND_ENABLED || urlFlag("mastermind");
+const MASTERMIND_ON = (MASTERMIND_ENABLED && isNativeIOS()) || urlFlag("mastermind");
 // Chat-first ships NATIVE-FIRST (Will 08-24): flag AND native iOS, with the URL
 // override for web previews. app.trainwilco.com keeps the tab UI either way
 // until Will flips CHAT_FIRST for web deliberately.
@@ -6778,6 +6779,171 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     try{ clearSessionCard(athlete.id); }catch(_){}
   };
 
+  // ── T58/3b: BUILDER MODE IN CHAT + the program sheet ────────────────────────
+  // The Builder tab dissolves into the thread: opt-in interview (blueprint strip
+  // under the header, SAVE & EXIT parks to Past Blocks), the drafted program
+  // rides its own sheet (white/navy variant) with Save to Drafts / Apply. The
+  // engine (src/builderChat.js) is the Builder tab's own brains re-housed and is
+  // loaded on demand so doctrine never rides the boot.
+  const [builderChat,setBuilderChat] = useState(null);           // {st, chips, busy}
+  const [builderOfferPending,setBuilderOfferPending] = useState(false);
+  const [dockProgram,setDockProgram] = useState(null);           // {title, text, draftId, tl}
+  const [pgOpen,setPgOpen] = useState(false);
+  const [pgBusy,setPgBusy] = useState(false);
+  const builderEngRef = useRef(null);
+  const loadBuilderEng = async () => builderEngRef.current || (builderEngRef.current = await import("./builderChat.js"));
+  const joeBubble = (t) => setMessages(prev=>[...prev,{role:"assistant",content:t}]);
+
+  const enterBuilderChat = async (restoreRow=null) => {
+    // Will's no-mess rule: never an interview while a workout is live.
+    if(dockWorkout){ joeBubble("One thing at a time. Finish the session you've got open (or take it off the screen with the x), then we'll build."); return; }
+    try{
+      const eng = await loadBuilderEng();
+      const ctx = await getJoeCtx(athlete.id);
+      let prs = []; try{ prs = await sbRead("prs",`?athlete_id=eq.${athlete.id}&limit=200`)||[]; }catch(_){}
+      // A finished draft tapped from Past Blocks skips the interview entirely —
+      // it reopens on the program sheet, exactly where it left off.
+      if(restoreRow && restoreRow.status==="draft" && restoreRow.draft_text){
+        setDockProgram({title:(restoreRow.title||"Program draft").slice(0,40), text:restoreRow.draft_text, draftId:restoreRow.id||null, tl:restoreRow.blueprint?.timeline?.value||null});
+        setSheetOpen(false); setPgOpen(true);
+        return;
+      }
+      let st;
+      if(restoreRow){
+        st = eng.restoreState({athlete, draftRow:restoreRow, workoutHistory, manualRMs:ctx.manualRMs, prs, prefs:ctx.prefs, notes:athleteContext||""});
+        // Will's ruling: the exact conversation reappears where Builder mode began.
+        if(st.transcript.length) setMessages(prev=>[...prev,{role:"assistant",content:"Picking your Builder interview back up where we left it:"},...st.transcript.map(m=>({role:m.role,content:m.content}))]);
+        setBuilderChat({st, chips:[], busy:true});
+        const {text, chips} = await eng.openTurn(st);
+        st.transcript = [...st.transcript, {role:"assistant",content:text}];
+        joeBubble(text);
+        setBuilderChat({st, chips, busy:false});
+        eng.park(st,"interview",null);
+      } else {
+        st = eng.initState({athlete, goals:athleteGoals, workoutHistory, manualRMs:ctx.manualRMs, prs, prefs:ctx.prefs, notes:athleteContext||""});
+        setBuilderChat({st, chips:[], busy:true});
+        const {text, chips} = await eng.openTurn(st);
+        st.transcript = [{role:"assistant",content:text}];
+        joeBubble(text);
+        setBuilderChat({st, chips, busy:false});
+        eng.park(st,"interview",null);
+      }
+      track("builder_chat_enter","ai");
+    }catch(e){ joeBubble("Couldn't open the Builder just now, try again in a sec."); setBuilderChat(null); }
+  };
+
+  const exitBuilderChat = async () => {
+    const bc = builderChat; setBuilderChat(null);
+    if(bc?.st){
+      try{ const eng = await loadBuilderEng(); await eng.park(bc.st,"interview",null); }catch(_){}
+      joeBubble("Parked it. Your interview is saved under Program, Past Blocks. We pick up right where we left off whenever you're ready.");
+    }
+  };
+
+  const builderGenerate = async () => {
+    const bc = builderChat; if(!bc || bc.busy) return;
+    const eng = await loadBuilderEng();
+    setBuilderChat({...bc, busy:true, chips:[]});
+    joeBubble("Writing the block now, give me a minute.");
+    try{
+      track("builder_draft_generate","ai");
+      const {text} = await eng.generateDraft(bc.st);
+      if(!text) throw new Error("empty draft");
+      const title = ((bc.st.blueprint?.goal?.value||"New block").slice(0,34));
+      bc.st.transcript = [...bc.st.transcript,{role:"assistant",content:"Draft's below. Look it over and change anything, then Save to Drafts or Apply."}];
+      await eng.park(bc.st,"draft",text);
+      joeBubble("Done. It's below, look it over and change anything, then Save to Drafts or Apply.");
+      setDockProgram({title, text, draftId:bc.st.draftId||null, tl:bc.st.blueprint?.timeline?.value||null});
+      setSheetOpen(false); setPgOpen(true);
+      setBuilderChat(null); // the interview is over; the sheet owns it from here
+    }catch(_){
+      joeBubble("The draft didn't come together just now. Everything's saved, tap Draft it again in a minute.");
+      setBuilderChat(b=>b?{...b,busy:false,chips:[eng.DRAFT_IT]}:b);
+    }
+  };
+
+  const builderAnswer = async (msg) => {
+    const bc = builderChat; if(!bc || bc.busy) return;
+    const eng = await loadBuilderEng();
+    setMessages(prev=>[...prev,{role:"user",content:msg}]);
+    // Deterministic chip turns first (no AI call), mirroring the Builder tab.
+    if(msg===eng.READBACK_OK && eng.pct(bc.st)===100){
+      const ack = "Locked. Want me to write the block now, or is there anything else I should know first?";
+      bc.st.blueprint = {...bc.st.blueprint, __readbackOk:true};
+      bc.st.transcript = [...bc.st.transcript,{role:"user",content:msg},{role:"assistant",content:ack}];
+      joeBubble(ack);
+      setBuilderChat({st:bc.st, chips:[eng.DRAFT_IT, eng.KEEP_ADDING], busy:false});
+      eng.park(bc.st,"interview",null);
+      return;
+    }
+    if(msg===eng.DRAFT_IT && bc.st.blueprint.__readbackOk){ builderGenerate(); return; }
+    if(msg===eng.KEEP_ADDING){
+      const ack = "Go ahead, anything you tell me gets folded into the draft. Say the word when you're ready and I'll write it.";
+      bc.st.transcript = [...bc.st.transcript,{role:"user",content:msg},{role:"assistant",content:ack}];
+      joeBubble(ack);
+      setBuilderChat({st:bc.st, chips:[eng.DRAFT_IT], busy:false});
+      return;
+    }
+    setBuilderChat({...bc, busy:true, chips:[]});
+    try{
+      const res = await eng.answerTurn(bc.st, msg);
+      bc.st.blueprint = res.bp;
+      bc.st.transcript = [...bc.st.transcript,{role:"user",content:msg},{role:"assistant",content:res.text}];
+      joeBubble(res.text);
+      // Durable preference surfaced mid-interview → the standard confirm chip.
+      if(res.pref){
+        const v = validatePref(res.pref.field, res.pref.value);
+        if(v!==undefined) setPrefPending({field:res.pref.field, value:v});
+      }
+      setBuilderChat({st:bc.st, chips:res.chips||[], busy:false});
+      eng.park(bc.st,"interview",null);
+    }catch(_){
+      joeBubble("Couldn't reach the Builder just now. Your answers are safe, try again.");
+      setBuilderChat(b=>b?{...b,busy:false}:b);
+    }
+  };
+
+  // ── the program sheet (drafts ride the same bar+sheet mechanic) ─────────────
+  const pgTypeEdit = (text) => setDockProgram(p=>p?{...p,text}:p);
+  const pgAutoPark = (p) => { // edits are never lost: best-effort write-behind
+    if(p?.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{draft_text:p.text,updated_at:new Date().toISOString()}).catch(()=>{});
+  };
+  const pgInstruction = async (ins) => {
+    const p = dockProgram; if(!p || pgBusy) return;
+    setPgBusy(true);
+    try{
+      const revised = await askClaude(mergeSystemPrompt("athlete"), `THE CHANGE REQUESTED:\n${ins}\n\nPROGRAM:\n${p.text}`, 4000, [], "claude-sonnet-5", "program_apply_change");
+      const t = (revised||"").trim();
+      if(isFullProgramEcho(t, p.text)){ setDockProgram({...p, text:t}); pgAutoPark({...p, text:t}); }
+    }catch(_){ /* unchanged; they can rephrase */ }
+    setPgBusy(false);
+  };
+  const pgSaveDraft = async () => {
+    const p = dockProgram; if(!p) return;
+    try{
+      if(p.draftId) await sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{draft_text:p.text,status:"draft",updated_at:new Date().toISOString()});
+      else await sbInsert("program_drafts",{athlete_id:athlete.id,owner_type:"athlete",title:p.title.slice(0,60),status:"draft",blueprint:{},transcript:[],draft_text:p.text,scope:"full",updated_at:new Date().toISOString()});
+      // Will's ruling: a saved draft also lands in Joe's memory so he knows it exists.
+      if(MASTERMIND_ON){
+        sbInsert("athlete_memory",{athlete_id:athlete.id,content:`Has a drafted program "${p.title.slice(0,80)}" saved in Past Blocks, not applied yet`,kind:"contextual",source:"inferred"})
+          .then(r=>{ const row=Array.isArray(r)?r[0]:r; if(row&&row.id) setMemoryRows(rows=>[row,...rows]); }).catch(()=>{});
+      }
+      setPgOpen(false); setDockProgram(null);
+      joeBubble("Saved to Past Blocks as a draft. Ask me for it any time, or grab it from the Program tab.");
+    }catch(_){ joeBubble("Couldn't save the draft just now, try again."); }
+  };
+  const pgApply = async () => {
+    const p = dockProgram; if(!p) return;
+    try{
+      let tl=null; try{ tl = p.tl ? parseTimeline(p.tl) : null; }catch(_){}
+      await applyBuilderText(p.text, tl);
+      if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"applied",updated_at:new Date().toISOString()}).catch(()=>{});
+      setPgOpen(false); setDockProgram(null);
+      joeBubble("It's on your Program tab and live from today. Ask for your workout whenever you're ready.");
+    }catch(_){ joeBubble("Couldn't apply it just now, try again."); }
+  };
+  const dismissPg = () => { const p=dockProgram; pgAutoPark(p); setPgOpen(false); setDockProgram(null); };
+
   // Drain the offline queue one message at a time, each through the normal send()
   // path — so a replayed workout gets the same parsing, session-gap check and PR
   // detection a live one would. One per pass, gated on nothing else being in
@@ -8025,6 +8191,20 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       sheetInstruction(msg);
       return;
     }
+    // Program sheet up = same contract, edits route to the program editor.
+    if(CHAT_FIRST_ON && pgOpen && typeof overrideText!=="string"){
+      setInput("");
+      pgInstruction(msg);
+      return;
+    }
+    // Builder mode: every typed message IS an interview answer.
+    if(builderChat && typeof overrideText!=="string"){
+      setInput("");
+      builderAnswer(msg);
+      return;
+    }
+    // Typing past the Enable-Builder offer = not now.
+    if(builderOfferPending) setBuilderOfferPending(false);
     // The athlete is talking — the opener's still-generating session must not land
     // on top of their conversation. Cancel its typing indicator; the in-flight
     // generateQuickLogDraft still caches for the day but won't paint into chat
@@ -8564,11 +8744,21 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
                 && effectiveTier(updatedAthlete)!=="free" && !updatedAthlete.temp_program_text){
         // Phase D: a real program request from a Builder-eligible athlete gets the
         // Builder, not inline generation — the Builder interviews properly and
-        // drafts from doctrine. "Just write it here" keeps the old path one tap
-        // away (builderRedirectFallback). Free tier and Field Mode keep the
-        // inline path below; locked programs never reach here (locked branch above).
+        // drafts from doctrine. Chat-first (T58/3b): the Builder IS a chat mode —
+        // opt-in with the ~10 minute warning (Will's ruled flow), guarded against
+        // a live workout. Legacy UI keeps the tab redirect. Free tier and Field
+        // Mode keep the inline path below; locked never reaches here.
+        if(CHAT_FIRST_ON){
+          if(dockWorkout){
+            followUp("Happy to build you one, but one thing at a time: finish the session you've got open first (or take it off the screen), then we'll sit down and do it right.");
+          } else {
+            setBuilderOfferPending(true); chipSetThisSend = true;
+            followUp("Happy to. Want me to switch into Program Builder mode? It's a real interview, about 10 minutes, and the program gets built from your answers and my programming rules.");
+          }
+        } else {
         setBuilderRedirectPending({msg, reply}); chipSetThisSend = true;
         followUp("That's a Builder job. It sits you down properly (goal, schedule, red flags, what you've got to train with), then drafts the real thing from my actual programming rules. Tap “Open the Builder” below, or I can write something quick right here.");
+        }
       } else if(parsed.program_create_request && !fromQuickLog){
         // Athlete asked Joe to BUILD them a program. The conversational reply is
         // capped at 800 tokens, so it can never BE the program — a dedicated
@@ -9217,6 +9407,36 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         </div>
       </div>
 
+      {/* T58/3b: the BLUEPRINT strip — Builder mode's cockpit, under the header.
+          Overall % + the cells (green = filled, amber = pending-from-profile),
+          SAVE & EXIT parks to Past Blocks. */}
+      {CHAT_FIRST_ON && builderChat && (
+        <div style={{background:CA.navy3,borderBottom:`1px solid ${CA.border}`,padding:"8px 14px",flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{...DISP,fontSize:11,letterSpacing:1,color:CA.accent}}>Blueprint</span>
+            <span style={{flex:1}}/>
+            <span style={{...DISP,fontSize:13,color:CA.accent}}>{blueprintPct(builderChat.st.blueprint,builderChat.st.cells)}%</span>
+            <button onClick={exitBuilderChat}
+              style={{background:"none",border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:999,padding:"3px 9px",fontSize:9.5,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,cursor:"pointer"}}>
+              Save &amp; Exit
+            </button>
+          </div>
+          <div style={{height:4,background:CA.border,borderRadius:2,margin:"6px 0 8px",overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${blueprintPct(builderChat.st.blueprint,builderChat.st.cells)}%`,background:CA.accent,borderRadius:2,transition:"width .5s ease"}}/>
+          </div>
+          <div className="no-sb" style={{display:"flex",gap:6,overflowX:"auto"}}>
+            {builderChat.st.cells.map(c=>{
+              const b=builderChat.st.blueprint[c.key]; const done=!!(b&&b.value&&b.value.trim()); const pend=!done&&!!(b&&b.pending);
+              return (
+                <span key={c.key} style={{flexShrink:0,border:`1px solid ${done?CA.green:pend?CA.amber:CA.border}`,color:done?CA.green:pend?CA.amber:CA.muted,background:CA.navy2,borderRadius:999,padding:"4px 10px",fontSize:10,fontWeight:600,letterSpacing:0.4,whiteSpace:"nowrap"}}>
+                  {done?"✓ ":""}{c.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Offline banner. Deliberately above every other banner and never
           dismissible: while it's up, nothing the athlete types is reaching the
           server, and that is the single most important thing on the screen. */}
@@ -9449,10 +9669,32 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
         </div>
       )}
 
-      {/* Quick replies scroll as a continuous "recommendations" ticker — phrases
-          split by a glowing blue divider, auto-scrolling, tap a phrase to load it
-          (pauses on hover). The session-check prompt stays a static two-button row. */}
-      {retryPending?(
+      {/* T58/3b: Builder-mode chips (interview answers) and the Enable offer sit
+          at the head of the chip chain — Builder mode owns the strip while live. */}
+      {builderChat?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          {builderChat.busy?(
+            <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>Joe's working on it…</span>
+          ):(builderChat.chips||[]).map((c,i)=>(
+            <button key={i} onClick={()=>builderAnswer(c)}
+              style={{background:i===0?`${CA.accent}20`:CA.navy3,border:`1px solid ${i===0?CA.accent:CA.border}`,color:i===0?CA.accent:CA.muted2,borderRadius:20,padding:"7px 16px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+              {c}
+            </button>
+          ))}
+        </div>
+      ):builderOfferPending?(
+        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
+          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
+          <button onClick={()=>{setBuilderOfferPending(false); enterBuilderChat();}}
+            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Enable Builder mode
+          </button>
+          <button onClick={()=>{setBuilderOfferPending(false); setMessages(prev=>[...prev,{role:"assistant",content:"All good. Ask whenever you're ready and we'll build it properly."}]);}}
+            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
+            Not now
+          </button>
+        </div>
+      ):retryPending?(
         /* A failed send left the athlete's message in the transcript unprocessed
            with no way forward but retyping it — and every message here is
            potentially a multi-line workout log. Same chip pattern as the five
@@ -9649,11 +9891,57 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           the "safety space" Will has had removed 3× now (47941e6). The textbook
           iOS pattern is wrong for this app; leave it flat. Same rule for every
           bottom bar / modal footer below. */}
+      {/* ── T58/3b: the program bar (stacks ABOVE the workout bar) ──────────── */}
+      {CHAT_FIRST_ON && dockProgram && !pgOpen && (
+        <div style={{padding:"0 8px 6px",flexShrink:0}}>
+          <div onClick={()=>{setSheetOpen(false); setPgOpen(true);}} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter"){ setSheetOpen(false); setPgOpen(true); } }}
+            style={{background:CA.navy2,color:CA.accent,border:`1px solid ${CA.accent}`,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            <button onClick={e=>{e.stopPropagation();dismissPg();}} aria-label="Take the program off the screen"
+              style={{background:"none",border:"none",color:"inherit",opacity:.7,fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0}}>✕</button>
+            <span style={{...DISP,fontSize:12.5,letterSpacing:0.6,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{dockProgram.title} – Draft</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▲</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── T58/3b: the program sheet ────────────────────────────────────────── */}
+      {CHAT_FIRST_ON && dockProgram && (
+        <div aria-hidden={!pgOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
+          top:(hdrRef.current?.offsetHeight??96),bottom:(composerRef.current?.offsetHeight??86),
+          transform:pgOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease",
+          pointerEvents:pgOpen?"auto":"none",visibility:pgOpen?"visible":"hidden",
+          background:CA.navy,display:"flex",flexDirection:"column"}}>
+          <div onClick={()=>setPgOpen(false)} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter") setPgOpen(false); }}
+            style={{background:CA.navy3,color:CA.accent,borderBottom:`1px solid ${CA.border}`,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",flexShrink:0}}>
+            <span style={{...DISP,fontSize:13,letterSpacing:0.6}}>{dockProgram.title} – Draft</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▼</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"12px 14px"}}>
+            <textarea value={dockProgram.text} onChange={e=>pgTypeEdit(e.target.value)} spellCheck={false}
+              aria-label="Program draft"
+              style={{width:"100%",minHeight:320,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:12,fontSize:13,lineHeight:1.7,color:CA.text,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+            {pgBusy && <div style={{color:CA.muted,fontSize:12,marginTop:6}}>Joe's updating the program…</div>}
+          </div>
+          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <button onClick={pgSaveDraft} disabled={pgBusy}
+              style={{background:CA.navy2,color:CA.accent,border:`1px solid ${CA.accent}`,borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:pgBusy?0.6:1}}>
+              Save to Drafts
+            </button>
+            <button onClick={pgApply} disabled={pgBusy||!dockProgram.text.trim()}
+              style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:pgBusy?0.6:1}}>
+              Apply Program
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── T58 chat-first: the workout bar (collapsed) ─────────────────────── */}
       {CHAT_FIRST_ON && dockWorkout && !sheetOpen && (
         <div style={{padding:"0 8px 6px",flexShrink:0}}>
-          <div onClick={()=>setSheetOpen(true)} role="button" tabIndex={0}
-            onKeyDown={e=>{ if(e.key==="Enter") setSheetOpen(true); }}
+          <div onClick={()=>{setPgOpen(false); setSheetOpen(true);}} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter"){ setPgOpen(false); setSheetOpen(true); } }}
             style={{background:CA_BTN,color:CA.onAccent,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",boxShadow:`0 4px 14px ${CA_GLOW}`}}>
             <button onClick={e=>{e.stopPropagation();dismissDock();}} aria-label="Take it off the screen"
               style={{background:"none",border:"none",color:"inherit",opacity:.7,fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0}}>✕</button>
@@ -9717,7 +10005,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             🎬
           </button>
           <textarea value={input} onChange={e=>setInput(e.target.value)}
-            placeholder={CHAT_FIRST_ON&&sheetOpen?"Tell Joe what to change…":sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
+            placeholder={CHAT_FIRST_ON&&(sheetOpen||pgOpen)?"Tell Joe what to change…":builderChat?"Answer here, or tap a chip…":sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
             style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"10px 14px",color:CA.text,fontSize:14,outline:"none",resize:"none",lineHeight:1.5}}/>
           <button onClick={send} disabled={loading||videoLoading||!input.trim()||!historyLoaded||sheetBusy}
             style={{background:CA_BTN,boxShadow:`0 0 12px ${CA_GLOW}`,border:"none",borderRadius:12,width:44,height:44,cursor:(loading||!input.trim())?"not-allowed":"pointer",opacity:(loading||!input.trim())?0.5:1,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:CA.onAccent,fontWeight:700}}>
@@ -9782,7 +10070,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   drafts + parked interviews + closed phases — Will's Q6: one
                   list). BUILDER stays until Builder-mode-in-chat ships (3b),
                   then this bar is MY PROGRAM · PAST BLOCKS only. */}
-              {[["program","MY PROGRAM"],["builder","BUILDER"],["phases",CHAT_FIRST_ON?"PAST BLOCKS":"PHASES"]].map(([k,label])=>(
+              {[["program","MY PROGRAM"],...(CHAT_FIRST_ON?[]:[["builder","BUILDER"]]),["phases",CHAT_FIRST_ON?"PAST BLOCKS":"PHASES"]].map(([k,label])=>(
                 <button key={k} data-tour={k==="builder"?"builder-tab":undefined} onClick={()=>setProgramTab(k)}
                   style={{padding:"10px 14px",background:"none",border:"none",borderBottom:`2px solid ${programTab===k?CA.cyan:"transparent"}`,color:programTab===k?CA.cyan:CA.muted,cursor:"pointer",fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:1,fontFamily:"'Inter'",transition:"color 0.15s",display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}>
                   {label}
@@ -9838,7 +10126,13 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                     directly above the pane's own "Current phase" heading. */}
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
-                  onResume={(d)=>{ setBuilderDraft(d); setProgramTab("builder"); }}
+                  onResume={(d)=>{
+                    // Chat-first: a parked interview reopens IN CHAT exactly where
+                    // Builder mode began; a finished draft reopens on the program
+                    // sheet (both via enterBuilderChat's restore path).
+                    if(CHAT_FIRST_ON){ setShowProgram(false); enterBuilderChat(d); }
+                    else { setBuilderDraft(d); setProgramTab("builder"); }
+                  }}
                   onSaveToProgram={applyBuilderText}/>
                 <div style={{margin:"22px 0 16px",borderTop:`1px solid ${CA.border}`}}/>
                 <ProgramBlocksPane athlete={athlete} viewer="athlete"/>
