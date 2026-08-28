@@ -42,6 +42,18 @@ export function changedRatio(oldText, newText) {
 // evolution of the open one. Half the program rewritten = you changed programs.
 export const NEW_BLOCK_RATIO = 0.5;
 
+// The block's IDENTITY as its own text declares it: the caller's name, else a
+// contract program's Goal line, else the first real line. Used both to name new
+// rows and to recognize that a big mid-block edit is still the SAME block: a
+// check-in that rewrites half the sheet under an unchanged "BLOCK 1 — ROAD TO
+// 315" header is an evolution, not a new chapter (Will 08-28: the ratio alone
+// split his running block into a current AND a past card).
+export function deriveBlockName(text, blockName = null) {
+  const t = String(text || "");
+  const info = parseBlockInfo(t);
+  return (blockName || (info.found && info.goal) || stripBlockInfo(t).split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
+}
+
 const SUMMARY_SYS =
   "You summarize a strength training program in ONE line (max 90 characters) for a history list: " +
   "the main focus and split, e.g. \"4-day upper/lower — squat & bench strength, 5s progression\". " +
@@ -130,6 +142,67 @@ async function closeBlock(athleteId, row, deps, completedAtOverride = null) {
   } catch (e) { console.error("[history] block recap failed:", e?.message || e); }
 }
 
+// Live status paragraph for the OPEN block — the current-phase card's answer to
+// the recap past blocks get (Will 08-28: "keep the current block up to date on
+// what's been done, brief, and speak as though it's ongoing, not incomplete").
+// Written into the same block_recap column; closeBlock overwrites it with the
+// final past-tense recap when the block actually ends.
+const ONGOING_RECAP_SYS =
+  "You are Coach Joe writing the LIVE status paragraph for a training block that is STILL RUNNING, " +
+  "shown on the athlete's current-phase card. You get the program, the training logged so far, the " +
+  "goal, and a BLOCK FACTS line computed by the app. Write ONE tight plain-text paragraph, 2 to 4 " +
+  "sentences, hard limit, and always FINISH your final sentence: what the block is focused on, what " +
+  "has actually been trained so far, and what is moving. Present tense, ongoing voice ('so far', " +
+  "'is building'): the block is NOT over, so never sum it up like a finished chapter, never judge " +
+  "the goal as hit or missed, never speak of what the block 'was'. NUMBERS: the BLOCK FACTS line is " +
+  "computed by the app and is always right — use its dates and session count over anything you'd " +
+  "derive yourself. Every logged load carries its unit (kg or lbs) — keep each number in the unit " +
+  "it carries and NEVER quote a load without its unit. Joe's voice: direct, warm, no hype, no " +
+  "markdown, no headers. Only a session or two logged means one or two sentences, never padding.";
+
+// Refresh the open block's live recap from the logs inside its window. Returns
+// the new recap text, or null when there is nothing to write (no open block, or
+// no logged sessions yet — an empty block keeps an empty recap, never filler).
+// Callers own the throttling; this always generates when called.
+export async function refreshOpenBlockRecap({ athleteId }, deps) {
+  const { sbRead, sbUpdateWhere, askClaude } = deps;
+  const rows = await sbRead(
+    "program_history",
+    `?athlete_id=eq.${athleteId}&order=applied_at.desc&limit=1&select=id,program_text,applied_at,completed_at,ends_at`
+  );
+  const row = (Array.isArray(rows) && rows[0]) || null;
+  if (!row || row.completed_at) return null;
+  const from = row.applied_at ? `&created_at=gte.${encodeURIComponent(row.applied_at)}` : "";
+  const [logs, goals] = await Promise.all([
+    sbRead("workouts", `?athlete_id=eq.${athleteId}${from}&order=created_at.asc&limit=80&select=created_at,parsed_data`).catch(() => []),
+    sbRead("athlete_goals", `?athlete_id=eq.${athleteId}&order=created_at.desc&limit=1`).catch(() => []),
+  ]);
+  if (!Array.isArray(logs) || logs.length === 0) return null;
+  const digest = digestWorkouts(logs);
+  const goal = (Array.isArray(goals) && goals[0] && (goals[0].goal_text || goals[0].text)) || "";
+  const daysIn = row.applied_at ? Math.max(1, Math.round((Date.now() - Date.parse(row.applied_at)) / 86400000)) : null;
+  let declaredWeeks = null;
+  try {
+    const pos = currentPosition({ programText: String(row.program_text || ""), startedOn: row.applied_at, sessions: [] });
+    if (pos.weekKnown && pos.weekCount > 0) declaredWeeks = pos.weekCount;
+  } catch (_) {}
+  const factBits = [
+    row.applied_at ? `started ${String(row.applied_at).slice(0, 10)}${daysIn ? ` (${daysIn} days in)` : ""}` : null,
+    `${logs.length} workout rows logged so far`,
+    declaredWeeks ? `the program itself is a ${declaredWeeks}-week block` : null,
+    row.ends_at ? `planned to wrap ${String(row.ends_at).slice(0, 10)}` : null,
+  ].filter(Boolean).join(" · ");
+  const user =
+    `BLOCK FACTS (computed by the app — authoritative): ${factBits}\n\n` +
+    `PROGRAM THE BLOCK IS RUNNING:\n${String(row.program_text || "").slice(0, 2500)}\n\n` +
+    `GOAL ATTACHED TO THIS BLOCK: ${goal || "(none on file)"}\n\n` +
+    `TRAINING LOGGED SO FAR:\n${digest}`;
+  const recap = ((await askClaude(ONGOING_RECAP_SYS, user, 400, [], "claude-sonnet-5", "program_summary")) || "").trim().slice(0, 1500);
+  if (!recap) return null;
+  await sbUpdateWhere("program_history", `?id=eq.${row.id}`, { block_recap: recap });
+  return recap;
+}
+
 // Fire-and-forget from every program_text save path (never await it on the save's
 // critical path, never let it throw into the caller). deps = {sbRead, sbInsert,
 // sbUpdateWhere, askClaude} from App.jsx.
@@ -152,8 +225,18 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
 
   // A closed latest block never evolves in place — a save after "Start next
   // block" (or after the program was cleared) is a new chapter by definition.
+  // An OPEN block whose text still declares the same identity (same Goal line /
+  // header) evolves in place no matter how much changed: mid-block edits never
+  // cut history. Only forceNewBlock (a caller that KNOWS it's a replacement)
+  // overrides that.
+  const sameIdentity = (() => {
+    if (!latest || latest.completed_at) return false;
+    const oldName = deriveBlockName(latest.program_text || "");
+    const newName = deriveBlockName(t, blockName);
+    return !!oldName && !!newName && oldName.toLowerCase() === newName.toLowerCase();
+  })();
   const isNewBlock = forceNewBlock || !latest || !!latest.completed_at
-    || changedRatio(latest.program_text || "", t) >= NEW_BLOCK_RATIO;
+    || (!sameIdentity && changedRatio(latest.program_text || "", t) >= NEW_BLOCK_RATIO);
   if (!isNewBlock) {
     // Same block, evolved text. applied_at and source stay those of the block's
     // first save; per-tweak provenance already lives in program_modifications.
@@ -190,8 +273,7 @@ export async function snapshotProgramHistory({ athleteId, text, source, forceNew
   // first body line can be Joe's prose intro, and half a sentence about ratios
   // is not a block name (T57 s5 live find) — else the program's first REAL line
   // through stripBlockInfo, never the literal "=== BLOCK INFO ===" banner.
-  const info = parseBlockInfo(t);
-  const name = (blockName || (info.found && info.goal) || stripBlockInfo(t).split("\n").find((l) => l.trim()) || "").trim().slice(0, 80);
+  const name = deriveBlockName(t, blockName);
   if (name) row.block_name = name;
   await sbInsert("program_history", row);
 }

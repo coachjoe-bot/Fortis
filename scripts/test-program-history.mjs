@@ -3,7 +3,7 @@
 // deps. Deterministic, no network. Part of the Program Builder Phase B ship gate
 // (docs/program-builder-build-handoff.md).
 
-import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso, digestWorkouts, changedRatio, NEW_BLOCK_RATIO } from "../src/programHistory.js";
+import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso, digestWorkouts, changedRatio, NEW_BLOCK_RATIO, deriveBlockName, refreshOpenBlockRecap } from "../src/programHistory.js";
 
 let fail = 0;
 const bad = (msg) => { fail++; console.error("  ✗ " + msg); };
@@ -130,6 +130,30 @@ console.log("closed latest:");
   await snapshotProgramHistory({ athleteId: "a1", text: tweaked, source: "manual_edit" }, deps);
   ok(calls.inserts.length === 1, "similar save after a close still opens a NEW block");
   ok(closes(calls).length === 0, "the already-closed block is left alone");
+}
+
+// ── same identity → evolve in place, however big the edit ────────────────────
+// Will 08-28: a check-in change that rewrote more than half the sheet under an
+// unchanged "BLOCK 1 — ROAD TO 315" header closed the running block and opened
+// a twin — the same block showed as current AND past. Identity beats the ratio.
+console.log("same-identity rewrite:");
+{
+  const heavyEdit = `Week 1
+Day 1 - Squat Day
+Front Squat 4x3 @ 120kg
+Snatch Pull 4x3 @ 110kg
+Split Jerk 5x1 @ 100kg
+
+Day 2 - Bench Day
+Bench held 5x5 @ 205
+Snatch Balance 3x2 @ 80kg`;
+  ok(changedRatio(PROGRAM, heavyEdit) >= NEW_BLOCK_RATIO, "the edit really is past the ratio threshold");
+  ok(deriveBlockName(PROGRAM) === deriveBlockName(heavyEdit), "and the block identity is unchanged");
+  const { calls, deps } = harness(openBlock(PROGRAM));
+  await snapshotProgramHistory({ athleteId: "a1", text: heavyEdit, source: "checkin_change" }, deps);
+  ok(calls.inserts.length === 0, "same-named open block never spawns a twin");
+  ok(closes(calls).length === 0, "and the running block is not closed");
+  ok(calls.updates.length === 1 && calls.updates[0].data.program_text === heavyEdit, "text evolves in place");
 }
 
 // ── forceNewBlock overrides similarity ───────────────────────────────────────
@@ -267,6 +291,32 @@ console.log("digestWorkouts:");
   ok(/2026-07-03: Back Squat 5x5 @225lbs, Pull-Up 3x10/.test(d), `session line formatted, lbs labeled (T55: kg AND lbs both carry labels now) (got "${d}")`);
   ok(!/2026-07-04/.test(d), "empty session omitted");
   ok(digestWorkouts([]) === "" && digestWorkouts(null) === "", "empty/garbage input → empty digest");
+}
+
+// ── refreshOpenBlockRecap: the current card's live summary (Will 08-28) ──────
+console.log("refreshOpenBlockRecap:");
+{
+  const workouts = [{ created_at: "2026-07-03T18:00:00Z", parsed_data: { exercises: [{ name: "Back Squat", sets: 5, reps: 5, weight: 225 }] } }];
+  const { calls, deps } = harness(openBlock(PROGRAM), { workouts });
+  const text = await refreshOpenBlockRecap({ athleteId: "a1" }, deps);
+  ok(!!text, "open block with logs gets a live recap");
+  ok(recaps(calls).length === 1 && recaps(calls)[0].data.block_recap === text, "recap written to the open row");
+  ok(closes(calls).length === 0 && calls.inserts.length === 0, "refresh never closes or inserts anything");
+}
+{
+  const closed = { ...openBlock(PROGRAM), completed_at: "2026-07-20T00:00:00Z" };
+  const { calls, deps } = harness(closed, { workouts: [{ created_at: "2026-07-03T18:00:00Z", parsed_data: { exercises: [{ name: "Back Squat", sets: 5, reps: 5, weight: 225 }] } }] });
+  ok((await refreshOpenBlockRecap({ athleteId: "a1" }, deps)) === null, "a closed latest block is left alone");
+  ok(calls.updates.length === 0, "and nothing is written");
+}
+{
+  const { calls, deps } = harness(openBlock(PROGRAM), { workouts: [] });
+  ok((await refreshOpenBlockRecap({ athleteId: "a1" }, deps)) === null, "no logged sessions → no recap, never filler");
+  ok(calls.asked === 0 && calls.updates.length === 0, "and no AI spend");
+}
+{
+  const { deps } = harness(null);
+  ok((await refreshOpenBlockRecap({ athleteId: "a1" }, deps)) === null, "no history rows at all → null");
 }
 
 if (fail) { console.error(`\n${fail} FAILED`); process.exit(1); }

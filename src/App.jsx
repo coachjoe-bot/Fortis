@@ -86,7 +86,7 @@ export const CHAT_FIRST_ON = (CHAT_FIRST_ENABLED && isNativeIOS()) || urlFlag("c
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
-import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso } from "./programHistory.js";
+import { snapshotProgramHistory, startNextBlock, closeCurrentBlock, setBlockEnd, blockPromptState, parseTimeline, dateToIso, refreshOpenBlockRecap } from "./programHistory.js";
 // First-run app tour (spotlight coach-marks + scripted Quick Log demo). Pure
 // display: fixtures never touch real data — see tour.jsx header.
 import { TourOffer, TourSpotlight, athleteTourSteps, tourWelcome, tourInteractiveAt, TOUR_QL_FIXTURE, TOUR_SCRIPT } from "./tour.jsx";
@@ -2038,7 +2038,13 @@ ${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you s
   // content migrates), and the server-registered toolset arms Joe's hands.
   if(opts.mastermind){
     const memBlock = buildMemoryBlock(opts.memoryRows||[], athleteContext||"");
-    const sysObjM = {cached:buildMastermindStatic(), dynamic:sys+goalsContext+memBlock};
+    // A send from the log sheet is a FINISHED workout, not a message asking for
+    // one. Without this line Joe compared the sent text to his own earlier draft
+    // in the transcript, narrated it like an interrogation ("let's log what you
+    // actually did") and re-called prefill_log_sheet on a session that had just
+    // ended (Will's phone, 08-28).
+    const pureLogBlock = opts.pureLog ? `\n\nTHIS MESSAGE IS A FINISHED WORKOUT LOG the athlete just sent from the log sheet. The app is already parsing and saving it; the text IS what they did. React to completed work: acknowledge it and coach what stands out. Where it differs from the program or from the sheet you drafted, that is an audible they chose — worth a coaching observation, never an error, never a reason to sound like you doubt the log. Do not call prefill_log_sheet or pin_session_card; the session is over and the sheet already came down. If one detail that matters is genuinely missing (a weight, sets), ask ONE specific question that names the exercise, right here in chat.` : "";
+    const sysObjM = {cached:buildMastermindStatic(), dynamic:sys+goalsContext+memBlock+pureLogBlock};
     const userMsgM = `${hist}\n\n${athlete.name}: ${message}`;
     if(onDelta) return askClaudeStream(sysObjM, userMsgM, {maxTokens:900, model:"claude-sonnet-5", feature:"mastermind_chat", onDelta, toolset:"mastermind_athlete", onToolUse:opts.onToolUse});
     return askClaude(sysObjM, userMsgM, 900, [], "claude-sonnet-5", "mastermind_chat");
@@ -6608,7 +6614,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const res = await generateQuickLogDraft({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
         if(res.rest || !res.draft.trim()) return;
         if(qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)})) return;   // they opened the sheet while we were drafting
-        qlSave(athlete.id, workoutHistory, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)});
+        // Convert to the athlete's unit ONCE, at park time (Will 08-28): the park
+        // is unit-true from birth, and read paths never touch the text again —
+        // so an athlete's own edits (including typed lbs numbers) are never
+        // rewritten by the app. What they type is what they log.
+        qlSave(athlete.id, workoutHistory, {draft:draftInUnit(res.draft, athlete.weight_unit), notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)});
       }catch(_){ /* silent: the sheet just drafts on open, exactly as before */ }
     }, 8000);
     return ()=>clearTimeout(t);
@@ -6692,7 +6702,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } else if(tc.name==="prefill_log_sheet"){
           const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:msgs, goals:athleteGoals, contextNotes:athleteContext});
           if(!gen.rest && gen.draft){
-            qlSave(updatedAthlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+            // Unit conversion at park time — the park is unit-true, reads don't convert.
+            qlSave(updatedAthlete.id, workoutHistory, {draft:draftInUnit(gen.draft, updatedAthlete.weight_unit), notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
             if(CHAT_FIRST_ON) openDockFromStore();
           }
         }
@@ -6764,11 +6775,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     try{
       const rec = qlLoad(athlete.id, workoutHistory, {cardActive: !!activeSessionCard(athlete.id)});
       if(rec && rec.draft){
-        // The draft engine writes lbs; the sheet follows the Settings unit
-        // (Will 08-25: chat converted, the log and the card didn't). Idempotent,
-        // so an already-converted park passes straight through.
-        const draft = draftInUnit(rec.draft, athlete.weight_unit);
-        setSheetState({draft, notes:rec.notes||""}); setDockWorkout({title:dockTitleOf(draft)});
+        // The park is already unit-true (conversion happens ONCE at park time) —
+        // never convert on read: the parked text may carry the athlete's own
+        // edits, and what they typed is what they log (Will 08-28, the
+        // "2.5 kg.5 kg.5 kg" re-conversion mangle).
+        setSheetState({draft:rec.draft, notes:rec.notes||""}); setDockWorkout({title:dockTitleOf(rec.draft)});
         return true;
       }
     }catch(_){}
@@ -6786,8 +6797,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       try{
         const gen = await generateQuickLogDraft({athlete, workoutHistory, messages, goals:athleteGoals, contextNotes:athleteContext});
         if(!gen.rest && gen.draft){
-          try{ qlSave(athlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)}); }catch(_){}
-          const draft = draftInUnit(gen.draft, athlete.weight_unit);
+          const draft = draftInUnit(gen.draft, athlete.weight_unit); // converted once, parked converted
+          try{ qlSave(athlete.id, workoutHistory, {draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)}); }catch(_){}
           setSheetState({draft, notes:gen.notes||""}); setDockWorkout({title:dockTitleOf(draft)});
         } else { setSheetOpen(false); setDockWorkout(null); }
       }catch(_){ setSheetOpen(false); setDockWorkout(null); }
@@ -7237,7 +7248,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               });
               openerSave(openerAthlete.id, opener, undefined, openerAthlete.temp_program_text||openerAthlete.program_text||"");
               // Prime the Quick Log sheet with the same session so it opens instantly.
-              try{ if(!qlLoad(openerAthlete.id, histForDraft, {cardActive: !!activeSessionCard(openerAthlete.id)})) qlSave(openerAthlete.id, histForDraft, {draft:res.draft, notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
+              // Parked unit-true (converted once here); reads never convert.
+              try{ if(!qlLoad(openerAthlete.id, histForDraft, {cardActive: !!activeSessionCard(openerAthlete.id)})) qlSave(openerAthlete.id, histForDraft, {draft:draftInUnit(res.draft, openerAthlete.weight_unit), notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
               // T57: the opener ends on "Starting this workout now?" — surface the
               // three chips. If the athlete typed during generation the chips are
@@ -7872,13 +7884,14 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     } else {
       const gen = await generateQuickLogDraft({athlete:a, workoutHistory, messages: msgs||messages, goals:athleteGoals, contextNotes:athleteContext});
       if(gen.rest) return {rest:true};
-      draftText = gen.draft;
+      draftText = draftInUnit(gen.draft, a.weight_unit); // converted once, parked converted
       week = gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null;
-      qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+      qlSave(a.id, workoutHistory, {draft:draftText, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
     }
-    // The card shows the numbers in the athlete's unit, same as the sheet —
-    // the raw draft engine writes lbs (Will 08-25; idempotent on kg parks).
-    const card = buildSessionCard(draftInUnit(draftText, a.weight_unit), {week});
+    // The card projects the park VERBATIM — the park is unit-true from birth
+    // (conversion at park time only; a parked draft may carry athlete edits,
+    // which are never rewritten — Will 08-28).
+    const card = buildSessionCard(draftText, {week});
     if(!card) return {shown:false};
     return {shown: await showSessionCard(a.id, card)};
   };
@@ -7947,13 +7960,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       if(!activeSessionCard(a.id)) return;
       const gen = await generateQuickLogDraft({athlete:a, workoutHistory, messages: msgs||messages, goals:athleteGoals, contextNotes:athleteContext});
       if(gen.rest || !gen.draft){ await clearSessionCard(a.id); return; }
-      qlSave(a.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
-      const card = buildSessionCard(draftInUnit(gen.draft, a.weight_unit), {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
+      const shown = draftInUnit(gen.draft, a.weight_unit); // converted once, parked converted
+      qlSave(a.id, workoutHistory, {draft:shown, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+      const card = buildSessionCard(shown, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
       if(card) await showSessionCard(a.id, card);
       // Chat-first: a chat-driven regenerate lands on the OPEN surfaces too —
       // park and card refreshed above, so a raised bar/sheet must follow.
       if(CHAT_FIRST_ON && dockWorkout){
-        const shown = draftInUnit(gen.draft, a.weight_unit);
         setSheetState({draft:shown, notes:gen.notes||""});
         setDockWorkout({title:dockTitleOf(shown)});
       }
@@ -8550,7 +8563,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // T58: the master's tool calls, collected as the reply streams. Empty on
       // the legacy path (flag off = no toolset = the model can't call anything).
       const masterToolCalls = [];
-      const masterOpts = MASTERMIND_ON ? {mastermind:true, memoryRows, onToolUse:(tc)=>masterToolCalls.push(tc)} : {};
+      const masterOpts = MASTERMIND_ON ? {mastermind:true, memoryRows, pureLog:fromQuickLog, onToolUse:(tc)=>masterToolCalls.push(tc)} : {};
       try {
         reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta,masterOpts);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
@@ -8572,7 +8585,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // One-shot fallback: mastermind persona/memory ride along, tools don't
         // (the JSON path returns text only) — a dropped stream costs the turn's
         // actions, never the reply.
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows}:{});
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows, pureLog:fromQuickLog}:{});
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       // A held reply keeps the typing dot up until releaseReply shows the bubble
@@ -8608,7 +8621,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             parsed.preference_request = { field: tc.input.field, value: tc.input.value };
           }
         }
-        const rest = masterToolCalls.filter(tc=>tc.name!=="set_position" && tc.name!=="propose_preference");
+        // A finished sheet log means the session is OVER: the sheet came down and
+        // the lock-screen card cleared on send. A prefill/pin call in the same
+        // turn would resurrect the logger for a workout that just ended (Will
+        // 08-28) — dropped deterministically here, not just discouraged in the
+        // prompt.
+        const rest = masterToolCalls.filter(tc=>tc.name!=="set_position" && tc.name!=="propose_preference"
+          && !(fromQuickLog && (tc.name==="prefill_log_sheet" || tc.name==="pin_session_card")));
         if(rest.length) executeMasterTools(rest, updatedAthlete, newMsgs);
       }
 
@@ -8735,14 +8754,15 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
           try{
             const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:newMsgs, goals:athleteGoals, contextNotes:athleteContext});
             if(!gen.rest && gen.draft){
-              qlSave(updatedAthlete.id, workoutHistory, {draft:gen.draft, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
+              const swapped = draftInUnit(gen.draft, updatedAthlete.weight_unit); // converted once, parked converted
+              qlSave(updatedAthlete.id, workoutHistory, {draft:swapped, notes:gen.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(gen.ctx)});
               // Chat-first: the corrected session's bar comes up right here —
               // day-correct-then-start is Will's Q1 flow, the sheet wording
               // replaces the retired Quick Log tab language.
               const loadedWhere = CHAT_FIRST_ON ? "It's loaded below" : "That session is loaded in your Quick Log";
               if(sessionCardSupported() && (notifPermission()==="granted" || isNativeIOS())){
                 chipSetThisSend = true;
-                const card = buildSessionCard(gen.draft, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
+                const card = buildSessionCard(swapped, {week: gen.ctx?.position?.weekKnown ? gen.ctx.position.week : null});
                 const shown = card ? await showSessionCard(updatedAthlete.id, card) : false;
                 followUp(shown ? `Swapped. ${loadedWhere} and on your lock screen; it clears itself when you log.`
                   : `Swapped. ${loadedWhere}.`);
@@ -12174,6 +12194,34 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
       } catch(e){ console.error("[blocks] backfill failed:",e?.message||e); }
     })();
   },[loaded,blocks.length,athlete.id]);
+
+  // The OPEN block keeps a LIVE recap, same treatment past blocks get but in an
+  // ongoing voice (Will 08-28). Regenerated only when the session count inside
+  // the block's window has changed since the last write (or no recap exists yet)
+  // — a tab open with nothing new logged costs nothing. Athlete view only; the
+  // stamp lands after a successful write so a failed generation retries next open.
+  const recapBusyRef = useRef(false);
+  useEffect(()=>{
+    if(viewer!=="athlete"||!loaded||recapBusyRef.current) return;
+    const open = blocks.find(b=>!b.completed_at);
+    if(!open) return;
+    const s = Date.parse(open.applied_at||0);
+    const n = logs.filter(t=>t>=s).length;
+    if(n<1) return;
+    let st=null; try{ st=JSON.parse(localStorage.getItem(`wilco_blockrecap_${athlete.id}`)||"null"); }catch(_){}
+    if(open.block_recap && st && st.n===n) return;
+    recapBusyRef.current = true;
+    (async()=>{
+      try{
+        const text = await refreshOpenBlockRecap({athleteId:athlete.id},{sbRead,sbUpdateWhere,askClaude});
+        if(text){
+          setBlocks(prev=>prev.map(x=>x.id===open.id?{...x,block_recap:text}:x));
+          try{ localStorage.setItem(`wilco_blockrecap_${athlete.id}`, JSON.stringify({at:Date.now(), n})); }catch(_){}
+        }
+      }catch(_){ /* card just keeps its last recap */ }
+      recapBusyRef.current = false;
+    })();
+  },[viewer,loaded,blocks,logs,athlete.id]);
 
   // Bare YYYY-MM-DD dates pin to noon UTC first — new Date("2026-08-19") is UTC
   // midnight, which renders a day early in US timezones (T57: the drafts card

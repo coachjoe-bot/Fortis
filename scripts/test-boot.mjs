@@ -179,6 +179,21 @@ check("timed hold passes through", DW("Plank 3x60s") === "Plank 3x60s");
 check("no double-unit on an already-led percentage", !DW("Snatch 4x1 @ 185 (75%)").includes("lbs%"));
 check("multiple lines each reformat independently", DW("Squat 5x3 @ 275 (80%)\nBench 5x5 @ 185") === "Squat 5x3 @ 80% (275 lbs)\nBench 5x5 @ 185 lbs");
 
+// Unit conversion idempotency (Will's phone, 08-28: "@ 2.5 kg.5 kg.5 kg").
+// A decimal kg value must survive re-application WHOLE — the failed unit
+// lookahead used to backtrack to the integer part ("@ 7" of "@ 7.5 kg"),
+// convert it again and strand ".5 kg" fragments on every pass.
+const DIU = B.draftInUnit;
+check("draftInUnit: bare implied-lbs converts (15 lbs → 7.5 kg)", DIU("Weighted Sit-Up 3x12 @ 15", "kg") === "Weighted Sit-Up 3x12 @ 7.5 kg");
+check("draftInUnit: explicit lbs converts", DIU("Bench 5x5 @ 185 lbs", "kg") === "Bench 5x5 @ 85 kg");
+check("draftInUnit: decimal kg passes through WHOLE", DIU("Weighted Sit-Up 3x12 @ 7.5 kg", "kg") === "Weighted Sit-Up 3x12 @ 7.5 kg");
+check("draftInUnit: double application is a no-op", DIU(DIU("Squat 5x3 @ 275\nSit-Up 3x12 @ 15", "kg"), "kg") === DIU("Squat 5x3 @ 275\nSit-Up 3x12 @ 15", "kg"));
+check("draftInUnit: whole kg passes through", DIU("Bench 5x5 @ 85 kg", "kg") === "Bench 5x5 @ 85 kg");
+check("draftInUnit: percentage source kept number-first", DIU("Bench 5x5 @ 185 (75%)", "kg") === "Bench 5x5 @ 85 kg (75%)");
+check("draftInUnit: lbs athlete untouched", DIU("Bench 5x5 @ 185", "lbs") === "Bench 5x5 @ 185");
+check("displayWeights: decimal kg survives kg mode WHOLE", DW("Sit-Up 3x12 @ 7.5 kg", "kg") === "Sit-Up 3x12 @ 7.5 kg");
+check("displayWeights: kg mode is idempotent", DW(DW("Squat 5x3 @ 275 (80%)\nSit-Up 3x12 @ 15", "kg"), "kg") === DW("Squat 5x3 @ 275 (80%)\nSit-Up 3x12 @ 15", "kg"));
+
 // The opener frames the resolved draft as a session to RUN. Draft line 1 is the day
 // label; it gets woven into the lead, and the exercises follow (reformatted so the
 // program's percentage/RPE/last-time source shows next to the resolved weight).

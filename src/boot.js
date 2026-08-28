@@ -220,9 +220,11 @@ export function displayWeights(text, unit = "lbs") {
   });
   // A bare "@ N" (program stated the pounds) gets a unit — but never a number that
   // already carries lbs/kg, a following paren, or a % sign (a just-led percentage).
-  // The \b after the digits stops the engine backtracking to a PARTIAL number when
-  // the lookahead fails (e.g. matching "13" of "135 lbs" and leaving "5 lbs").
-  out = out.replace(/@\s*(\d+(?:\.\d+)?)\b(?!\s*(?:lbs\b|kg\b|%|\())/gi, (_m, w) => `@ ${cv(w)} ${u}`);
+  // (?![.\d]) forces the WHOLE number: when the unit lookahead fails on "7.5 kg"
+  // the engine backtracks and would happily match "@ 7" (the "." satisfies \b),
+  // convert the integer part again and strand ".5 kg" — Will's phone, 08-28:
+  // "@ 2.5 kg.5 kg.5 kg". A partial match is never a match.
+  out = out.replace(/@\s*(\d+(?:\.\d+)?)(?![.\d])(?!\s*(?:lbs\b|kgs?\b|%|\())/gi, (_m, w) => `@ ${cv(w)} ${u}`);
   // In kg mode, loads the program wrote explicitly as lbs convert too.
   if (kg) out = out.replace(/@\s*(\d+(?:\.\d+)?)\s*lbs\b/gi, (_m, w) => `@ ${cv(w)} kg`);
   return out;
@@ -231,18 +233,24 @@ export function displayWeights(text, unit = "lbs") {
 // The chat-first sheet + lock-screen card show the draft ITSELF (it stays
 // editable and loggable), so unlike displayWeights this keeps the number-FIRST
 // shape and just moves the numbers into the athlete's unit with an explicit
-// suffix: "@ 185 (75%)" -> "@ 85 kg (75%)". Idempotent (kg-tagged numbers pass
-// through) because parks round-trip through it, and one-way lbs->kg by the same
-// contract as displayWeights: draft-engine numbers are lbs unless a line says
-// otherwise, while a number the ATHLETE typed with a unit is already the truth.
+// suffix: "@ 185 (75%)" -> "@ 85 kg (75%)".
+// CONTRACT (Will 08-28): applied exactly ONCE, at PARK time, to ENGINE/model
+// output only — never to text read back from a park. A park may carry the
+// athlete's own edits, and what they type is what they log; the app never
+// rewrites it (conversion of a sent log happens downstream, in chat/records).
+// Still hardened to be idempotent (kg-tagged numbers pass through whole) as a
+// backstop. One-way lbs->kg by the same contract as displayWeights:
+// draft-engine numbers are lbs unless a line says otherwise.
 export function draftInUnit(text, unit = "lbs") {
   if (unit !== "kg") return String(text || "");
   const cv = (w) => String(Math.round((Number(w) / LBS_PER_KG) / 2.5) * 2.5);
   let out = String(text || "");
   out = out.replace(/@\s*(\d+(?:\.\d+)?)\s*lbs\b/gi, (_m, w) => `@ ${cv(w)} kg`);
   // Bare "@ N" (implied lbs): converts unless the number already carries a unit
-  // or IS a percentage. The \b stops partial-number backtracking (see above).
-  out = out.replace(/@\s*(\d+(?:\.\d+)?)\b(?!\s*(?:lbs\b|kgs?\b|%))/gi, (_m, w) => `@ ${cv(w)} kg`);
+  // or IS a percentage. (?![.\d]) forces the whole number — without it, a failed
+  // unit lookahead on "@ 7.5 kg" backtracked to "@ 7" and re-converted the
+  // integer part, stranding ".5 kg" fragments on every pass (Will 08-28).
+  out = out.replace(/@\s*(\d+(?:\.\d+)?)(?![.\d])(?!\s*(?:lbs\b|kgs?\b|%))/gi, (_m, w) => `@ ${cv(w)} kg`);
   return out;
 }
 

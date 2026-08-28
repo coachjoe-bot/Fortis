@@ -34,6 +34,8 @@ for (const [frag, why] of [
   ["one question per turn", "builder interview shape"],
   ["Never run a Builder interview while a workout is live", "Will's no-mess rule"],
   ["outrank the transcript", "context-beats-transcript"],
+  ["A finished log is a RECORD", "sent logs are truth, never interrogated (Will 08-28)"],
+  ["never by raising the sheet again", "no sheet resurrection after a log lands (Will 08-28)"],
 ]) ok(cardAll.includes(frag), `card keeps: ${why} ("${frag}")`);
 ok(!/—/.test(cardAll), "card contains no em dashes (practices its own voice rule)");
 ok(CREW_ENABLED === cardAll.includes("CREW:"), "crew line rides the flag exactly");
