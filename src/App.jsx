@@ -128,7 +128,7 @@ import {
   TIER_NAMES, TIER_COLORS, TIER_POINTS, TIER_DESC,
   BENCH_THRESHOLDS, tierForRatio, bwTierFactor, ageTierFactor, scaledThresholds, getBenchKey,
   sessionTonnage, sessionTopSet, goalTargets, liftSeriesPoints,
-  implausibleJump,
+  implausibleJump, prCheckLines,
 } from "./grit.js";
 export {
   epley1RM, getExerciseSets, bestE1RMForExercise, effectiveDate, parseDbDate,
@@ -1639,6 +1639,7 @@ Rules:
 - "log_date": set this ONLY when the athlete clearly states this session happened on a PAST day rather than today — e.g. "this was Monday's workout", "did this yesterday", "logging Saturday's lift", "from two days ago", "did legs on Tuesday". Resolve their words to a concrete calendar date in "YYYY-MM-DD" form using TODAY'S DATE given above, ALWAYS choosing the MOST RECENT PAST occurrence: a weekday name = the most recent already-passed date with that weekday (never a future one, and if today IS that weekday it means LAST week's, not today); "yesterday" = one day before today; "two days ago" = two days before today. Only look back up to 14 days — if the intended past day is ambiguous, more than 14 days ago, today, or in the future, leave log_date null. A normal log with no explicit past-day language is TODAY: leave log_date null. A forward-looking PROGRAM (is_program_update / program_append) is never dated: leave log_date null. Never invent a date the athlete didn't imply.
 - "pr_attempts": include an entry with reps:1 and achieved:true whenever the athlete reports an ACTUAL (not estimated) 1-rep max for a lift — either because they just performed a true 1RM single in this session, OR because they are simply telling you their current actual max for a lift (e.g. "my real squat max is 405", "current bench 1RM is 275", "just hit a 315 deadlift max"). This applies even if no other exercises were logged in the message. If they describe a failed attempt at a 1RM, set achieved:false.
 - FAILED / MISSED ATTEMPTS (critical): a weight the athlete FAILED, MISSED, or didn't complete ("attempted 285 and missed", "failed 315", "couldn't lock out 225", "no-lifted the third attempt") is NOT a performed set. Record it ONLY as a pr_attempts entry with achieved:false — NEVER as an entry or set in "exercises", never in set_details, never as the top-set weight. Completed work in the same message still logs normally (e.g. "hit 275, then missed 285" → the 275 single goes in exercises AND pr_attempts achieved:true; the 285 appears ONLY in pr_attempts achieved:false). A failed weight must never appear anywhere that reads as work performed.
+- PARTIAL COMPOUND LIFTS: when a compound lift is partly made and partly missed, the MADE part is real performed work and must be credited as its own exercise at that weight. "Hit the clean but missed the jerk at 125" → "Clean" 1x1 @ 125 goes in exercises, AND "Clean and Jerk" 125 goes in pr_attempts achieved:false; the compound itself never appears in exercises. Same logic for any sequenced compound. This only applies when the athlete clearly states the earlier movement was COMPLETED — a clean caught but never stood up is a missed clean, and ambiguity stays a plain miss (pr_attempts achieved:false only).
 - "coach_flag": set "pain" when the message reports CURRENT physical pain/discomfort/a tweak tied to training — not normal post-workout soreness/fatigue. Set "plateau" when they say a specific lift has been stuck/stalled for weeks despite real effort — not a single off day. Set "equipment" when equipment required for their programmed work is unavailable/broken and it's actually blocking that work — not just a passing mention. Otherwise leave null. At most one value; pick the one that best matches.
 - "preference_request": populate ONLY when the athlete states a DURABLE preference about how their training should be written going forward — not a one-off request for today. Allowed values by field: loading_language = "percent+rpe"|"percent"|"rpe"|"climb_singles"|"fixed_weight" ("stop giving me RPE, just percentages" → {"field":"loading_language","value":"percent"}; "I'd rather work up to a heavy single than chase percentages" → "climb_singles"). max_update_policy = "infer"|"declared_only"|"pr_single_only" ("only change my max when I actually hit a single" → "pr_single_only"). testing_style = "final_week"|"test_day"|"retest_cycle". session_minutes_cap = integer 15-240 ("keep my workouts under an hour" → 60). movements_per_day_cap = integer 2-15. accessory_load = "programmed"|"athlete_choice" ("let me pick my own accessory weights" → "athlete_choice"). ONE field per message (pick the clearest); the value MUST be from the allowed set or null. This is a proposal the app confirms with the athlete — populate it even if phrased casually, but never from a question or a hypothetical.`;
   const nowD = new Date();
@@ -1951,9 +1952,9 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
   // 250 on file: chat simply never saw the 250.
   const { manualRMs, programStartedOn, prefs } = await getJoeCtx(athlete.id);
   let maxContext = "";
+  const byEx = {}; // hoisted: the PR CHECK block below reuses the same bests map
   {
     const bw = athlete.weight_lbs;
-    const byEx = {};
     (workoutHistory||[]).forEach(w=>{ (w.parsed_data?.exercises||[]).forEach(ex=>{
       if(!ex.name) return;
       const e1 = bestE1RMForExercise(ex, bw);
@@ -1969,6 +1970,22 @@ const getJoeBotReply = async (message, athlete, history, workoutHistory=[], athl
     const rmLines = Object.values(byEx).sort((a,b)=>b.e1rm-a.e1rm).slice(0,15)
       .map(r=>`${r.name}: ${r.actual?`${Math.round(r.e1rm)} lbs (actual 1RM)`:`~${Math.round(r.e1rm)} lbs (est.)`}`).join("\n");
     if(rmLines) maxContext = `\n\nKNOWN 1RMs (an "actual 1RM" is the athlete's real recorded max and ALWAYS outranks an "est." entry; use ONLY to turn a program percentage or RPE target into a weight):\n${rmLines}`;
+  }
+
+  // Deterministic PR verdicts for THIS message's log (T60, Will 08-28): the
+  // reply used to re-derive the comparison itself and called a 118 kg snatch
+  // "right under" a 250 lb (113.4 kg) max — a live unit conversion plus a
+  // direction flub, contradicting the NEW MAX stamp the app fired for the same
+  // lift. Same doctrine as the coach-brain fixes: compute in code, inject.
+  // send() passes the parse result only for log-shaped messages (the reply is
+  // already held behind the WORKOUT stamp there, so sequencing is free).
+  let prCheckContext = "";
+  const pl = opts.parsedLog;
+  if(pl?.exercises?.length && !pl.is_program_update && !pl.is_temp_program_update && !pl.program_create_request && !pl.log_correction?.is_mistake_fix){
+    try{
+      const lines = prCheckLines(pl.exercises, byEx, athlete.weight_unit);
+      if(lines.length) prCheckContext = `\n\nPR CHECK — THIS MESSAGE'S LOG (computed by the app from their records; these verdicts are FINAL — never re-derive, re-convert, or re-compare the numbers yourself):\n${lines.map(l=>`- ${l}`).join("\n")}\nA line marked NEW PR is confirmed above their previous best: open the reply with genuine, specific celebration scaled to how central that lift is to their sport (a weightlifter's snatch or clean and jerk PR is a headline day, not a footnote), then coach. Never describe a NEW PR weight as under, below, or "right under" anything.`;
+    }catch(_){ /* verdicts are additive — a failure just means no block */ }
   }
 
   // Resolved program position — the SAME resolver Quick Log trusts (src/
@@ -2015,7 +2032,7 @@ Athlete: ${athlete.name}, Sport: ${athlete.sport}${athlete.level?", Level: "+ath
 GOAL: ${JOEBOT_GOALS[athlete.goal||"strength"] || JOEBOT_GOALS.strength}
 SPORT: ${JOEBOT_SPORTS[athlete.sport]||"Build a general strength base."}
 ACCOUNT FACTS: coach linked: ${athlete.coach_id?"yes":"no"} · program locked: ${athlete.program_locked?"yes":"no"} · display unit: ${athlete.weight_unit==="kg"?"kg":"lbs"}
-${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you say in kg (logged data below may carry lbs labels — convert exactly, 1 kg = 2.20462 lbs, and round working weights to 2.5 kg).":"This athlete works in LBS. If logged data below carries a kg label, that lift was performed in kg — convert to lbs when you talk about it (1 kg = 2.20462 lbs)."}${prefs&&prefsPromptLines(prefs)?"\n"+prefsPromptLines(prefs):""}${pastContext}${lastDoneContext}${maxContext}${programContext}${positionContext}`;
+${athlete.weight_unit==="kg"?"This athlete works in KG. State every weight you say in kg (logged data below may carry lbs labels — convert exactly, 1 kg = 2.20462 lbs, and round working weights to 2.5 kg).":"This athlete works in LBS. If logged data below carries a kg label, that lift was performed in kg — convert to lbs when you talk about it (1 kg = 2.20462 lbs)."}${prefs&&prefsPromptLines(prefs)?"\n"+prefsPromptLines(prefs):""}${pastContext}${lastDoneContext}${maxContext}${prCheckContext}${programContext}${positionContext}`;
 
   let goalsContext = "";
   if(athleteGoals?.length>0){
@@ -8560,10 +8577,19 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         }catch(_){ releaseAfter(0); }
       };
       parsedP.then(tryInstantStamp).catch(()=>{ releaseReply(); });
+      // T60 (Will 08-28): a log-shaped message SEQUENCES the reply behind the
+      // parse so the PR CHECK block (code-computed verdicts) rides into Joe's
+      // context — without it he re-derived the snatch comparison himself and
+      // called a new PR "right under" the old max while the app stamped NEW MAX.
+      // Free in perceived latency: these replies are already held ~2.3s behind
+      // the WORKOUT stamp, which fires at parse-complete anyway. Normal chat
+      // stays fully parallel. Parse failure just means no PR block.
+      let parsedForReply = null;
+      if(holdReply){ try{ parsedForReply = await parsedP; }catch(_){} }
       // T58: the master's tool calls, collected as the reply streams. Empty on
       // the legacy path (flag off = no toolset = the model can't call anything).
       const masterToolCalls = [];
-      const masterOpts = MASTERMIND_ON ? {mastermind:true, memoryRows, pureLog:fromQuickLog, onToolUse:(tc)=>masterToolCalls.push(tc)} : {};
+      const masterOpts = MASTERMIND_ON ? {mastermind:true, memoryRows, pureLog:fromQuickLog, parsedLog:parsedForReply, onToolUse:(tc)=>masterToolCalls.push(tc)} : {parsedLog:parsedForReply};
       try {
         reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,applyDelta,masterOpts);
       } catch(_streamErr){ /* fall through to the one-shot call below */ }
@@ -8585,7 +8611,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // One-shot fallback: mastermind persona/memory ride along, tools don't
         // (the JSON path returns text only) — a dropped stream costs the turn's
         // actions, never the reply.
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows, pureLog:fromQuickLog}:{});
+        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows, pureLog:fromQuickLog, parsedLog:parsedForReply}:{parsedLog:parsedForReply});
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       // A held reply keeps the typing dot up until releaseReply shows the bubble

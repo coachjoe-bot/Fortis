@@ -14,7 +14,7 @@ import {
   scaledThresholds, BENCH_THRESHOLDS, TIER_NAMES, TIER_POINTS,
   REF_BW, bwLoadLabel, computeGritSnapshot, resolveLift,
   sessionTonnage, sessionTopSet,
-  implausibleJump,
+  implausibleJump, prCheckLines,
 } from "../src/grit.js";
 
 let fail = 0, pass = 0;
@@ -361,6 +361,30 @@ console.log("\nimplausible jump:");
   eq(implausibleJump(200, 222), false, "+11% does not trip");
   eq(implausibleJump(100, 112), false, "+12% but only +12 lb stays quiet: the 20 lb floor also has to clear");
   eq(implausibleJump(64, 200), false, "a baseline under the 65 lb floor never trips");
+}
+
+// ── prCheckLines: code-computed PR verdicts for the chat reply (T60, 08-28) ──
+// The live failure this guards: a 118 kg snatch single vs a 250 lb (113.4 kg)
+// actual max got narrated by the model as "right under" the old max while the
+// app stamped NEW MAX for it. Verdicts are computed here, in lbs, and handed to
+// the model finished — direction can never flip again.
+{
+  console.log("prCheckLines:");
+  const best = { snatch: { name: "Snatch", e1rm: 250, actual: true }, "bench press": { name: "Bench Press", e1rm: 300 } };
+  const willCase = prCheckLines([{ name: "Snatch", sets: 1, reps: 1, weight: 118, unit: "kg" }], best, "kg");
+  eq(willCase.length, 1, "one line per weighted lift");
+  eq(/NEW PR/.test(willCase[0]) && /118 kg/.test(willCase[0]) && /ABOVE/.test(willCase[0]), true, "118 kg single over a 250 lb actual max is a NEW PR, stated as ABOVE (the live flub)");
+  const below = prCheckLines([{ name: "Snatch", sets: 1, reps: 1, weight: 110, unit: "kg" }], best, "kg")[0];
+  eq(/no PR/.test(below) && !/NEW PR/.test(below), true, "a single under the best on file is plainly no PR");
+  const first = prCheckLines([{ name: "Clean", sets: 1, reps: 1, weight: 125, unit: "kg" }], best, "kg")[0];
+  eq(/first record on file/.test(first), true, "an unseen lift reads as a first record, never a comparison");
+  const estPr = prCheckLines([{ name: "Bench Press", sets: 5, reps: 5, weight: 275, unit: "lbs" }], best, "lbs")[0];
+  eq(/NEW ESTIMATED PR/.test(estPr), true, "rep work whose e1RM beats an estimated best is an estimated PR");
+  const estVsActual = prCheckLines([{ name: "Snatch", sets: 3, reps: 3, weight: 108, unit: "kg" }], best, "kg")[0];
+  eq(/no PR/.test(estVsActual), true, "an e1RM never outranks an actual 1RM (mirrors finalizeWorkout)");
+  const wild = prCheckLines([{ name: "Snatch", sets: 1, reps: 1, weight: 160, unit: "kg" }], best, "kg")[0];
+  eq(/implausibly far above/.test(wild) && !/NEW PR/.test(wild), true, "an implausible jump gets the sanity-check verdict, not a celebration");
+  eq(prCheckLines([{ name: "Push-ups", sets: 3, reps: 20, unit: "bodyweight" }], best, "lbs").length, 0, "bodyweight/unweighted work emits no verdict");
 }
 
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }

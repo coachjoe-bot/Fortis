@@ -970,3 +970,48 @@ export function feasibilityLine(rows, goalText, timelineText) {
   }
   return line;
 }
+
+// ── PR CHECK — deterministic verdicts for a just-parsed log (T60, 08-28) ─────
+// Joe's reply used to re-derive PR comparisons itself and flubbed both the unit
+// conversion and the direction ("118 kg is right under your 250 lb max" — 118 kg
+// IS 260 lbs, a new PR the app was simultaneously stamping NEW MAX for). The app
+// computes the verdict per lift and hands the model finished lines; the model
+// never re-compares. `best` is the same {liftId: {name, e1rm(lbs), actual?}} map
+// chat's KNOWN 1RMs block is built from (actual 1RM overlays the estimate), so
+// chat and the NEW MAX stamp can never disagree about what beats what.
+// Mirrors finalizeWorkout's celebration rules: a made single above the best on
+// file is an actual PR; an e1RM rise only counts while no actual 1RM exists;
+// an implausible jump gets a sanity-check verdict, not a celebration.
+export function prCheckLines(exercises, best, unit = "lbs") {
+  const kg = unit === "kg";
+  const show = (lbs) => kg ? `${Math.round((lbs / LBS_PER_KG) * 10) / 10} kg (${Math.round(lbs)} lbs)` : `${Math.round(lbs)} lbs`;
+  const lines = [];
+  for (const ex of Array.isArray(exercises) ? exercises : []) {
+    if (!ex || !ex.name || ex.unit === "bodyweight") continue;
+    const sets = getExerciseSets(ex).filter((s) => s.weight > 0);
+    if (!sets.length && !(ex.weight > 0)) continue;
+    const top = sets.reduce((b, s) => (!b || toLbs(s.weight, ex.unit) > toLbs(b.weight, ex.unit)) ? s : b, null) || { weight: ex.weight, reps: ex.reps || 1 };
+    const topLbs = toLbs(top.weight, ex.unit);
+    const prev = best && best[resolveLift(ex.name).id];
+    if (!prev || !(prev.e1rm > 0)) {
+      lines.push(`${ex.name}: first record on file for this lift (top ${show(topLbs)}) — nothing to compare against yet.`);
+      continue;
+    }
+    const singleLbs = sets.filter((s) => s.reps === 1).reduce((m, s) => Math.max(m, toLbs(s.weight, ex.unit)), 0);
+    const e1 = bestE1RMForExercise(ex) || 0;
+    const challenger = Math.max(singleLbs, prev.actual ? 0 : e1);
+    const prevLabel = `${show(prev.e1rm)} ${prev.actual ? "actual 1RM" : "estimated 1RM"}`;
+    if (challenger > prev.e1rm) {
+      if (implausibleJump(prev.e1rm, challenger)) {
+        lines.push(`${ex.name}: logged ${show(challenger)} vs previous best ${prevLabel} — implausibly far above it; sanity-check the number conversationally, no celebration yet.`);
+      } else if (singleLbs > prev.e1rm) {
+        lines.push(`${ex.name}: NEW PR — made single at ${show(singleLbs)}, ABOVE the previous best ${prevLabel}.`);
+      } else {
+        lines.push(`${ex.name}: NEW ESTIMATED PR — top set ${show(topLbs)} works out to ${show(e1)} estimated, above the previous best ${prevLabel}.`);
+      }
+    } else {
+      lines.push(`${ex.name}: no PR — top ${show(topLbs)}; the best on file stays ${prevLabel}.`);
+    }
+  }
+  return lines;
+}
