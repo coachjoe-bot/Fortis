@@ -150,6 +150,17 @@ const WATCH_PREFIX = "Watching:";
 
 export const watchTopic = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
 
+// Topic identity = body parts + lift words, never filler. "knee felt sore" and
+// "shoulder felt sore" must NOT read as the same issue just because they share
+// "felt sore" — the pattern rule is per-issue, not per-vibe.
+const BODY_WORDS = new Set(("shoulder shoulders pec pecs chest knee knees back lowback hip hips elbow elbows wrist wrists ankle ankles hamstring hamstrings quad quads calf calves neck groin bicep biceps tricep triceps forearm forearms glute glutes achilles shin shins traps lat lats spine adductor").split(" "));
+const LIFT_WORDS = new Set(("bench press squat squats deadlift deadlifts row rows pull pullup pullups chinup dip dips clean cleans snatch jerk press ohp curl curls lunge lunges rdl extension extensions raise raises fly flyes shrug shrugs thruster pulldown pushup pushups plank sprint sprints").split(" "));
+export function topicTokens(s) {
+  const words = watchTopic(String(s || "").slice(0, 400)).split(" ");
+  const hits = words.filter((w) => BODY_WORDS.has(w) || LIFT_WORDS.has(w));
+  return [...new Set(hits)];
+}
+
 export function buildWatchNote(flag, topic, now = new Date()) {
   const expires = new Date(now); expires.setDate(expires.getDate() + WATCH_TTL_DAYS);
   return {
@@ -163,9 +174,12 @@ export function buildWatchNote(flag, topic, now = new Date()) {
 // same pain twice in one conversation is one report, not a pattern.)
 export function watchHit(memoryRows, flag, topic, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
-  const t = watchTopic(topic);
-  if (!t) return false;
-  const tWords = t.split(" ").filter((w) => w.length > 2);
+  // Identity tokens (body parts + lifts) when the message names any; the
+  // normalized words as a fallback so an unlisted issue can still pattern-match.
+  const idTokens = topicTokens(topic);
+  const fallback = watchTopic(topic).split(" ").filter((w) => w.length > 3);
+  const tWords = idTokens.length ? idTokens : fallback;
+  if (!tWords.length) return false;
   return (memoryRows || []).some((r) => {
     if (!r || r.status === "deleted") return false;
     const c = String(r.content || "");
@@ -174,9 +188,12 @@ export function watchHit(memoryRows, flag, topic, now = new Date()) {
     const stamped = c.match(/reported (\d{4}-\d{2}-\d{2})/);
     if (stamped && stamped[1] === today) return false;
     if (!c.includes(`(${flag})`)) return false;
+    // Compare identities, not vibes: when the note carries body/lift tokens,
+    // require one of THOSE to match; generic word overlap only when neither
+    // side named anything recognizable.
+    const cTokens = topicTokens(c);
+    if (idTokens.length && cTokens.length) return idTokens.some((w) => cTokens.includes(w));
     const cNorm = watchTopic(c);
-    // topic overlap: any meaningful word shared ("shoulder" matches
-    // "shoulder on push press") — same/similar issue, per Will's wording
     return tWords.some((w) => cNorm.includes(w));
   });
 }

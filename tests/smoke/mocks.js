@@ -127,6 +127,13 @@ export async function mockApi(page, options = {}) {
     builderDraftText = "=== BLOCK INFO ===\nGoal: Bench 225x1 by Oct 1\nRuns: 2026-09-01 to 2026-10-01\n\nWEEK 1\nDay 1 - Push\nBench Press 3x5 @ 185",
     blockStripeJs = false,
     subscriptionDelayMs = 300,
+    // Per-table canned rows for gateway reads: {table: rows | (body)=>rows}.
+    // A function sees the whole request body (body.params carries the
+    // PostgREST query) so a spec can key on it — program_drafts serves
+    // Builder drafts AND Program Recs from one table.
+    dataReads = {},
+    // Program Recs: canned reply for the rec drafter (feature program_generate).
+    recDraftReply = null,
     giftResult = {
       valid: true,
       promotionCodeId: "promo_smoketest",
@@ -212,8 +219,11 @@ export async function mockApi(page, options = {}) {
   await page.route("**/api/data", (route) => {
     const body = record(route) || {};
     switch (body.op) {
-      case "read": // gateway reads return a bare PostgREST-style array
+      case "read": { // gateway reads return a bare PostgREST-style array
+        const canned = dataReads[body.table];
+        if (canned) return route.fulfill(json(typeof canned === "function" ? (canned(body) || []) : canned));
         return route.fulfill(json([]));
+      }
       case "insert":
       case "upsert": {
         const rows = Array.isArray(body.data) ? body.data : [body.data];
@@ -241,7 +251,9 @@ export async function mockApi(page, options = {}) {
             ? builderQuestion
             : body.feature === "program_draft"
               ? builderDraftText
-              : chatReply;
+              : body.feature === "program_generate" && recDraftReply
+                ? recDraftReply
+                : chatReply;
     return route.fulfill(json({
       id: "msg_smoketest",
       type: "message",

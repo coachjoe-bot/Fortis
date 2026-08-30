@@ -12,7 +12,7 @@
 import {
   parseProgramLines, locateSwap, locateSwaps, applySwaps, revertSwaps,
   REC_DURATIONS, durationLabel, recExpiry, recExpired,
-  buildWatchNote, watchHit, watchTopic, isSevereReport, validateRecPayload,
+  buildWatchNote, watchHit, watchTopic, topicTokens, isSevereReport, validateRecPayload,
 } from "../src/recs.js";
 
 let pass = 0, fail = 0;
@@ -151,6 +151,12 @@ const PROG2 = [
 
   ok(isSevereReport("sharp pain in my knee, had to stop"), "severe language skips the gate");
   ok(!isSevereReport("knee felt a little cranky today"), "mild language does not");
+
+  // identity beats vibes: shared filler words are not a shared issue
+  const kneeNote = [{ content: buildWatchNote("pain", "knee felt sore on squats", now).content, kind: "situational", expires_at: note.expires_at, status: "active" }];
+  ok(!watchHit(kneeNote, "pain", "shoulder felt sore today", tomorrow), "'felt sore' overlap alone is NOT a pattern");
+  ok(watchHit(kneeNote, "pain", "knee acting up again", tomorrow), "the named body part IS the pattern");
+  eq(JSON.stringify(topicTokens("left pec pinches on bench and dips")), JSON.stringify(["pec", "bench", "dips"]), "topic tokens = body parts + lifts only");
 }
 
 // 7 ── payload validation

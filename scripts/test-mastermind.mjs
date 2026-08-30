@@ -38,6 +38,10 @@ for (const [frag, why] of [
   ["never by raising the sheet again", "no sheet resurrection after a log lands (Will 08-28)"],
   ["the made part IS performed work", "partial compound credit — made clean inside a missed C&J (Will 08-28)"],
   ["PR CHECK block is present its verdicts are FINAL", "code-computed PR verdicts beat model re-derivation (Will 08-28)"],
+  ["propose_program_rec stages a reviewable change", "program recs are the ONE door for program edits (Will 08-28)"],
+  ["A rec has to EARN its place", "the pattern rule: first mention watches, repeat drafts (Will 08-28)"],
+  ["one odd day is allowed to be one odd day", "breathing room for shifting circumstances (Will 08-28)"],
+  ["compute percentages only when they ask to progress", "log-to-program carries exact numbers by default (Will 08-29)"],
 ]) ok(cardAll.includes(frag), `card keeps: ${why} ("${frag}")`);
 ok(!/—/.test(cardAll), "card contains no em dashes (practices its own voice rule)");
 ok(CREW_ENABLED === cardAll.includes("CREW:"), "crew line rides the flag exactly");
@@ -60,8 +64,19 @@ for (const t of TOOLSETS.mastermind_athlete) {
   ok(t.input_schema && t.input_schema.type === "object", `${t.name} schema is an object schema`);
   ok(t.input_schema.additionalProperties === false, `${t.name} schema closes additionalProperties`);
 }
-for (const n of ["set_position", "remember_fact", "forget_fact", "pin_session_card", "clear_session_card", "prefill_log_sheet", "propose_preference"])
-  ok(names.has(n), `v1 toolset includes ${n}`);
+for (const n of ["set_position", "remember_fact", "forget_fact", "pin_session_card", "clear_session_card", "prefill_log_sheet", "propose_preference", "propose_program_rec"])
+  ok(names.has(n), `toolset includes ${n}`);
+// Program Recs (Will 08-28): the write-tool can only STAGE, and its duration
+// vocabulary is exactly the hard set — no "permanent", nothing vague.
+{
+  const rec = TOOLSETS.mastermind_athlete.find((t) => t.name === "propose_program_rec");
+  const dur = rec.input_schema.properties.duration.enum;
+  ok(JSON.stringify(dur) === JSON.stringify(["1w", "2w", "3w", "block"]), "rec durations are exactly 1w/2w/3w/block");
+  ok(/never writes directly/i.test(rec.description), "rec tool description states it only stages");
+  ok(/verbatim/i.test(rec.description), "rec tool demands verbatim finds");
+  ok(rec.input_schema.properties.swaps.items.required.includes("find"), "swap requires find");
+  ok(rec.input_schema.properties.swaps.items.required.includes("replace"), "swap requires replace");
+}
 for (const n of ["replace_program", "delete_log_entry", "send_coach_request"])
   ok(HARD_CONFIRM_FLOOR.has(n), `hard confirm floor holds ${n}`);
 

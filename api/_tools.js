@@ -80,6 +80,34 @@ export const TOOLSETS = {
       },
     },
     {
+      name: "propose_program_rec",
+      description: "Stage a PROGRAM REC — the ONLY way you change an athlete's saved program, and it never writes directly: the app raises a reviewable sheet showing each replaced line beside its replacement, and the athlete applies it. Call for any program-change ask or confirmed need: swapping exercises or whole days, making a logged workout the template for a program day ('make what I logged Monday for this block'), adding weekly progression, protecting a confirmed injury. Each swap's find is text copied VERBATIM from the PROGRAM in your context — exact characters and spacing, long enough to be unique — tagged with its week number and day when the program has them (the same line in two weeks needs one tagged swap per week). replace is the complete new text for that spot in the program's own style. Building from a log: carry the logged exercises, sets, reps and loads EXACTLY; compute percentages only when they asked to progress. Surgical always — never touch text outside the ask.",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", maxLength: 40 },
+          why: { type: "string", maxLength: 500, description: "1-3 plain sentences tying the change to what they said or logged" },
+          duration: { type: "string", enum: ["1w", "2w", "3w", "block"], description: "temporary changes take 1w/2w/3w and auto-revert; 'block' rides out the block" },
+          swaps: {
+            type: "array", minItems: 1, maxItems: 12,
+            items: {
+              type: "object",
+              properties: {
+                week: { type: "integer", minimum: 1, maximum: 52 },
+                day: { type: "string", maxLength: 30 },
+                find: { type: "string", minLength: 4, maxLength: 400 },
+                replace: { type: "string", maxLength: 600 },
+              },
+              required: ["find", "replace"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["title", "why", "duration", "swaps"],
+        additionalProperties: false,
+      },
+    },
+    {
       name: "propose_preference",
       description: "Propose recording a DURABLE training preference the athlete just stated (not a one-off request for today). The app always confirms this one with a chip regardless of confirm. Allowed: loading_language (percent+rpe|percent|rpe|climb_singles|fixed_weight), max_update_policy (infer|declared_only|pr_single_only), testing_style (final_week|test_day|retest_cycle), session_minutes_cap (15-240), movements_per_day_cap (2-15), accessory_load (programmed|athlete_choice).",
       input_schema: {

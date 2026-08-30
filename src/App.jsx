@@ -73,6 +73,7 @@ import { CREW_ENABLED, MASTERMIND_ENABLED, CHAT_FIRST_ENABLED } from "./flags.js
 import { buildMastermindStatic } from "./ai/card.js";
 import { blueprintPct } from "./programBuilder.js";
 import { validateFact, findDuplicate, matchFacts, buildMemoryBlock, activeFacts } from "./memory.js";
+import { locateSwaps, applySwaps, revertSwaps, recExpiry, recExpired, durationLabel, validateRecPayload, buildWatchNote, watchHit, isSevereReport, topicTokens } from "./recs.js";
 
 // T58 rollout gates, resolved once per load. ?mastermind=1 / ?chatfirst=1 are
 // preview overrides (never persisted) so Will can drive both on a web preview
@@ -604,6 +605,8 @@ const PROGRAM_MOD_DESC = {
   chat_create: "Joe wrote you a new program in chat",
   self_change: "You applied Joe's change",
   checkin_change: "Changed at check-in with Joe",
+  rec_apply: "You applied a program rec",
+  rec_revert: "A program rec ran its course and reverted",
   builder: "New program from the Builder",
   coach_save: "Your coach updated your program",
   coach_bulk: "Your coach put the team on a new program",
@@ -3611,7 +3614,30 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
     // coach request was already filed this session for the same pain — the coach now
     // owns that call, so Joe doesn't ALSO auto-propose a direct edit (double-path).
     const wantsChange = ex.apply_injury_change && athlete.program_text && !athlete.program_locked && !athlete.temp_program_text && !coachRequestSentRef.current;
-    if(wantsChange){
+    // ── PROGRAM RECS (Will 08-28): under chat-first the check-in never gates
+    // its close on an apply card. The athlete already said yes to the digest's
+    // "apply a tweak?" question (the ask-first), so the change is drafted as a
+    // Rec and PARKED to Past Blocks — the check-in ends clean, the draft waits.
+    let recParked = false;
+    if(wantsChange && CHAT_FIRST_ON){
+      try{
+        const rec = await draftRecJSON({
+          programText: athlete.program_text||"",
+          context: `CHECK-IN (what the athlete told Joe this week):\n${qaText}`,
+          instruction: "They agreed to a protective program change for the injury discussed in this check-in. Draft it.",
+          origin: "checkin",
+        });
+        if(rec){
+          const { located } = locateSwaps(athlete.program_text||"", rec.swaps);
+          if(located.length){
+            const clean = {...rec, swaps: located.map(({index:_i, ...s})=>s), parked:true};
+            await sbInsert("program_drafts",{athlete_id:athlete.id, owner_type:"athlete", title:clean.title, status:"rec", blueprint:{rec:clean}, transcript:[], draft_text:"", scope:"full", updated_at:new Date().toISOString()});
+            recParked = true;
+          }
+        }
+      }catch(_){}
+    }
+    if(wantsChange && !CHAT_FIRST_ON){
       try{
         // Ask for the change AND a plain-spoken explanation of what's changing and
         // why, so the athlete approves knowing the specifics — not a blind yes.
@@ -3630,13 +3656,15 @@ function ProofChatModal({athlete, digest, onClose, onContextSaved, onDigestRead,
       }catch(_){}
     }
 
-    const closing = ex.injury_note
+    const closing = recParked
+      ? "That's a wrap. I drafted the program change we talked about, it's parked under Program, Past Blocks. Open it whenever you're ready, or delete it there if you change your mind."
+      : ex.injury_note
       ? "Logged it. I'll keep that front of mind. Keep putting in the work."
       : "That's a wrap. Keep putting in the work.";
     setLoading(false);
     setMessages(prev=>[...prev,{role:"assistant",content:closing}]);
 
-    if(!wantsChange || !setProgramPending){
+    if(CHAT_FIRST_ON || !wantsChange || !setProgramPending){
       await persistAndClose(finalAnswers, ex, null);
     }
   };
@@ -6716,6 +6744,14 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } else if(tc.name==="clear_session_card"){
           clearSessionCard(updatedAthlete.id);
           if(CHAT_FIRST_ON){ setSheetOpen(false); setDockWorkout(null); }
+        } else if(tc.name==="propose_program_rec"){
+          // The program write-tool's ONLY power is staging a Rec (Will's hard
+          // rule) — validated and located against the live program; anything
+          // that doesn't line up verbatim is refused, never guessed at.
+          const v = validateRecPayload({...(tc.input||{}), origin:"ask"});
+          if(!v.ok || !(await stageRec(v.rec))){
+            joeBubble("Couldn't line that program change up exactly against your program. Give me the precise lift or day once more and I'll redo it.");
+          }
         } else if(tc.name==="prefill_log_sheet"){
           const gen = await generateQuickLogDraft({athlete:updatedAthlete, workoutHistory, messages:msgs, goals:athleteGoals, contextNotes:athleteContext});
           if(!gen.rest && gen.draft){
@@ -6884,6 +6920,181 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setSheetOpen(false); setDockWorkout(null); setSheetDate(""); setSheetInfo(false);
     try{ clearSessionCard(athlete.id); }catch(_){}
   };
+
+  // ── PROGRAM RECS (Will's 08-28 design; engine src/recs.js, mockup docs/mockups) ──
+  // Every AI-driven program change is STAGED here: a bar above the composer, a
+  // sheet showing only the exact week-tagged lines that change, hand-editable
+  // replacements, hard durations, apply = deterministic swap + instant local
+  // sync. One active Rec at a time; ✕ parks to Past Blocks (program_drafts,
+  // status "rec"/"rec_applied", payload in blueprint.rec). Native-gated.
+  const [recPending,setRecPending] = useState(null);   // {draftId, rec} — the bar's rec
+  const [recOpen,setRecOpen] = useState(false);
+  const [recBusy,setRecBusy] = useState(false);
+  const [recWhyOpen,setRecWhyOpen] = useState(false);
+  const recSaveRef = useRef(null);
+  useEffect(()=>()=>clearTimeout(recSaveRef.current),[]);
+
+  const recRowSave = (draftId, rec) => {   // debounced persistence of edits
+    clearTimeout(recSaveRef.current);
+    recSaveRef.current = setTimeout(()=>{
+      if(draftId) sbUpdateWhere("program_drafts",`?id=eq.${draftId}`,{title:rec.title, blueprint:{rec}, updated_at:new Date().toISOString()}).catch(()=>{});
+    }, 700);
+  };
+
+  // Stage a validated rec: park any current bar rec, persist, raise the bar.
+  const stageRec = async (rec, {open=false, parked=false} = {}) => {
+    const { located } = locateSwaps(athlete.program_text||"", rec.swaps);
+    if(!located.length) return false;
+    const clean = {...rec, swaps: located.map(({index:_i, ...s})=>s), parked};
+    try{
+      if(recPending?.draftId && !parked){
+        // one active rec: the old one parks with its edits kept
+        sbUpdateWhere("program_drafts",`?id=eq.${recPending.draftId}`,{blueprint:{rec:{...recPending.rec, parked:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
+      }
+      await sbInsert("program_drafts",{athlete_id:athlete.id, owner_type:"athlete", title:clean.title, status:"rec", blueprint:{rec:clean}, transcript:[], draft_text:"", scope:"full", updated_at:new Date().toISOString()});
+      const back = await sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.athlete&status=eq.rec&order=updated_at.desc&limit=1&select=id`).catch(()=>[]);
+      const draftId = Array.isArray(back)&&back[0]?.id || null;
+      if(!parked){
+        setRecPending({draftId, rec:clean});
+        setRecWhyOpen(true);
+        if(open){ setSheetOpen(false); setPgOpen(false); setRecOpen(true); }
+      }
+      try{ track("program_rec_staged","ai",{origin:clean.origin}); }catch(_){}
+      return true;
+    }catch(_){ return false; }
+  };
+
+  const dismissRec = () => {              // ✕ — park it, keep every edit
+    const p = recPending;
+    setRecOpen(false); setRecPending(null);
+    if(p?.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{blueprint:{rec:{...p.rec, parked:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
+    joeBubble("Parked it. It's under Program, Past Blocks whenever you want it.");
+  };
+
+  const recEditSwap = (i, replace) => {    // direct edit — verbatim, auto-saved
+    setRecPending(p=>{
+      if(!p) return p;
+      const swaps = p.rec.swaps.map((s,ix)=>ix===i?{...s, replace}:s);
+      const rec = {...p.rec, swaps, edited:true};
+      recRowSave(p.draftId, rec);
+      return {...p, rec};
+    });
+  };
+
+  const recSetDuration = (duration) => {
+    setRecPending(p=>{
+      if(!p) return p;
+      const rec = {...p.rec, duration};
+      recRowSave(p.draftId, rec);
+      return {...p, rec};
+    });
+  };
+
+  // Composer while the rec sheet is up: "I also want to change…" — Joe redrafts
+  // the swap list. Hand-edited replacements are sacred unless the instruction
+  // explicitly says to change them (the prompt is told which ones are yours).
+  const recInstruction = async (ins) => {
+    const p = recPending; if(!p) return;
+    setRecBusy(true);
+    try{
+      const edited = p.rec.edited ? "\nLines the athlete hand-edited (change ONLY if the instruction explicitly says so): " + p.rec.swaps.map((s,i)=>`#${i+1}`).join(" ") : "";
+      const next = await draftRecJSON({
+        programText: athlete.program_text||"",
+        context: `CURRENT REC (revise this, keep what the instruction doesn't touch):\n${JSON.stringify({title:p.rec.title, why:p.rec.why, duration:p.rec.duration, swaps:p.rec.swaps})}${edited}`,
+        instruction: ins,
+        origin: p.rec.origin,
+      });
+      if(next){
+        const { located } = locateSwaps(athlete.program_text||"", next.swaps);
+        if(located.length){
+          const rec = {...next, swaps: located.map(({index:_i, ...s})=>s), parked:false};
+          setRecPending({draftId:p.draftId, rec});
+          recRowSave(p.draftId, rec);
+        }
+      } else {
+        joeBubble("Couldn't line that up cleanly against the program. Say it once more with the exact lift or day and I'll redo it.");
+      }
+    }catch(_){ /* rec unchanged; they can rephrase */ }
+    setRecBusy(false);
+  };
+
+  // APPLY: deterministic swap of exactly what's on the sheet, instant local
+  // sync (the check-in card's old stale-tab bug can't happen here), audit +
+  // history, duration clock armed. All-or-nothing via applySwaps.
+  const applyRec = async () => {
+    const p = recPending; if(!p || recBusy) return;
+    const base = athlete.program_text||"";
+    const r = applySwaps(base, p.rec.swaps);
+    if(!r.ok){
+      joeBubble(r.reason==="outdated"
+        ? "Your program changed since this rec was drafted, so it doesn't line up anymore. Tell me what you want and I'll redraft it against the current program."
+        : "Couldn't apply that cleanly. Tell me what you want changed and I'll redraft it.");
+      return;
+    }
+    setRecBusy(true);
+    try{
+      await sbUpdate("athletes",athlete.id,{program_text:r.text});
+      setAthlete(prev=>({...prev, program_text:r.text}));
+      snapshotProgram(athlete.id, r.text, "rec_apply");
+      const appliedAt = new Date().toISOString();
+      const expiresAt = recExpiry(p.rec.duration, new Date());
+      if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"rec_applied", blueprint:{rec:{...p.rec, parked:true, appliedAt, expiresAt}}, updated_at:appliedAt}).catch(()=>{});
+      setRecOpen(false); setRecPending(null);
+      try{ track("program_rec_applied","ai",{origin:p.rec.origin, duration:p.rec.duration}); }catch(_){}
+      joeBubble(expiresAt
+        ? `Applied. It's in your program now, and I'll put it back the way it was on ${new Date(expiresAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}.`
+        : "Applied. It's in your program for the rest of the block.");
+    }catch(_){
+      joeBubble("Couldn't save that just now, try again in a sec.");
+    }
+    setRecBusy(false);
+  };
+
+  // Reopen a parked rec from Past Blocks — the sheet comes back as it was.
+  const resumeRecRow = (row) => {
+    const rec = row?.blueprint?.rec; if(!rec) return;
+    if(recPending?.draftId && recPending.draftId!==row.id){
+      sbUpdateWhere("program_drafts",`?id=eq.${recPending.draftId}`,{blueprint:{rec:{...recPending.rec, parked:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
+    }
+    const un = {...rec, parked:false};
+    setRecPending({draftId:row.id, rec:un});
+    setRecWhyOpen(true);
+    setShowProgram(false); setSheetOpen(false); setPgOpen(false); setRecOpen(true);
+    sbUpdateWhere("program_drafts",`?id=eq.${row.id}`,{blueprint:{rec:un}, updated_at:new Date().toISOString()}).catch(()=>{});
+  };
+
+  // Manual revert from Past Blocks (an applied rec), and the timed auto-revert.
+  const revertRecRow = async (row, {auto=false} = {}) => {
+    const rec = row?.blueprint?.rec; if(!rec) return false;
+    const back = revertSwaps(athlete.program_text||"", rec.swaps);
+    if(!back.reverted) return false;
+    try{
+      await sbUpdate("athletes",athlete.id,{program_text:back.text});
+      setAthlete(prev=>({...prev, program_text:back.text}));
+      snapshotProgram(athlete.id, back.text, "rec_revert");
+      sbUpdateWhere("program_drafts",`?id=eq.${row.id}`,{status:"rec", blueprint:{rec:{...rec, parked:true, reverted:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
+      if(auto) joeBubble(`That ${durationLabel(rec.duration).toLowerCase()} change ("${rec.title}") ran its course — your program is back the way it was.${back.missed.length?" One line you'd hand-edited since was left alone.":""}`);
+      return true;
+    }catch(_){ return false; }
+  };
+
+  // Boot: restore the bar for the latest un-parked rec, and run any expired
+  // timed reverts. One read covers both.
+  useEffect(()=>{
+    if(!CHAT_FIRST_ON || !historyLoaded) return;
+    (async()=>{
+      try{
+        const rows = await sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.athlete&status=in.(\"rec\",\"rec_applied\")&order=updated_at.desc&limit=10`)||[];
+        for(const row of rows){
+          if(row.status==="rec_applied" && recExpired(row.blueprint?.rec)) await revertRecRow(row,{auto:true});
+        }
+        if(!recPending){
+          const live = rows.find(r=>r.status==="rec" && r.blueprint?.rec && !r.blueprint.rec.parked && !r.blueprint.rec.reverted);
+          if(live) setRecPending({draftId:live.id, rec:live.blueprint.rec});
+        }
+      }catch(_){}
+    })();
+  },[historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── T58/3b: BUILDER MODE IN CHAT + the program sheet ────────────────────────
   // The Builder tab dissolves into the thread: opt-in interview (blueprint strip
@@ -8315,6 +8526,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       pgInstruction(msg);
       return;
     }
+    // Rec sheet up: "I also want to change…" — typed text revises the REC
+    // (scope lives in conversation now, not chips — Will's rev-2 ruling).
+    if(CHAT_FIRST_ON && recOpen && typeof overrideText!=="string"){
+      setInput("");
+      recInstruction(msg);
+      return;
+    }
     // Builder mode: every typed message IS an interview answer.
     if(builderChat && typeof overrideText!=="string"){
       setInput("");
@@ -8995,6 +9213,47 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
          && !coachFlagOfferedRef.current[parsed.coach_flag]
          && noOtherOfferPending){
         coachFlagOfferedRef.current[parsed.coach_flag] = true;
+        if(CHAT_FIRST_ON){
+          // ── PROGRAM RECS pattern gate (Will 08-28): a Rec has to EARN its
+          // place. First mention of an auto-flag = a watched note that expires
+          // on its own; a Rec drafts only on a repeat from a different day,
+          // clearly serious pain language, or an explicit ask (which never
+          // routes through coach_flag at all). Circumstances shift — one odd
+          // day is allowed to be one odd day.
+          try {
+            const flag = parsed.coach_flag;
+            const severe = flag==="pain" && isSevereReport(msg);
+            const repeat = watchHit(memoryRows, flag, msg);
+            if(!severe && !repeat){
+              const topic = topicTokens(msg).join(" ") || msg.replace(/\s+/g," ").trim().slice(0,40);
+              const note = buildWatchNote(flag, topic);
+              const v = validateFact(note);
+              if(v.ok){
+                const ins = await sbInsert("athlete_memory",{athlete_id:updatedAthlete.id, content:v.content, kind:note.kind, expires_at:note.expires_at, source:"inferred"});
+                const row = Array.isArray(ins)?ins[0]:ins;
+                if(row && row.id) setMemoryRows(rows=>[row,...rows]);
+              }
+              followUp(flag==="pain"
+                ? "Noted. One rough day doesn't change the plan, I'll keep an eye on it. Shows up again and we'll do something about it."
+                : flag==="plateau"
+                ? "Logged it. I'm watching that lift now. If it's still stuck next week we change something."
+                : "Noted. One session without the gear isn't worth rewriting anything, but if it keeps being a problem I'll draft a program fix.");
+            } else {
+              followUp(severe
+                ? "That's not something to train through blind. I'm drafting a program rec for it, it'll be at the bottom of your screen in a second. Open it whenever."
+                : "That's twice now, so it's a pattern, not a fluke. I'm drafting a program rec for it, it'll be at the bottom of your screen. Open it whenever.");
+              const rec = await draftRecJSON({
+                programText: updatedAthlete.program_text||"",
+                context: `WHAT THE ATHLETE REPORTED (trigger flag: ${flag}${severe?", clearly serious":", second report on this issue within two weeks"}):\n"${msg}"`,
+                instruction: "Draft the smallest protective or corrective change for this.",
+                origin: flag,
+              });
+              if(!rec || !(await stageRec(rec))){
+                followUp("Couldn't line a clean change up just now. Tell me exactly what you want different and I'll draft it properly.");
+              }
+            }
+          } catch(e){}
+        } else {
         try {
           const draft = await draftChangeRequest({athlete: updatedAthlete, message: msg, programText: updatedAthlete.program_text||"", sourceHint: flagToSource(parsed.coach_flag), askClaude});
           setSelfChangePending({phase:"offer", suggestion: draft.suggestion, lift: draft.lift, current: draft.current, why: draft.why, source: draft.source, athleteMsg: msg});
@@ -9005,6 +9264,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
             : `If the gear keeps being a problem, the program should stop asking for it. Here's what I'd change:\n\n"${draft.suggestion}"\n\nWant me to make that change?`;
           followUp(offerCopy);
         } catch(e){}
+        }
       }
 
       // ── T53: typed preference proposal — propose, never assume ────────────
@@ -10034,6 +10294,88 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           the "safety space" Will has had removed 3× now (47941e6). The textbook
           iOS pattern is wrong for this app; leave it flat. Same rule for every
           bottom bar / modal footer below. */}
+      {/* ── PROGRAM REC bar (outlined variant — never fights the navy workout
+          bar when they stack; stacks ABOVE the program bar) ─────────────────── */}
+      {CHAT_FIRST_ON && recPending && !recOpen && (
+        <div style={{padding:"0 8px 6px",flexShrink:0}}>
+          <div onClick={()=>{setSheetOpen(false); setPgOpen(false); setRecOpen(true); setRecWhyOpen(true);}} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter"){ setSheetOpen(false); setPgOpen(false); setRecOpen(true); } }}
+            style={{background:CA.navy2,color:CA.accent,border:`1.5px solid ${CA.accent}`,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            <button onClick={e=>{e.stopPropagation();dismissRec();}} aria-label="Park the program rec"
+              style={{background:"none",border:"none",color:"inherit",opacity:.7,fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0}}>✕</button>
+            <span aria-hidden style={{width:7,height:7,borderRadius:"50%",background:CA.accent,flexShrink:0}}/>
+            <span style={{...DISP,fontSize:12.5,letterSpacing:0.6,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>PROGRAM REC — {recPending.rec.title}</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▲</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── PROGRAM REC sheet: only the week-tagged lines that change, WHY as a
+          collapsible strip, hard durations, Save for Later / Apply ──────────── */}
+      {CHAT_FIRST_ON && recPending && (
+        <div aria-hidden={!recOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
+          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          transform:recOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
+          pointerEvents:recOpen?"auto":"none",visibility:recOpen?"visible":"hidden",
+          background:CA.navy,display:"flex",flexDirection:"column"}}>
+          <div onClick={()=>setRecOpen(false)} role="button" tabIndex={0}
+            onKeyDown={e=>{ if(e.key==="Enter") setRecOpen(false); }}
+            style={{background:CA.navy3,color:CA.accent,borderBottom:`1px solid ${CA.border}`,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",flexShrink:0}}>
+            <span style={{...DISP,fontSize:13,letterSpacing:0.6}}>PROGRAM REC — {recPending.rec.title}</span>
+            <span aria-hidden style={{fontSize:12,opacity:.85}}>▼</span>
+          </div>
+          <div style={{flex:1,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+            {/* WHY — collapsible so the edits get the room (Will's Q4 call) */}
+            <div onClick={()=>setRecWhyOpen(v=>!v)} role="button" tabIndex={0} aria-label="Why this change"
+              style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:"8px 11px",cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.accent,textTransform:"uppercase"}}>
+                <span>Why this change</span><span aria-hidden>{recWhyOpen?"▴":"▾"}</span>
+              </div>
+              {recWhyOpen
+                ? <div style={{marginTop:5,fontSize:12,lineHeight:1.55,color:CA.muted2}}>{recPending.rec.why||"Joe drafted this from what you told him."}</div>
+                : <div style={{marginTop:3,fontSize:11,color:CA.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(recPending.rec.why||"").slice(0,80)}</div>}
+            </div>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.muted,textTransform:"uppercase",paddingLeft:2}}>What changes · {recPending.rec.swaps.length} {recPending.rec.swaps.length===1?"spot":"spots"}</div>
+            {recPending.rec.swaps.map((s,i)=>(
+              <div key={i} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,overflow:"hidden"}}>
+                <div style={{background:`${CA.amber}14`,borderBottom:`1px dashed ${CA.border}`,padding:"7px 10px"}}>
+                  <div style={{fontSize:8,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:CA.amber,marginBottom:3}}>
+                    {[s.week!=null?`Week ${s.week}`:null, s.day].filter(Boolean).join(" · ")||"In your program"} — replacing
+                  </div>
+                  <div style={{fontSize:11.5,color:CA.muted2,textDecoration:"line-through",textDecorationThickness:1,lineHeight:1.5}}>{s.find}</div>
+                </div>
+                <div style={{padding:"7px 10px"}}>
+                  <div style={{fontSize:8,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:CA.accent,marginBottom:3}}>With</div>
+                  <textarea value={s.replace} onChange={e=>recEditSwap(i, e.target.value)} spellCheck={false}
+                    aria-label={`Replacement ${i+1}`} rows={Math.max(1, Math.ceil(s.replace.length/44))}
+                    style={{width:"100%",background:"transparent",border:"none",outline:"none",resize:"none",color:CA.text,fontSize:12,lineHeight:1.5,fontFamily:"inherit",padding:0}}/>
+                </div>
+              </div>
+            ))}
+            {recBusy && <div style={{color:CA.muted,fontSize:12}}>Joe's updating the rec…</div>}
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.muted,textTransform:"uppercase",paddingLeft:2,marginTop:2}}>How long</div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {["1w","2w","3w","block"].map(d=>(
+                <button key={d} onClick={()=>recSetDuration(d)}
+                  style={{fontSize:10.5,fontWeight:recPending.rec.duration===d?700:600,border:`1px solid ${recPending.rec.duration===d?CA.accent:CA.border}`,
+                    background:recPending.rec.duration===d?`${CA.accent}18`:CA.navy2,color:recPending.rec.duration===d?CA.accent:CA.muted,
+                    borderRadius:20,padding:"5px 11px",cursor:"pointer"}}>{durationLabel(d)}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <button onClick={dismissRec} disabled={recBusy}
+              style={{background:CA.navy2,color:CA.accent,border:`1px solid ${CA.accent}`,borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:recBusy?0.6:1}}>
+              Save for Later
+            </button>
+            <button onClick={applyRec} disabled={recBusy}
+              style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:recBusy?"not-allowed":"pointer",opacity:recBusy?0.6:1}}>
+              Apply to Program
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── T58/3b: the program bar (stacks ABOVE the workout bar) ──────────── */}
       {CHAT_FIRST_ON && dockProgram && !pgOpen && (
         <div style={{padding:"0 8px 6px",flexShrink:0}}>
@@ -10159,7 +10501,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             🎬
           </button>
           <textarea value={input} onChange={e=>setInput(e.target.value)}
-            placeholder={CHAT_FIRST_ON&&(sheetOpen||pgOpen)?"Tell Joe what to change…":builderChat?"Answer here, or tap a chip…":sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
+            placeholder={CHAT_FIRST_ON&&recOpen?"I also want to change…":CHAT_FIRST_ON&&(sheetOpen||pgOpen)?"Tell Joe what to change…":builderChat?"Answer here, or tap a chip…":sessionCheckPending?"Tap a chip above, or keep typing (counts as same workout)...":`Tell Coach Joe about your workout, ${athlete.name}...`} rows={2}
             style={{flex:1,background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:12,padding:"10px 14px",color:CA.text,fontSize:14,outline:"none",resize:"none",lineHeight:1.5}}/>
           <button onClick={send} disabled={loading||videoLoading||!input.trim()||!historyLoaded||sheetBusy}
             style={{background:CA_BTN,boxShadow:`0 0 12px ${CA_GLOW}`,border:"none",borderRadius:12,width:44,height:44,cursor:(loading||!input.trim())?"not-allowed":"pointer",opacity:(loading||!input.trim())?0.5:1,fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:CA.onAccent,fontWeight:700}}>
@@ -10280,6 +10622,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                     directly above the pane's own "Current phase" heading. */}
                 <ProgramDraftsPane athlete={athlete} viewer="athlete"
                   autoConfirmId={draftsAutoConfirm}
+                  onResumeRec={CHAT_FIRST_ON?resumeRecRow:null} onRevertRec={CHAT_FIRST_ON?revertRecRow:null}
                   onResume={(d)=>{
                     // Chat-first: a parked interview reopens IN CHAT exactly where
                     // Builder mode began; a finished draft reopens on the program
@@ -10811,6 +11154,35 @@ SECTION 2: THE LOG (exactly what the athlete would type after the session):
 
 If the program says today is a rest day and no training day is clearly next, output exactly REST_DAY (no sections, no separator).
 No markdown, no commentary outside the two sections.`;
+
+// ─── PROGRAM REC DRAFTER (Will's 08-28 design) ───────────────────────────────
+// The ONE prompt that authors staged program changes — from pattern-confirmed
+// pain/plateau/equipment, from check-in agreement, from the mastermind's
+// propose_program_rec tool, and from sheet revisions. It never rewrites the
+// program: it names exact text to replace, and src/recs.js refuses anything it
+// can't locate verbatim and uniquely. Surgical by construction.
+const REC_DRAFT_SYS = `You draft a PROGRAM REC for a strength app: a small, surgical, staged change to an athlete's saved training program. You NEVER rewrite the program - you name exact text to replace, and the app performs the replacement mechanically.
+Return ONLY valid JSON, no markdown:
+{"title":string,"why":string,"duration":"1w"|"2w"|"3w"|"block","swaps":[{"week":number|null,"day":string|null,"find":string,"replace":string}]}
+Rules:
+- Each swap's "find" is text copied VERBATIM from the program - exact characters, spacing, punctuation - and long enough to be unique at its spot. Never paraphrase or reformat it.
+- "week": the week number the found text sits in (null if the program has no week structure). "day": the weekday word or day label on that line (null if none). When the SAME text appears in more than one week and all should change, emit one swap per week, each tagged with its week.
+- "replace" is the complete new text for that exact spot, written in the program's own style. To ADD something to a day, "find" the existing text and include it plus the addition in "replace".
+- The smallest change that does the job, proportionate to the problem, never drastic. NEVER touch text outside the problem or the ask. Keep the athlete's stated goal intact.
+- Loads: keep the program's own loading language. When building from a LOGGED workout, carry the logged exercises, sets, reps and loads EXACTLY as logged; recompute percentages only when the athlete asked for progression, using the program's stated maxes, and then show weight and percent together.
+- "why": 1-3 plain sentences in Coach Joe's voice tying the change to what the athlete said or logged. Quote their words where it helps. No em dashes.
+- "duration": "1w"|"2w"|"3w" for things that should heal or pass, "block" when it should ride out the block. Nothing else exists.
+- "title": max 40 chars, plain, names the change ("Left pec - floor press swap").
+If no safe surgical change exists, return {"title":"","why":"<one sentence saying why not>","duration":"block","swaps":[]}.`;
+
+async function draftRecJSON({programText, context, instruction, origin}) {
+  const user = `PROGRAM (copy "find" text ONLY from here, verbatim):\n${programText}\n\n${context?`${context}\n\n`:""}${instruction?`THE ASK / TRIGGER:\n${instruction}`:""}`;
+  const raw = await askClaude(REC_DRAFT_SYS, user, 2000, [], "claude-sonnet-5", "program_generate");
+  let js = null;
+  try{ js = JSON.parse(String(raw||"").replace(/```json|```/g,"").trim()); }catch(_){ return null; }
+  const v = validateRecPayload({...js, origin});
+  return v.ok ? v.rec : null;
+}
 
 const QL_EDIT_SYS = `You revise a prefilled workout-log draft per an athlete's instruction. You get their program, recent sessions, 1RMs, coaching context (goals/context/injury/form reviews), Joe's focus note (reference only), the CURRENT draft, and the instruction.
 
@@ -12015,7 +12387,7 @@ function EditWorkoutModal({session, onClose, onRowUpdated}) {
 // the confirmed text to onSaveToProgram, which is the caller's own gated save
 // path (athlete: sbUpdate + snapshot; coach: onProgramSave — so the coach
 // notification + parse-at-save ride along free).
-export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume, autoConfirmId=null}){
+export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, onResume, onResumeRec=null, onRevertRec=null, autoConfirmId=null}){
   const [drafts,setDrafts] = useState([]);
   const [loaded,setLoaded] = useState(false);
   const [confirming,setConfirming] = useState(null); // {draft, diff} → replace-confirm view
@@ -12029,7 +12401,10 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     // themselves; the coach sees their own drafts for this athlete (the read
     // gateway already scopes coach reads of this table to coach_id).
     const ownerFilter = viewer==="coach" ? "coach" : "athlete";
-    sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.("interview","draft")&order=updated_at.desc&select=*`)
+    // Program Recs (Will 08-28) ride the same rows; they surface here only for
+    // the athlete under chat-first (the handlers arrive as props from that path).
+    const statuses = onResumeRec ? '("interview","draft","rec","rec_applied")' : '("interview","draft")';
+    sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.${statuses}&order=updated_at.desc&select=*`)
       .then(r=>{ if(Array.isArray(r)) setDrafts(r); })
       .catch(()=>{})
       .finally(()=>setLoaded(true));
@@ -12109,17 +12484,56 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     );
   }
 
+  const recRows = drafts.filter(d=>d.status==="rec"||d.status==="rec_applied");
+  const builderRows = drafts.filter(d=>d.status!=="rec"&&d.status!=="rec_applied");
+  const recOf = (d) => d.blueprint?.rec || null;
+
   return (
     <div>
+      {/* ── Program Recs (staged changes — parked, applied-with-a-clock, spent) ── */}
+      {recRows.length>0&&(<>
+        <div style={sub}>Program recs</div>
+        {recRows.map(d=>{
+          const r = recOf(d); if(!r) return null;
+          const applied = d.status==="rec_applied";
+          return (
+            <div key={d.id} style={card}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+                <span style={{...DISP,fontSize:15,letterSpacing:1,color:CA.text}}>{d.title||"PROGRAM REC"}</span>
+                <span style={{background:applied?`${CA.green}18`:`${CA.accent}18`,border:`1px solid ${applied?CA.green:CA.accent}55`,color:applied?CA.green:CA.accent,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
+                  {applied?"Applied":r.reverted?"Reverted":"Rec"}
+                </span>
+                <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
+              </div>
+              <div style={{color:CA.muted2,fontSize:12,lineHeight:1.55,marginBottom:10}}>
+                {r.swaps.length} {r.swaps.length===1?"spot":"spots"} · {durationLabel(r.duration)}{applied&&r.expiresAt?` · reverts ${fmtD(r.expiresAt)}`:""}
+                {r.why?` — ${String(r.why).slice(0,110)}${String(r.why).length>110?"…":""}`:""}
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {!applied&&onResumeRec&&<button onClick={()=>onResumeRec(d)} style={miniBtn(true)}>Open</button>}
+                {applied&&onRevertRec&&<button onClick={async()=>{ if(await onRevertRec(d)) load(); }} style={miniBtn(true,CA.amber)}>Revert now</button>}
+                {!applied&&(deleteArm===d.id?(
+                  <>
+                    <button onClick={()=>deleteDraft(d)} disabled={busy} style={miniBtn(true,CA.red)}>{busy?"…":"Really delete"}</button>
+                    <button onClick={()=>setDeleteArm(null)} style={miniBtn(false)}>Keep</button>
+                  </>
+                ):(
+                  <button onClick={()=>setDeleteArm(d.id)} style={miniBtn(false)}>Delete</button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </>)}
       {/* ── Drafts ── */}
       <div style={sub}>Drafts & parked interviews</div>
       {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
-      {loaded&&drafts.length===0&&(
+      {loaded&&builderRows.length===0&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
           Nothing here yet. When {viewer==="coach"?"you build":"you and Joe build"} a program in the Builder, parked interviews and finished drafts wait here, nothing touches the live program until it's saved.
         </div>
       )}
-      {drafts.map(d=>(
+      {builderRows.map(d=>(
         <div key={d.id} style={card}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
             <span style={{...DISP,fontSize:15,letterSpacing:1,color:CA.text}}>

@@ -254,7 +254,9 @@ const ATHLETE_COL_ALLOW = {
     ]),
     values: {
       owner_type: (v) => v === "athlete",
-      status: (v) => ["interview", "draft", "applied"].includes(v),
+      // rec / rec_applied: staged Program Recs (Will's 08-28 design) ride the
+      // same rows as Builder drafts — the payload lives in blueprint.rec.
+      status: (v) => ["interview", "draft", "applied", "rec", "rec_applied"].includes(v),
       scope: (v) => ["full", "short", "quick"].includes(v),
     },
   },
