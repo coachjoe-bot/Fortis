@@ -194,7 +194,11 @@ const ATHLETE_COL_ALLOW = {
   athlete_memory: {
     cols: new Set(["content", "kind", "expires_at", "source", "status", "updated_at"]),
     values: {
-      content: (v) => typeof v === "string" && v.trim().length > 0 && v.length <= 240,
+      // T61 (Will 08-29): 2000 is the abuse bound, not a product cap — the
+      // injected block is token-budgeted in src/memory.js. DB CHECK twin:
+      // migration 20260829_athlete_memory_content_2000 (constraint and this
+      // pin must move together — the recs-wave trap).
+      content: (v) => typeof v === "string" && v.trim().length > 0 && v.length <= 2000,
       kind: (v) => ["pinned", "contextual", "situational"].includes(v),
       source: (v) => ["athlete_said", "inferred"].includes(v),
       status: (v) => ["active", "deleted"].includes(v),

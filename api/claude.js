@@ -61,7 +61,10 @@ const ALLOWED_MODELS = new Set([
 // conversational surfaces get full effort; extraction stays cheap. Thinking stays
 // explicitly disabled everywhere (streaming + JSON parsing depend on it).
 const HIGH_EFFORT_FEATURES = new Set(["joebot_chat", "coach_checkin", "mastermind_chat"]);
-const MEDIUM_EFFORT_FEATURES = new Set(["proof_weekly", "proof_monthly", "proof_coach"]);
+// memory_edit: the Memory tab's ask-Joe box — a scope judgment (apply vs deny)
+// plus structured ops, not bulk extraction; low effort flubbed judgment calls
+// before (the coach-brain lesson), high is wasted on a JSON contract.
+const MEDIUM_EFFORT_FEATURES = new Set(["proof_weekly", "proof_monthly", "proof_coach", "memory_edit"]);
 function modelParams(model, feature) {
   if (model === "claude-sonnet-5" || model === "claude-sonnet-4-6") {
     const effort = HIGH_EFFORT_FEATURES.has(feature) ? "high"

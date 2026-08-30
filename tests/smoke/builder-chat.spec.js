@@ -46,12 +46,12 @@ test("builder mode: offer → strip → answer fills cells → read-back → dra
   await expect(page.getByRole("textbox", { name: "Program draft" })).toHaveValue(/BLOCK INFO/);
   await expect(page.getByPlaceholder("Tell Joe what to change…")).toBeVisible();
   await page.getByRole("button", { name: "Save to Drafts" }).click();
-  await expect(page.getByText(/Saved to Past Blocks as a draft/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Saved as a draft under Program, Memory/)).toBeVisible({ timeout: 15000 });
   // The bar leaves the screen on save.
   await expect(page.getByRole("button", { name: "Save to Drafts" })).toHaveCount(0);
 });
 
-test("builder mode: SAVE & EXIT parks the interview to Past Blocks", async ({ page }) => {
+test("builder mode: SAVE & EXIT parks the interview to Memory, Drafts", async ({ page }) => {
   const athlete = makeAthlete({ program_text: null });
   await mockApi(page, { athlete, parseResult: CREATE_PARSE });
   await loginAsAthlete(page, athlete, "/?chatfirst=1");
@@ -62,11 +62,11 @@ test("builder mode: SAVE & EXIT parks the interview to Past Blocks", async ({ pa
   await expect(page.getByText("Blueprint", { exact: true })).toHaveCount(0);
 });
 
-test("chat-first: the BUILDER tab is gone; PHASES reads PAST BLOCKS", async ({ page }) => {
+test("chat-first: the BUILDER tab is gone; PHASES reads MEMORY", async ({ page }) => {
   const athlete = makeAthlete({ program_text: "Day 1 - Push\nBench Press 3x5 @ 185" });
   await mockApi(page, { athlete });
   await loginAsAthlete(page, athlete, "/?chatfirst=1");
   await page.getByRole("button", { name: "Program", exact: true }).click();
-  await expect(page.getByRole("button", { name: "PAST BLOCKS" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "MEMORY" })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("button", { name: "BUILDER", exact: true })).toHaveCount(0);
 });
