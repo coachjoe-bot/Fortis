@@ -13574,6 +13574,7 @@ HARD RULES:
 
 OUTPUT SHAPE:
 {"decision":"apply"|"deny","reply":"1-2 short sentences in your plain voice","ops":[]}
+The reply is plain text in Joe's voice: no markdown, no em dashes (commas, periods, colons only).
 ops only when decision is "apply", up to 8, each one of:
 {"op":"add","content":"the fact","kind":"pinned"|"contextual"|"situational","expires_at":"YYYY-MM-DD or null"}
 {"op":"edit","match":"distinctive substring of the existing fact","content":"full replacement text"}
