@@ -12,10 +12,13 @@ const DRAFT = "Day 1 - Push\nBench Press 3x5 @ 185\nDips 3x8";
 
 // Route the AI proxy per-feature on top of mockApi (newest route wins).
 const aiByFeature = async (page, map) => {
+  // Web parity 08-29: chat bills as mastermind_chat everywhere now — a spec
+  // keyed on the legacy joebot_chat serves the mastermind feature too.
   await page.route("**/api/claude", (route) => {
     const body = route.request().postDataJSON() || {};
-    if (!(body.feature in map)) return route.fallback(); // mockApi serves parse/chat correctly
-    route.fulfill({ contentType: "application/json", body: JSON.stringify({ content: [{ type: "text", text: map[body.feature] }], usage: {} }) });
+    const key = body.feature === "mastermind_chat" && !("mastermind_chat" in map) && ("joebot_chat" in map) ? "joebot_chat" : body.feature;
+    if (!(key in map)) return route.fallback(); // mockApi serves parse/chat correctly
+    route.fulfill({ contentType: "application/json", body: JSON.stringify({ content: [{ type: "text", text: map[key] }], usage: {} }) });
   });
 };
 
@@ -60,25 +63,22 @@ test("logging a workout stamps WORKOUT #N with the athlete's real number", async
   await expect(page.locator(".stamp")).toContainText("#5");
 });
 
-test("'put my program on my home screen' pins with ZERO taps when notifications are granted", async ({ page, context }) => {
+test("web parity (Will 08-29): a lock-screen ask NEVER posts a web notification, even fully granted", async ({ page, context }) => {
+  // Notifications are the one deliberate platform difference: native-only.
+  // Grant everything and stub a live SW anyway — the point is that web still
+  // refuses to touch the notification surface.
   await context.grantPermissions(["notifications"]);
-  // Headless Chromium reports Notification.permission "denied" even after a
-  // grant — stub the getter so the spec exercises OUR granted branch.
   await page.addInitScript(() => {
     try { Object.defineProperty(Notification, "permission", { get: () => "granted" }); } catch (_) {}
-  });
-  const athlete = makeAthlete({ program_text: PROGRAM });
-  await mockApi(page, { athlete });
-  await aiByFeature(page, { quick_log_draft: DRAFT, joebot_chat: "You got it." });
-  // mocks.js stubs SW registration into a never-resolving promise; the card path
-  // awaits serviceWorker.ready → give it a resolved stand-in that records the post.
-  await page.addInitScript(() => {
     try {
       Object.defineProperty(navigator.serviceWorker, "ready", {
         get: () => Promise.resolve({ showNotification: async (t, o) => { window.__cardPosted = { t, o }; } }),
       });
     } catch (_) {}
   });
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  await mockApi(page, { athlete });
+  await aiByFeature(page, { quick_log_draft: DRAFT, joebot_chat: "You got it." });
 
   await loginAsAthlete(page, athlete);
   await expect(page.getByText(/Here's today/)).toBeVisible({ timeout: 15000 });
@@ -86,10 +86,11 @@ test("'put my program on my home screen' pins with ZERO taps when notifications 
   await page.getByPlaceholder(/Tell Coach Joe about your workout/).fill("can you put my program on my home screen?");
   await page.getByRole("button", { name: "→", exact: true }).click();
 
-  // The APP's own confirmation — not a model claim — and no permission chip.
-  await expect(page.getByText(/on your lock screen\. It clears itself/)).toBeVisible({ timeout: 20000 });
+  // Joe still answers; no permission chip, no app pin line, no notification.
+  await expect(page.getByText("You got it.")).toBeVisible({ timeout: 20000 });
   await expect(page.getByRole("button", { name: /Put it on my lock screen/ })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => !!window.__cardPosted)).toBe(true);
+  await expect(page.getByText(/on your lock screen\. It clears itself/)).toHaveCount(0);
+  await expect(page.evaluate(() => !!window.__cardPosted)).resolves.toBeFalsy();
 });
 
 // ─── Opener answer buttons (Will 08-29: big in-bubble, not floating chips) ───
@@ -122,7 +123,7 @@ test("the opener bubble carries the three big answer buttons", async ({ page }) 
   await expect(page.getByRole("button", { name: "Different Workout" })).toBeVisible();
 });
 
-test("opener YES pins today's session with zero further taps when granted", async ({ page, context }) => {
+test("opener YES on web: the workout bar comes up, no notification ever (parity 08-29)", async ({ page, context }) => {
   await grantCardStubs(page, context);
   const athlete = makeAthlete({ program_text: PROGRAM });
   await mockApi(page, { athlete });
@@ -131,10 +132,11 @@ test("opener YES pins today's session with zero further taps when granted", asyn
   await loginAsAthlete(page, athlete);
   await page.getByRole("button", { name: "Start Workout" }).click();
 
-  // The APP's own confirmation — never a model claim — and the chips retire.
-  await expect(page.getByText(/on your lock screen and it clears itself/)).toBeVisible({ timeout: 20000 });
+  // Web has no lock screen to pin: the session lives on the in-chat bar.
+  await expect(page.getByText(/Log it here when you're done/)).toBeVisible({ timeout: 20000 });
   await expect(page.getByRole("button", { name: "Start Workout" })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => !!window.__cardPosted)).toBe(true);
+  await expect(page.getByText("Day 1 - Push", { exact: true }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.evaluate(() => !!window.__cardPosted)).resolves.toBeFalsy();
 });
 
 test("opener NO answers with the open door and retires the chips", async ({ page }) => {
@@ -166,7 +168,10 @@ test("opener DIFFERENT WORKOUT: the next message picks the session, Quick Log + 
   await page.getByRole("button", { name: "→", exact: true }).click();
 
   await expect(page.getByText(/Swapped/)).toBeVisible({ timeout: 20000 });
-  await expect.poll(() => page.evaluate(() => window.__cardPosted && JSON.stringify(window.__cardPosted))).toContain("Row 3x8");
+  // Web parity (08-29): the swapped session lands on the in-chat workout bar,
+  // never on a notification.
+  await expect(page.getByText("Day 2 - Pull", { exact: true }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.evaluate(() => !!window.__cardPosted)).resolves.toBeFalsy();
 });
 
 // ─── T57-B: recovery-email banner for name-only accounts ──────────────────────

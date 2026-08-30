@@ -14,17 +14,16 @@
 export const CREW_ENABLED = false;
 
 // T58/T59 mastermind (Will, 08-24): the tool-carrying chat brain — Joe decides
-// what to DO (position, memory, session card, log sheet, preferences) as well
-// as what to say. NATIVE-GATED in App.jsx (flag AND isNativeIOS(), or the
-// ?mastermind=1 preview override) — flipped ON 08-25 on Will's "deploy it to
-// the TestFlight version" ruling; he is the only TestFlight tester. Web chat
-// keeps the legacy brain until he flips it there.
+// what to DO (position, memory, program recs, log sheet, preferences) as well
+// as what to say. WEB PARITY 08-29 (Will: "web and TestFlight exactly the
+// same"): the native gate came off — this flag alone decides, everywhere.
 export const MASTERMIND_ENABLED = true;
 
 // T58/T59 chat-first UI (Will, 08-24): LOG/Builder/Drafts tabs dissolve into
-// chat (dock bars + sheets + Builder mode). NATIVE-FIRST: the real gate is
-// this flag AND isNativeIOS() (or the ?chatfirst=1 preview override) — web
-// keeps the current tabs. Flipped ON 08-25 for Will's TestFlight morning test.
+// chat (dock bars + sheets + Builder mode + Program Recs). WEB PARITY 08-29:
+// native gate removed — the flag alone decides, web included. The ONE
+// deliberate platform difference is notifications: pushes + the lock-screen
+// session card are native-only and web never offers them.
 // ⚠️ Before Add for Review: either the App Store screenshots get retaken on
 // this UI or this flips back off — the reviewer's build OTAs to it.
 export const CHAT_FIRST_ENABLED = true;

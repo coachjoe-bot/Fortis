@@ -70,6 +70,16 @@ export function matchFacts(rows, match, now = new Date()) {
   return { ok: true, rows: hits };
 }
 
+// Pin/unpin from the Memory tab (T61). Pinning clears the expiry — a pinned
+// fact is "always relevant" and must never silently die at read time under a
+// leftover situational expires_at. Unpinning lands on contextual (background),
+// never back on situational: the athlete's tap carries no new expiry date.
+export function pinTogglePatch(row) {
+  return row && row.kind === "pinned"
+    ? { kind: "contextual" }
+    : { kind: "pinned", expires_at: null };
+}
+
 // The prompt block. Pinned facts in full first, then the newest contextual/
 // situational facts as index lines, bounded to MEMORY_INDEX_CAP total. The
 // legacy athlete_context blob (dated notes, one line each) rides along until

@@ -84,9 +84,40 @@ export const TOUR_SCRIPT = {
 //   parts   — tap-through text stages; the second lands with emphasis
 //   partTargets / interactive / noDim — scalars, or arrays indexed by part
 //   cta     — label of a button that must be pressed instead of tapping through
-export const athleteTourSteps = ({ free }) => free ? [
+export const athleteTourSteps = ({ free, chatFirst = false }) => free ? [
   { key:"chat", banner:"WILCO CHAT BOT", target:["chat","chat-input"], title:"TALK TO ME",
     parts:["WILCO is your AI strength coach. Text me like you'd text a real coach: workouts you finished, questions, a knee that's acting up. All of it goes in the box at the bottom."] },
+  { key:"thanks", banner:null, target:null, title:"THANKS FOR USING WILCO",
+    parts:["We hope you love it as much as we do.\nJoe"], cta:"Finish" },
+] : chatFirst ? [
+  // ── Chat-first tour (T59; web parity 08-29). The Builder tab and the Quick
+  // Log button no longer exist — the Builder is a chat mode and logging rides
+  // the workout bar — so this variant teaches THAT app. No scripted sheet demo:
+  // the old one is welded to the retired Quick Log sheet.
+  { key:"chat", banner:"WILCO CHAT BOT", target:["chat","chat-input"], title:"TALK TO ME",
+    parts:["WILCO is your AI strength coach. This chat is the whole app, really. Text me like you'd text a real coach: workouts you finished, questions, a knee that's acting up. All of it goes in the box at the bottom."] },
+
+  { key:"program", banner:"THE PROGRAM TAB", target:"program-btn", title:"YOUR PROGRAM",
+    parts:[
+      "Your program is your training plan: which days you train and exactly what you do on each of those days. If your coach is programming for you, it'll show up here. Got your own program already? Paste it in or drop in a screenshot.",
+      "Don't have one? Just ask me in chat and we'll build it together, right in the conversation.",
+    ] },
+
+  { key:"logging", banner:"LOGGING A WORKOUT", target:["chat","chat-input"], title:"HOW LOGGING WORKS", noDim:true,
+    parts:[
+      "When you're starting a session, today's workout slides in on a bar at the bottom of this chat, filled out from your program. Open it, fix anything that goes differently, and hit Finish Workout when you're done.",
+      "Prefer typing? Just tell me what you did in your own words. Either way, I log the whole session and catch your PRs.",
+    ] },
+
+  { key:"mylog", banner:"MY LOG", target:"mylog-btn", title:"MY LOG",
+    parts:["Every session you've logged lives here. And once a week, The Proof drops. The Proof is a news-feed overview of your training: you zoom out from the day to day, see which direction you're headed and how close you are to your goals, and have a conversation with WILCO over any changes you want to make."] },
+
+  { key:"progress", banner:"PROGRESS", target:"progress-btn", title:"PROGRESS",
+    parts:[
+      "Your numbers, rankings, strength standards and personal records are all stored here. When your program calls for a percentage or an estimated weight, I work it off your true 1-rep max if you've entered one, or off my best estimate built from what you've actually logged.",
+      "The more you log, the sharper this gets.",
+    ] },
+
   { key:"thanks", banner:null, target:null, title:"THANKS FOR USING WILCO",
     parts:["We hope you love it as much as we do.\nJoe"], cta:"Finish" },
 ] : [

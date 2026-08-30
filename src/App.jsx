@@ -75,15 +75,17 @@ import { blueprintPct } from "./programBuilder.js";
 import { validateFact, findDuplicate, matchFacts, buildMemoryBlock, activeFacts } from "./memory.js";
 import { locateSwaps, applySwaps, revertSwaps, recExpiry, recExpired, durationLabel, validateRecPayload, buildWatchNote, watchHit, isSevereReport, topicTokens } from "./recs.js";
 
-// T58 rollout gates, resolved once per load. ?mastermind=1 / ?chatfirst=1 are
-// preview overrides (never persisted) so Will can drive both on a web preview
-// before any flag flips; the real switches live in src/flags.js.
+// T58 rollout gates, resolved once per load. ?mastermind=1 / ?chatfirst=1 stay
+// as preview overrides for whenever a flag is off; the real switches live in
+// src/flags.js.
 const urlFlag = (k) => { try { return new URLSearchParams(window.location.search).has(k); } catch(_) { return false; } };
-const MASTERMIND_ON = (MASTERMIND_ENABLED && isNativeIOS()) || urlFlag("mastermind");
-// Chat-first ships NATIVE-FIRST (Will 08-24): flag AND native iOS, with the URL
-// override for web previews. app.trainwilco.com keeps the tab UI either way
-// until Will flips CHAT_FIRST for web deliberately.
-export const CHAT_FIRST_ON = (CHAT_FIRST_ENABLED && isNativeIOS()) || urlFlag("chatfirst");
+// WEB PARITY (Will 08-29): web and TestFlight run the SAME app — the native
+// gate came off both features. The one deliberate difference left is
+// notifications: pushes and the lock-screen session card are native-only, and
+// the web surface never offers them (see sessionCardSupported + the
+// athlete-side push gates).
+const MASTERMIND_ON = MASTERMIND_ENABLED || urlFlag("mastermind");
+export const CHAT_FIRST_ON = CHAT_FIRST_ENABLED || urlFlag("chatfirst");
 import { validatePref, normalizePrefs, describePref, prefsPromptLines, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { parseBlockInfo, stripBlockInfo } from "./programContract.js";
 import { lineDiff, findPlacement, mergeGuard, mergeSystemPrompt } from "./programDiff.js";
@@ -6357,7 +6359,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const startTour = (replay) => {
     const free = effectiveTier(athlete)==="free"; // trial athletes tour as Pro
     setTourOffer(false); setTourChips(false);
-    setTour({steps:athleteTourSteps({free}), idx:0, part:0, replay:!!replay, free});
+    setTour({steps:athleteTourSteps({free, chatFirst:CHAT_FIRST_ON}), idx:0, part:0, replay:!!replay, free});
     track("tour_start","nav",{role:"athlete",replay:!!replay});
   };
   const declineTour = () => {
@@ -7412,9 +7414,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         if(Array.isArray(ctxRows)&&ctxRows.length>0) setAthleteContext(ctxRows.map(r=>r.content).join("\n\n"));
         if(Array.isArray(digestRows)&&digestRows.length>0) setProofDigest(digestRows[0]);
 
-        // Keep an already-enabled push subscription registered server-side
-        // (best-effort; never subscribes anew, never prompts)
-        syncPushSubscription();
+        // WEB PARITY (Will 08-29): athlete notifications are native-only now,
+        // so the web-subscription boot re-sync is retired — the web app
+        // neither offers nor maintains push. (syncPushSubscription stays
+        // defined in case push ever returns to web; nothing calls it today.)
 
         if(logs&&logs.length>0) setWorkoutHistory(logs);
 
@@ -7531,10 +7534,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     track("workout_logged","workout_log",{ persisted: tier!=="free" });
     // One-time notifications offer, right after a log lands (the moment the value
     // is obvious). Shown once ever: answering either way stamps PUSH_PROMPT_KEY.
-    // Skipped where push can't work (unsupported platform / permission denied) or
-    // when this browser is already subscribed.
+    // NATIVE-ONLY (Will 08-29 web parity ruling): notifications are the one
+    // platform difference — the web athlete surface never offers them.
     try {
-      if(pushSupported() && !localStorage.getItem(PUSH_PROMPT_KEY) && notifPermission()!=="denied"){
+      if(isNativeIOS() && pushSupported() && !localStorage.getItem(PUSH_PROMPT_KEY) && notifPermission()!=="denied"){
         getPushSubscription().then(sub=>{ if(!sub) setShowPushPrompt(true); });
       }
     } catch(_) {}
@@ -14417,11 +14420,11 @@ function SettingsModal({athlete, onClose, onCoachUpdate, onProofRefresh, onLogou
   const DOW = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   const tz = (()=>{ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone||"America/New_York"; }catch{ return "America/New_York"; } })();
 
-  // ── Push notifications (Web Push v1) ───────────────────────────────────────
-  // The whole section hides itself where push can't work (e.g. iOS Safari tab
-  // not installed to the home screen). pushOn reflects THIS browser's live
-  // subscription state, read on open.
-  const pushOk = pushSupported();
+  // ── Push notifications ─────────────────────────────────────────────────────
+  // NATIVE-ONLY for athletes (Will 08-29 web parity ruling): the web app never
+  // offers notifications, so this whole Settings section renders only in the
+  // native shell. pushOn reflects the live registration state, read on open.
+  const pushOk = isNativeIOS() && pushSupported();
   const [pushOn,setPushOn] = useState(false);
   const [pushBusy,setPushBusy] = useState(false);
   const [pushMsg,setPushMsg] = useState("");

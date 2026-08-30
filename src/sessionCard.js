@@ -100,16 +100,20 @@ export const asksClearCard = (msg) => ASKS_CLEAR_CARD_RE.test(String(msg || ""))
 // ── platform support / permission ────────────────────────────────────────────
 // Native Live Activity when the shell provides it (the SessionCard Capacitor
 // plugin, ios/App/WilcoSessionCard) — a truly PINNED lock-screen surface that
-// other notifications can't bury and Clear All can't sweep. Web notification
-// otherwise.
+// other notifications can't bury and Clear All can't sweep.
+//
+// WEB PARITY RULING (Will 08-29): notifications are the ONE deliberate
+// platform difference — the web app never offers them, so the old
+// web-notification card fallback (post + re-pin cycle) is retired. On web the
+// session lives on the in-chat workout bar instead; every card call site
+// already degrades through this returning false ("Log it here when you're
+// done"). The web helpers below stay for clear/expiry hygiene on cards that
+// predate this ruling.
 const nativeSessionCard = () =>
   (typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() &&
    window.Capacitor?.Plugins?.SessionCard) || null;
 
-export const sessionCardSupported = () =>
-  !!nativeSessionCard() ||
-  (typeof window !== "undefined" && "Notification" in window &&
-   typeof navigator !== "undefined" && "serviceWorker" in navigator);
+export const sessionCardSupported = () => !!nativeSessionCard();
 
 // ── show / clear / re-pin ────────────────────────────────────────────────────
 // Web path posts under one tag, so an update silently REPLACES the pinned card

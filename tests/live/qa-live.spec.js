@@ -9,11 +9,17 @@ const NAME = process.env.QA_ATHLETE_NAME;
 const PIN = process.env.QA_ATHLETE_PIN;
 test.skip(!NAME || !PIN, "seed first: node --env-file=.env scripts/seed-qa-athlete.mjs");
 
-test("live: login → today's-session opener → zero-tap card ask → log → WORKOUT stamp", async ({ page }) => {
-  // Notification.permission reads "denied" in headless; stub granted so the
-  // zero-tap branch runs (the pin outcome message is asserted either way).
+test("live: login → today's-session opener → log → WORKOUT stamp (web posts NO notifications)", async ({ page }) => {
+  // Web parity (Will 08-29): notifications are native-only. Grant everything
+  // and shim the notification surface — the whole spec must end with ZERO posts.
   await page.addInitScript(() => {
     try { Object.defineProperty(Notification, "permission", { get: () => "granted" }); } catch (_) {}
+    window.__cards = [];
+    try {
+      ServiceWorkerRegistration.prototype.showNotification = function (title, options) {
+        window.__cards.push({ title, ...options }); return Promise.resolve();
+      };
+    } catch (_) {}
   });
 
   await page.goto("/");
@@ -27,9 +33,6 @@ test("live: login → today's-session opener → zero-tap card ask → log → W
   await expect(page.getByText(/Here's today|Rest day on your block/)).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText(/what have you been up to/i)).toHaveCount(0);
 
-  // 2 ── zero-tap lock-screen ask, "home screen" phrasing, real AI reply + the
-  // APP's own truthful outcome line (pinned, rest day, or blocked — never silence,
-  // never a model claim).
   // Dismiss any first-open interstitials (tour offer, block-end prompt) —
   // seeded away, but the harness must survive them if seeding drifts.
   for (const label of [/No thanks/i, /^Later$/i]) {
@@ -38,13 +41,8 @@ test("live: login → today's-session opener → zero-tap card ask → log → W
   }
 
   const composer = page.getByPlaceholder(/Tell Coach Joe about your workout/);
-  await composer.fill("can you put my program on my home screen?");
-  await page.getByRole("button", { name: "→", exact: true }).click();
-  await expect(page.getByText(/on your lock screen|rest day on your program|blocking WILCO notifications|Couldn't pin it/i))
-    .toBeVisible({ timeout: 60_000 });
-  await expect(page.getByRole("button", { name: /Put it on my lock screen/ })).toHaveCount(0);
 
-  // 3 ── log a small accessory session through the REAL parser. Unique reps per
+  // 2 ── log a small accessory session through the REAL parser. Unique reps per
   // run/retry: identical text made a retry a duplicate of its own first attempt
   // (T57 s5). And the WORKOUT #N stamp only fires when the SESSION COUNT rises —
   // sessions group on a 3h window, so a second live run inside 3h of the first
@@ -57,6 +55,10 @@ test("live: login → today's-session opener → zero-tap card ask → log → W
   const stamp = page.locator(".stamp", { hasText: "WORKOUT" });
   await expect(stamp.or(page.getByText(/face pull/i).last())).toBeVisible({ timeout: 60_000 });
   if (await stamp.count()) await expect(stamp).toContainText(/#\d+/);
+
+  // 3 ── the parity claim: nothing in this whole session touched the web
+  // notification surface.
+  expect(await page.evaluate(() => window.__cards.length)).toBe(0);
 });
 
 // Shared login for the T57 session-2 flows below (hand-verified 08-18/19, now encoded).
@@ -93,25 +95,59 @@ test("live: the unit toggle round-trips every athlete surface (kg ↔ lbs)", asy
   await expect(page.getByText(/\d+(\.\d+)?kg/)).toHaveCount(0);
 });
 
-test("live: Quick Log prefashions today's session and sends it through the real parser", async ({ page }) => {
+test("live: chat-first logging — Start Workout raises the bar, the sheet pre-fills, Finish sends through the real parser", async ({ page }) => {
+  // Web parity (08-29): the LOG button is gone everywhere — logging rides the
+  // opener chips → workout bar → sheet → FINISH WORKOUT, on web exactly as on
+  // TestFlight.
   await login(page);
-  await page.getByRole("button", { name: "LOG", exact: true }).click();
-  // The AI prefill lands in the editable draft (program day + loads), never empty
-  // — and SEND only arms once it has. Waiting on the BUTTON (not the textarea)
-  // avoids racing the prefill against selector order.
-  const send = page.getByRole("button", { name: /SEND TO CHAT/ });
-  await expect(send).toBeVisible({ timeout: 20_000 });
-  await expect(send).toBeEnabled({ timeout: 60_000 });
-  const draft = page.locator("textarea").last();
-  await expect(draft).not.toHaveValue("", { timeout: 10_000 });
-  await send.click();
-  // The send routes through the real parser → a coach reply (and never a program
-  // overwrite — the draft is a LOG by construction).
-  await expect(page.locator(".stamp", { hasText: "WORKOUT" }).or(page.getByText(/Solid session|Good work|Numbers are moving|Nice\./).first()))
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
+  // The opener's start chip raises the bar (fresh browser context → the day's
+  // choice is unstamped). A rest-day opener has no chip; bail gracefully then.
+  const start = page.getByRole("button", { name: "Start Workout" });
+  try { await start.click({ timeout: 45_000 }); }
+  catch { test.skip(true, "opener resolved to a rest day — no session to drive"); }
+  // The bar comes up titled with the session; open it into the ONE-sheet log.
+  const bar = page.getByRole("button", { name: /Take it off the screen/ }).locator("..");
+  await expect(bar).toBeVisible({ timeout: 30_000 });
+  await bar.click();
+  const draft = page.getByRole("textbox", { name: "Today's workout log" });
+  await expect(draft).toBeVisible({ timeout: 15_000 });
+  await expect(draft).not.toHaveValue("", { timeout: 30_000 });
+  await page.getByRole("button", { name: "Finish Workout" }).click();
+  // The send routes through the real parser → a stamp or a coach reply (and
+  // never a program overwrite — the sheet send is a LOG by construction).
+  await expect(page.locator(".stamp", { hasText: "WORKOUT" }).or(page.getByText(/Solid session|Good work|Numbers are moving|Nice\.|same workout/i).first()))
     .toBeVisible({ timeout: 60_000 });
 });
 
-test("live: the session card pins on 'starting my workout', SURVIVES backgrounding + Clear All, and clears on log", async ({ page }) => {
+test("live: web parity — 'starting my workout' raises the workout bar, never a notification", async ({ page }) => {
+  // Will 08-29: notifications are native-only. On web the session's home is the
+  // in-chat workout bar; even fully granted, the notification center stays
+  // untouched. (The old web card + re-pin cycle this spec used to prove is
+  // retired — the Live Activity contract is native/TestFlight territory now.)
+  await page.addInitScript(() => {
+    try { Object.defineProperty(Notification, "permission", { get: () => "granted" }); } catch (_) {}
+    window.__cards = [];
+    try {
+      ServiceWorkerRegistration.prototype.showNotification = function (title, options) {
+        window.__cards.push({ title, ...options }); return Promise.resolve();
+      };
+    } catch (_) {}
+  });
+  await login(page);
+  const composer = page.getByPlaceholder(/Tell Coach Joe about your workout/);
+  await composer.fill("at the gym, starting my workout");
+  await page.getByRole("button", { name: "→", exact: true }).click();
+  // The mastermind preps the sheet: the workout bar appears above the composer.
+  const barX = page.getByRole("button", { name: /Take it off the screen/ });
+  await expect(barX).toBeVisible({ timeout: 90_000 });
+  expect(await page.evaluate(() => window.__cards.length)).toBe(0);
+  // Cleanup: take the bar down so the park doesn't leak into later specs.
+  await barX.click();
+  await expect(barX).toHaveCount(0);
+});
+
+test.skip("RETIRED 08-29 (web parity): the web session-card re-pin contract", async ({ page }) => {
   // Will's ask (08-19): "check that the live notification comes when people
   // start their workout and stays on the homescreen." The OS half (a real lock
   // screen) is device-territory; this proves the entire app-side contract the

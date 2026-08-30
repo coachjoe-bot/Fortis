@@ -158,6 +158,11 @@ const WATCH_PREFIX = "Watching:";
 
 export const watchTopic = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
 
+// The Memory tab renders these under a WATCHING chip (Will 08-29: he wants to
+// SEE what the AI tracks) — the prefix is the identity, so one test-covered
+// predicate instead of a second string literal drifting in App.jsx.
+export const isWatchNote = (content) => String(content || "").startsWith(WATCH_PREFIX);
+
 // Topic identity = body parts + lift words, never filler. "knee felt sore" and
 // "shoulder felt sore" must NOT read as the same issue just because they share
 // "felt sore" — the pattern rule is per-issue, not per-vibe.

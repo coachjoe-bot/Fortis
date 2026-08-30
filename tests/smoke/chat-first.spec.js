@@ -72,11 +72,12 @@ test("chat-first: the ✕ takes the bar off the screen without sending anything"
   await expect(page.getByText("Day 1 - Push", { exact: true })).toHaveCount(0);
 });
 
-test("web without the override keeps the tab UI: LOG button present", async ({ page }) => {
+test("web parity (Will 08-29): chat-first everywhere — no LOG button, no override needed", async ({ page }) => {
   const athlete = makeAthlete({ program_text: PROGRAM });
   await mockApi(page, { athlete, chatReply: DRAFT_REPLY });
-  await loginAsAthlete(page, athlete);
-  await expect(page.getByRole("button", { name: "LOG", exact: true })).toBeVisible();
+  await loginAsAthlete(page, athlete); // plain web, no ?chatfirst
+  await expect(page.getByRole("button", { name: "Start Workout" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
 });
 
 test("chat-first: a kg athlete's sheet shows the draft in kg (Will 08-25 — the log follows Settings)", async ({ page }) => {

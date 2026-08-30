@@ -40,8 +40,10 @@ test("inside the trial window a free-pick athlete gets the full Pro surface", as
   await mockApi(page, { athlete });
 
   await loginAsAthlete(page, athlete);
-  await expect(page.getByRole("button", { name: "LOG", exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("button", { name: "MY LOG" })).toBeVisible();
+  // Web parity (08-29): chat-first everywhere — the Pro surface is the three
+  // tabs; the LOG button is dissolved into chat by design.
+  await expect(page.getByRole("button", { name: "MY LOG" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "PROGRESS" })).toBeVisible();
   // No countdown drama anywhere on the main surface (the plan drawer is the one
   // place the trial states itself).
@@ -133,5 +135,5 @@ test("the plan step states the universal trial and the free card is honest about
 
   // Free pick lands in the app WITH the Pro surface live (trial from creation).
   await page.getByRole("button", { name: "Start with Free →" }).click();
-  await expect(page.getByRole("button", { name: "LOG", exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "MY LOG" })).toBeVisible({ timeout: 15000 });
 });
