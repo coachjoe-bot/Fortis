@@ -6943,8 +6943,11 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
 
   // Stage a validated rec: park any current bar rec, persist, raise the bar.
   const stageRec = async (rec, {open=false, parked=false} = {}) => {
-    const { located } = locateSwaps(athlete.program_text||"", rec.swaps);
-    if(!located.length) return false;
+    const { located, rejected } = locateSwaps(athlete.program_text||"", rec.swaps);
+    if(!located.length){
+      try{ reportError("ai", new Error("rec swaps failed to locate"), { component:"program_rec_stage", meta:{ origin:rec.origin, reasons:(rejected||[]).map(r=>r.reason).join(",") } }); }catch(_){}
+      return false;
+    }
     const clean = {...rec, swaps: located.map(({index:_i, ...s})=>s), parked};
     try{
       if(recPending?.draftId && !parked){
@@ -11179,9 +11182,18 @@ async function draftRecJSON({programText, context, instruction, origin}) {
   const user = `PROGRAM (copy "find" text ONLY from here, verbatim):\n${programText}\n\n${context?`${context}\n\n`:""}${instruction?`THE ASK / TRIGGER:\n${instruction}`:""}`;
   const raw = await askClaude(REC_DRAFT_SYS, user, 2000, [], "claude-sonnet-5", "program_generate");
   let js = null;
-  try{ js = JSON.parse(String(raw||"").replace(/```json|```/g,"").trim()); }catch(_){ return null; }
+  const cleaned = String(raw||"").replace(/```json|```/g,"").trim();
+  try{ js = JSON.parse(cleaned); }
+  catch(_){
+    // The model sometimes wraps the JSON in a sentence — take the outermost
+    // object rather than failing the whole rec on framing.
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if(m){ try{ js = JSON.parse(m[0]); }catch(_e){ js = null; } }
+  }
+  if(!js){ try{ reportError("ai", new Error("rec draft unparseable"), { component:"program_rec_draft", meta:{ origin } }); }catch(_){} return null; }
   const v = validateRecPayload({...js, origin});
-  return v.ok ? v.rec : null;
+  if(!v.ok){ try{ reportError("ai", new Error(`rec draft invalid: ${v.reason}`), { component:"program_rec_draft", meta:{ origin } }); }catch(_){} return null; }
+  return v.rec;
 }
 
 const QL_EDIT_SYS = `You revise a prefilled workout-log draft per an athlete's instruction. You get their program, recent sessions, 1RMs, coaching context (goals/context/injury/form reviews), Joe's focus note (reference only), the CURRENT draft, and the instruction.

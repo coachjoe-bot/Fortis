@@ -58,8 +58,16 @@ export function locateSwap(text, swap) {
   }
   if (!hits.length) return { ok: false, reason: "not_found" };
   let cands = hits;
-  if (swap.week != null) cands = cands.filter((h) => h.week === swap.week);
-  if (swap.day) cands = cands.filter((h) => dayNorm(h.day).startsWith(dayNorm(swap.day)) || dayNorm(swap.day).startsWith(dayNorm(h.day)));
+  // Scope filters are STRICT only when the program actually carries the tag:
+  // a drafter that guesses "week: 1" against a program with no week headers
+  // must not veto a perfectly located line (live failure, 08-29). Where the
+  // program HAS weeks, a wrong week still refuses — ambiguity beats wrong.
+  if (swap.week != null && hits.some((h) => h.week != null)) {
+    cands = cands.filter((h) => h.week === swap.week);
+  }
+  if (swap.day && cands.some((h) => h.day)) {
+    cands = cands.filter((h) => dayNorm(h.day).startsWith(dayNorm(swap.day)) || dayNorm(swap.day).startsWith(dayNorm(h.day)));
+  }
   if (!cands.length) return { ok: false, reason: "no_match_in_scope", hits };
   if (cands.length > 1) return { ok: false, reason: "ambiguous", hits: cands };
   return { ok: true, index: cands[0].index, week: cands[0].week, day: cands[0].day };

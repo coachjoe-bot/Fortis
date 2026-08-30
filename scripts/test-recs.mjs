@@ -72,6 +72,15 @@ const PROG2 = [
   eq(day.ok, true, "day filter matches case-insensitively");
   const d2 = locateSwap(PROG2, { find: "Deadlift 3x5 @ 275", day: "Day 2" });
   eq(d2.ok, true, "Day-label programs locate by day too");
+  // A drafter that guesses tags the program doesn't have must not veto a
+  // perfectly located line (live failure 08-29: week:1 against a no-weeks
+  // program refused everything).
+  const guessedWeek = locateSwap(PROG2, { find: "Deadlift 3x5 @ 275", week: 1, day: "Day 2" });
+  eq(guessedWeek.ok, true, "a guessed week is ignored when the program has no week headers");
+  const wrongWeekStrict = locateSwap(PROG, { find: "Deadlift 4x4 at 290", week: 3 });
+  eq(wrongWeekStrict.ok, false, "…but where weeks EXIST a wrong week still refuses");
+  const guessedDay = locateSwap("Bench 3x5 @ 185\nRow 3x8 @ 155", { find: "Row 3x8 @ 155", day: "Day 2" });
+  eq(guessedDay.ok, true, "a guessed day is ignored when no line carries a day tag");
 }
 
 // 3 ── apply: surgical, all-or-nothing, overlap-refusing
