@@ -6964,7 +6964,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       }
       try{ track("program_rec_staged","ai",{origin:clean.origin}); }catch(_){}
       return true;
-    }catch(_){ return false; }
+    }catch(e){
+      // A refused persist must be LOUD in telemetry — the DB status-check
+      // constraint silently ate every staged rec on 08-29 before this line.
+      try{ reportError("data", e, { component:"program_rec_stage", meta:{ origin:rec.origin } }); }catch(_){}
+      return false;
+    }
   };
 
   const dismissRec = () => {              // ✕ — park it, keep every edit
