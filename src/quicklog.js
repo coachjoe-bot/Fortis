@@ -274,7 +274,7 @@ export const openerSave = (athleteId, msg, now, program) => {
 };
 
 // ── T57 opener choice stamp (Will's 08-19 spec) ──────────────────────────────
-// The opener ends with "Starting this workout now?" + three tap responses.
+// The opener ends on the session body; the in-bubble Start Workout buttons answer it.
 // Answered (or typed past) once per LOCAL day: the stamp stops a same-day
 // reopen of the cached opener from re-asking a question already answered.
 const qlOpenerChoiceKey = (athleteId) => `wilco_opener_choice_${athleteId}`;

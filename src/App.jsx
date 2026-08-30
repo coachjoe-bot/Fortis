@@ -5799,7 +5799,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [sessionCardPending,setSessionCardPending] = useState(false);
   const [prefPending,setPrefPending] = useState(null); // {field,value} — typed training-preference proposal awaiting the athlete's explicit yes (T53)
   // T57 opener chips (Will's 08-19 spec): true while the opener's closing
-  // "Starting this workout now?" waits on a tap. Retired by a tap or by typing
+  // The opener's Start Workout buttons wait on a tap. Retired by a tap or by typing
   // anything; either way the day is stamped so a same-day reopen won't re-ask.
   const [openerChoicePending,setOpenerChoicePending] = useState(false);
   // One-shot: the "Different workout today" chip makes the athlete's NEXT
@@ -7231,9 +7231,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         const openerAthlete = {...latestAthlete, tier};
         const cachedOpener = openerLoad(openerAthlete.id, undefined, openerAthlete.temp_program_text||openerAthlete.program_text||"");
         if(cachedOpener){
-          setMessages([{role:"assistant",content:cachedOpener}]);
-          // T57: the cached opener still ends on "Starting this workout now?" —
-          // re-show the chips unless today's answer is already stamped.
+          // A cached opener from before 08-29 still carries the old closing
+          // question — strip it (the in-bubble buttons ARE the question now).
+          setMessages([{role:"assistant",content:cachedOpener.replace(/\n\nLog it here when you're done\. Starting this workout now\?\s*$/,"")}]);
+          // Re-arm the in-bubble answer buttons unless today's answer is stamped.
           if(!openerChoiceMadeToday(openerAthlete.id)) setOpenerChoicePending(true);
           setOpenerLoading(false);
           setHistoryLoaded(true);
@@ -7268,9 +7269,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
               // Parked unit-true (converted once here); reads never convert.
               try{ if(!qlLoad(openerAthlete.id, histForDraft, {cardActive: !!activeSessionCard(openerAthlete.id)})) qlSave(openerAthlete.id, histForDraft, {draft:draftInUnit(res.draft, openerAthlete.weight_unit), notes:res.notes, undoStack:[], prebuilt:true, position:quickLogPosOf(res.ctx)}); }catch(_){}
               setMessages(m=> fresh(m) ? [{role:"assistant",content:opener}] : m);
-              // T57: the opener ends on "Starting this workout now?" — surface the
-              // three chips. If the athlete typed during generation the chips are
-              // harmless: any send retires them and stamps the day.
+              // Arm the in-bubble Start Workout / Not Now / Different Workout
+              // buttons (Will 08-29). If the athlete typed during generation they
+              // are harmless: any send retires them and stamps the day.
               if(!openerChoiceMadeToday(openerAthlete.id)) setOpenerChoicePending(true);
             } else {
               // T56: REST_DAY is an answer, not a shrug — say it. The generic
@@ -8382,8 +8383,8 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     // only an explicit "No thanks" burns the daily offer).
     if(sessionCardPending) setSessionCardPending(false);
     if(prefPending) setPrefPending(null);
-    // T57: typing past the opener's "Starting this workout now?" answers it by
-    // action — retire the chips and stamp the day so it doesn't re-ask.
+    // Typing past the opener's Start Workout buttons answers by action —
+    // retire them and stamp the day so it doesn't re-ask.
     if(openerChoicePending){ setOpenerChoicePending(false); markOpenerChoice(athlete.id); }
 
     // T40: "take it off my lock screen" — the card's one explicit exit besides
@@ -9678,6 +9679,27 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   {/* While the streaming placeholder is still empty, show the typing dots INSIDE
                       this bubble (instead of a second stacked indicator bubble below). */}
                   {m.role==="assistant"?(!m.content&&loading&&i===messages.length-1?<div className="ld-dots"><i/><i/><i/></div>:<StreamText text={m.content}/>):m.content}
+                  {/* Opener answer — IN the bubble, big and bold (Will 08-29: the
+                      floating chips above the composer got ignored; these can't be).
+                      Same answerOpenerChoice handlers; retired by a tap or by typing
+                      (send() clears openerChoicePending). CA.accent/onAccent keep
+                      both themes in their own colors. */}
+                  {m.role==="assistant"&&openerChoicePending&&i===messages.length-1&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:14,userSelect:"none",WebkitUserSelect:"none"}}>
+                      <button onClick={()=>answerOpenerChoice("yes")}
+                        style={{background:CA.accent,border:"none",color:CA.onAccent,borderRadius:10,padding:"13px 16px",cursor:"pointer",fontSize:15,fontWeight:800,letterSpacing:.3,width:"100%",fontFamily:"'Inter'"}}>
+                        Start Workout
+                      </button>
+                      <button onClick={()=>answerOpenerChoice("no")}
+                        style={{background:`${CA.accent}14`,border:`2px solid ${CA.accent}`,color:CA.accent,borderRadius:10,padding:"12px 16px",cursor:"pointer",fontSize:15,fontWeight:800,letterSpacing:.3,width:"100%",fontFamily:"'Inter'"}}>
+                        Not Now
+                      </button>
+                      <button onClick={()=>answerOpenerChoice("switch")}
+                        style={{background:`${CA.accent}14`,border:`2px solid ${CA.accent}`,color:CA.accent,borderRadius:10,padding:"12px 16px",cursor:"pointer",fontSize:15,fontWeight:800,letterSpacing:.3,width:"100%",fontFamily:"'Inter'"}}>
+                        Different Workout
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -9894,22 +9916,6 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           }}
             style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
             Just this once
-          </button>
-        </div>
-      ):openerChoicePending?(
-        <div className="no-sb" style={{padding:"0 14px 4px",display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center",flexWrap:"nowrap"}}>
-          <span style={{color:CA.muted,fontSize:12,flexShrink:0}}>↑</span>
-          <button onClick={()=>answerOpenerChoice("yes")}
-            style={{background:`${CA.accent}20`,border:`1px solid ${CA.accent}`,color:CA.accent,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-            Yes, starting now
-          </button>
-          <button onClick={()=>answerOpenerChoice("no")}
-            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-            Not right now
-          </button>
-          <button onClick={()=>answerOpenerChoice("switch")}
-            style={{background:CA.navy3,border:`1px solid ${CA.border}`,color:CA.muted2,borderRadius:20,padding:"7px 18px",cursor:"pointer",fontSize:13,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>
-            I'm doing a different workout
           </button>
         </div>
       ):sessionCardPending?(

@@ -267,10 +267,11 @@ export function buildTodayOpener({ name, dAgo, draft, unit = "lbs" }) {
   const lead = (dAgo != null && dAgo >= 4)
     ? `${name}. ${dAgo} days since your last log — let's get back on it. Here's today${label}:`
     : `What's up, ${name}. Here's today${label}:`;
-  // T57 (Will's 08-19 spec): the opener ends on the question the three tap
-  // chips answer. The chips are UI (App.jsx openerChoicePending), never model
-  // text — this line just has to match them.
-  return `${lead}\n\n${body || d}\n\nLog it here when you're done. Starting this workout now?`;
+  // Will 08-29: the opener ends on the exercise body. The call to action is the
+  // three big Start Workout / Not Now / Different Workout buttons the UI renders
+  // INSIDE the opener bubble (App.jsx openerChoicePending) — no closing question
+  // in the text, nothing to accidentally scroll past.
+  return `${lead}\n\n${body || d}`;
 }
 
 // ── 3. OFFLINE SEND QUEUE ────────────────────────────────────────────────────

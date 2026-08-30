@@ -92,8 +92,8 @@ test("'put my program on my home screen' pins with ZERO taps when notifications 
   await expect.poll(() => page.evaluate(() => !!window.__cardPosted)).toBe(true);
 });
 
-// ─── T57: opener chips (Will's 08-19 spec) ────────────────────────────────────
-// The opener ends on "Starting this workout now?" with three tap answers.
+// ─── Opener answer buttons (Will 08-29: big in-bubble, not floating chips) ───
+// The opener ends on the exercise body; the bubble carries three bold buttons.
 // YES pins the session card zero-tap (granted), NO opens the door, and
 // "different workout" makes the next message pick the session that lands in
 // Quick Log AND on the lock screen.
@@ -110,16 +110,16 @@ const grantCardStubs = async (page, context) => {
   });
 };
 
-test("the opener ends with the starting-now question and its three chips", async ({ page }) => {
+test("the opener bubble carries the three big answer buttons", async ({ page }) => {
   const athlete = makeAthlete({ program_text: PROGRAM });
   await mockApi(page, { athlete });
   await aiByFeature(page, { quick_log_draft: DRAFT });
 
   await loginAsAthlete(page, athlete);
-  await expect(page.getByText(/Starting this workout now\?/)).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("button", { name: "Yes, starting now" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Not right now" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "I'm doing a different workout" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Workout" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/Starting this workout now\?/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Not Now" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Different Workout" })).toBeVisible();
 });
 
 test("opener YES pins today's session with zero further taps when granted", async ({ page, context }) => {
@@ -129,11 +129,11 @@ test("opener YES pins today's session with zero further taps when granted", asyn
   await aiByFeature(page, { quick_log_draft: DRAFT });
 
   await loginAsAthlete(page, athlete);
-  await page.getByRole("button", { name: "Yes, starting now" }).click();
+  await page.getByRole("button", { name: "Start Workout" }).click();
 
   // The APP's own confirmation — never a model claim — and the chips retire.
   await expect(page.getByText(/on your lock screen and it clears itself/)).toBeVisible({ timeout: 20000 });
-  await expect(page.getByRole("button", { name: "Yes, starting now" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Start Workout" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => !!window.__cardPosted)).toBe(true);
 });
 
@@ -143,9 +143,9 @@ test("opener NO answers with the open door and retires the chips", async ({ page
   await aiByFeature(page, { quick_log_draft: DRAFT });
 
   await loginAsAthlete(page, athlete);
-  await page.getByRole("button", { name: "Not right now" }).click();
+  await page.getByRole("button", { name: "Not Now" }).click();
   await expect(page.getByText(/I'm here when you need me/)).toBeVisible({ timeout: 15000 });
-  await expect(page.getByRole("button", { name: "Not right now" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Not Now" })).toHaveCount(0);
   await expect(page.evaluate(() => !!window.__cardPosted)).resolves.toBeFalsy();
 });
 
@@ -156,7 +156,7 @@ test("opener DIFFERENT WORKOUT: the next message picks the session, Quick Log + 
   await aiByFeature(page, { quick_log_draft: DRAFT, joebot_chat: "Day 2 it is." });
 
   await loginAsAthlete(page, athlete);
-  await page.getByRole("button", { name: "I'm doing a different workout" }).click();
+  await page.getByRole("button", { name: "Different Workout" }).click();
   await expect(page.getByText(/Which one are you running\?/)).toBeVisible({ timeout: 15000 });
 
   // The which-one answer regenerates the draft — serve day 2 from here on

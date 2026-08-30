@@ -28,7 +28,7 @@ test("chat-first: LOG button gone, opener start → bar → sheet → finish sen
   await expect(page.getByRole("button", { name: "LOG", exact: true })).toHaveCount(0);
 
   // The opener asks the start question (the chips STAY — only the marquee died).
-  await page.getByRole("button", { name: "Yes, starting now" }).click();
+  await page.getByRole("button", { name: "Start Workout" }).click();
 
   // The bar appears above the composer, titled with the session's day label.
   const bar = page.getByText("Day 1 - Push", { exact: true }).first();
@@ -65,7 +65,7 @@ test("chat-first: the ✕ takes the bar off the screen without sending anything"
   const athlete = makeAthlete({ program_text: PROGRAM });
   await mockApi(page, { athlete, chatReply: DRAFT_REPLY });
   await loginAsAthlete(page, athlete, "/?chatfirst=1");
-  await page.getByRole("button", { name: "Yes, starting now" }).click();
+  await page.getByRole("button", { name: "Start Workout" }).click();
   const bar = page.getByText("Day 1 - Push", { exact: true }).first();
   await expect(bar).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "Take it off the screen", exact: true }).click();
@@ -83,7 +83,7 @@ test("chat-first: a kg athlete's sheet shows the draft in kg (Will 08-25 — the
   const athlete = makeAthlete({ program_text: PROGRAM, weight_unit: "kg" });
   await mockApi(page, { athlete, chatReply: DRAFT_REPLY });
   await loginAsAthlete(page, athlete, "/?chatfirst=1");
-  await page.getByRole("button", { name: "Yes, starting now" }).click();
+  await page.getByRole("button", { name: "Start Workout" }).click();
   const bar = page.getByText("Day 1 - Push", { exact: true }).first();
   await expect(bar).toBeVisible({ timeout: 15000 });
   await bar.click();
