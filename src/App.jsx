@@ -7018,7 +7018,12 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const discardRec = () => {
     const p = recPending; if(!p || recBusy) return;
     setRecOpen(false); setRecPending(null);
-    if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"rec_dismissed", blueprint:{rec:{...p.rec, parked:true, dismissedAt:new Date().toISOString()}}, updated_at:new Date().toISOString()}).catch(()=>{});
+    // A refused persist must be LOUD in telemetry (the recs-wave lesson): a
+    // swallowed failure here means the bar resurrects on next boot with no
+    // trace of why — caught live on 08-31 when the pre-deploy prod gateway
+    // rejected the new status and the catch ate it.
+    if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"rec_dismissed", blueprint:{rec:{...p.rec, parked:true, dismissedAt:new Date().toISOString()}}, updated_at:new Date().toISOString()})
+      .catch((e)=>{ try{ reportError("data", e, { component:"program_rec_dismiss", meta:{ origin:p.rec.origin } }); }catch(_){} });
     try{ track("program_rec_dismissed","ai",{origin:p.rec.origin}); }catch(_){}
     joeBubble("Dismissed. Program stays as it is. If you change your mind it's under Program, Memory, in Past Blocks.");
   };
