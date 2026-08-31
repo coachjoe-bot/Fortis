@@ -2335,9 +2335,23 @@ ${IS_DARK?`
 ${IS_DARK?`
 .radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,transparent 0deg,rgba(55,230,255,.35) 42deg,transparent 62deg);animation:spin 2.4s linear infinite;}
 `:`
-/* Light brand (Draft-2): the conic glow sweep reads as haze on a light ground —
-   the radar survives as a thin navy NEEDLE, same 2.4s rotation. */
-.radar::before{content:"";position:absolute;left:50%;top:50%;width:46%;height:2px;background:${CA.accent};transform-origin:left center;animation:spin 2.4s linear infinite;}
+/* Light brand (T62): the earlier needle-only de-glow read as a blank void on the
+   grey ground (Will, 08-31). Rebuilt as a real instrument in brand navy: hairline
+   crosshair + center dot on the dial, a sweep with a crisp leading edge and a
+   fading tail, and two contact blips that flash as the sweep passes them.
+   Dark keeps its original cyan sweep untouched (.radar i is dark-invisible: the
+   blip styles live only in this branch, so the <i> children render as nothing). */
+.radar{width:112px;height:112px;border-width:1.5px;background:
+  radial-gradient(circle at center,${CA.accent} 0 2px,transparent 2.5px),
+  linear-gradient(to bottom,transparent calc(50% - .5px),${CA.border} calc(50% - .5px),${CA.border} calc(50% + .5px),transparent calc(50% + .5px)),
+  linear-gradient(to right,transparent calc(50% - .5px),${CA.border} calc(50% - .5px),${CA.border} calc(50% + .5px),transparent calc(50% + .5px));}
+.radar::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 0deg,${CA.accent} 0deg 2.5deg,rgba(40,80,139,.20) 2.5deg 40deg,rgba(40,80,139,.05) 40deg 80deg,transparent 80deg);
+  animation:spin 2.4s linear infinite;}
+.radar i{position:absolute;width:5px;height:5px;border-radius:50%;background:${CA.accent};opacity:0;animation:blip 2.4s linear infinite;}
+.radar i:nth-child(1){top:24%;right:27%;animation-delay:.3s;}
+.radar i:nth-child(2){bottom:29%;left:25%;animation-delay:1.4s;}
+@keyframes blip{0%{opacity:.95;}30%{opacity:.15;}100%{opacity:0;}}
 `}
 .radar::after{content:"";position:absolute;inset:16px;border-radius:50%;border:1px solid ${CA.line2};}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -2370,6 +2384,15 @@ ${IS_DARK?`
 .ld-dots i{width:8px;height:8px;border-radius:50%;background:${CA.muted};opacity:.4;animation:ldd 1.3s ease-in-out infinite;}
 .ld-dots i:nth-child(2){animation-delay:.18s}.ld-dots i:nth-child(3){animation-delay:.36s}
 @keyframes ldd{0%,60%,100%{opacity:.35;transform:translateY(0);}30%{opacity:1;transform:translateY(-4px);}}
+/* T62 SKELETON — the app-wide loading system. Bars sketch the SHAPE of the
+   content being fetched (a sheet being written, cards, rows) and a slow sheen
+   sweeps them. Never a spinner bolted on, never a bare caption on an empty card.
+   Same structure both themes; each theme its own colors (the both-themes rule):
+   light = warm stone bars with a white sheen, dark = raised navy with a faint
+   blue sheen. */
+.sk{position:relative;overflow:hidden;border-radius:6px;background:${IS_DARK?"#101b36":"#E9E3D7"};}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,${IS_DARK?"rgba(106,160,255,.13)":"rgba(255,255,255,.7)"},transparent);animation:skSweep 1.9s ease-in-out infinite;}
+@keyframes skSweep{to{transform:translateX(100%);}}
 /* PR "NEW MAX" stamp — straight on, cyan */
 .stampstage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:700;pointer-events:none;}
 /* T56: dimming scrim behind the stamps — they used to slam straight over busy
@@ -2453,7 +2476,10 @@ ${IS_DARK?`
    for Settings group labels ("PROOF FEED", "WEIGHT UNIT", etc.) */
 .setgrp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${CA.faint};}
 @media (prefers-reduced-motion: reduce){
-  .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
+  .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.radar i,.sk::after,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
+  /* static sheen would sit at full opacity over the whole bar — hide it instead */
+  .sk::after{opacity:0!important;}
+  .radar i{opacity:.5!important;}
   .crewspine::after{transition:none!important;}
   .hcell.go .hfill{transform:scaleX(var(--pct,0))!important;}
   .hcell.revealup .hfill{animation:none!important;transform:scaleX(var(--pct,0))!important;}
@@ -2642,10 +2668,44 @@ export function LineChart({data, color=CA.cyan, unit="", palette=CA}) {
 // `hint` is the plain-language "how to fill this" line.
 export function AwaitingSignal({hint, label="AWAITING SIGNAL"}) {
   return (
-    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,padding:"48px 24px",textAlign:"center",minHeight:280}}>
-      <div className="radar" aria-hidden/>
+    // minHeight in vh (not the old flat 280): most call sites sit in a non-flex
+    // scroll pane, so flex:1 never grew and the readout floated at the top of a
+    // grey void (Will's 08-31 screenshot). This centers it in the visible pane.
+    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,padding:"48px 24px",textAlign:"center",minHeight:"min(58vh, 500px)"}}>
+      {/* the <i>s are the light theme's contact blips; dark styles no .radar i, so there they render as nothing */}
+      <div className="radar" aria-hidden><i/><i/></div>
       <div style={{...DISP,fontSize:20,letterSpacing:1.5,color:CA.led}}>{label}</div>
       {hint&&<div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:10.5,color:CA.muted,maxWidth:"28ch",lineHeight:1.5}}>{hint}</div>}
+    </div>
+  );
+}
+
+// ─── T62 LOADING SKELETONS ────────────────────────────────────────────────────
+// The app-wide loading system: bars that sketch the SHAPE of the content being
+// fetched, swept by a slow sheen (.sk in GS). A loading card should hint at what
+// is coming, never be a blank void. Sized per context by the caller.
+export function Skeleton({lines=[70,95,85,60], line=12, gap=10, style}) {
+  return (
+    <div aria-hidden style={style}>
+      {lines.map((w,i)=>(
+        <div key={i} className="sk" style={{height:line,width:`${w}%`,marginBottom:i<lines.length-1?gap:0}}/>
+      ))}
+    </div>
+  );
+}
+// The session sheet mid-update: a sheet being written — title stripe, then
+// exercise lines — with Joe's caption pinned under it. Replaces the giant blank
+// textarea that used to sit above "Joe's updating the sheet…" (Will, 08-31).
+export function SheetSkeleton({caption="Joe's updating the sheet…"}) {
+  return (
+    <div role="status" aria-label={caption} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:14,minHeight:280,display:"flex",flexDirection:"column"}}>
+      <Skeleton lines={[46]} line={16}/>
+      <div style={{height:18}}/>
+      <Skeleton lines={[86,64,78,58,72,52]} line={12} gap={14}/>
+      <div style={{marginTop:"auto",paddingTop:20,display:"flex",alignItems:"center",gap:9,color:CA.muted,fontSize:12}}>
+        <div className="ld-dots" style={{transform:"scale(.8)",transformOrigin:"left center"}}><i/><i/><i/></div>
+        {caption}
+      </div>
     </div>
   );
 }
@@ -10475,11 +10535,24 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             {sheetState.notes ? (
               <div style={{background:CA.navy3,border:`1px solid ${CA.border}`,borderRadius:10,padding:"9px 11px",fontSize:12,color:CA.muted2,lineHeight:1.5,marginBottom:10,whiteSpace:"pre-wrap"}}>{sheetState.notes}</div>
             ) : null}
-            {/* ONE editable sheet, never per-exercise boxes (Will's rev-2 fix). */}
-            <textarea value={sheetState.draft} onChange={e=>sheetTypeEdit(e.target.value)} spellCheck={false}
-              aria-label="Today's workout log"
-              style={{width:"100%",minHeight:280,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:12,fontSize:13.5,lineHeight:1.7,color:CA.text,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
-            {sheetBusy && <div style={{color:CA.muted,fontSize:12,marginTop:6}}>Joe's updating the sheet…</div>}
+            {/* ONE editable sheet, never per-exercise boxes (Will's rev-2 fix).
+                T62: while Joe writes the FIRST fill (busy + nothing to show), the
+                blank textarea reads as a dead white card — show the sheet-shaped
+                skeleton instead. Once a draft exists, the athlete may be mid-edit,
+                so the textarea stays and only the caption marks the update. */}
+            {sheetBusy && !sheetState.draft.trim() ? (
+              <SheetSkeleton/>
+            ) : (<>
+              <textarea value={sheetState.draft} onChange={e=>sheetTypeEdit(e.target.value)} spellCheck={false}
+                aria-label="Today's workout log"
+                style={{width:"100%",minHeight:280,background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:12,fontSize:13.5,lineHeight:1.7,color:CA.text,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+              {sheetBusy && (
+                <div style={{display:"flex",alignItems:"center",gap:9,color:CA.muted,fontSize:12,marginTop:6}}>
+                  <div className="ld-dots" style={{transform:"scale(.8)",transformOrigin:"left center"}}><i/><i/><i/></div>
+                  Joe's updating the sheet…
+                </div>
+              )}
+            </>)}
           </div>
           <div style={{position:"relative",flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
             {/* The ⓘ is a TAP toggle: title= tooltips don't exist on iOS, so the
@@ -12574,7 +12647,11 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
       </>)}
       {/* ── Drafts ── */}
       <div style={sub}>Drafts & parked interviews</div>
-      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
+      {/* T62: card-shaped skeletons instead of a bare "Loading…" line */}
+      {!loaded&&<>
+        <div style={card}><Skeleton lines={[34,88,70]} line={11}/></div>
+        <div style={card}><Skeleton lines={[42,80]} line={11}/></div>
+      </>}
       {loaded&&builderRows.length===0&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
           Nothing here yet. When {viewer==="coach"?"you build":"you and Joe build"} a program in the Builder, parked interviews and finished drafts wait here, nothing touches the live program until it's saved.
@@ -12879,7 +12956,11 @@ export function ProgramBlocksPane({athlete, viewer="athlete"}){
   return (
     <div>
       <div style={sub}>Current phase</div>
-      {!loaded&&<div style={{color:CA.muted,fontSize:12,marginBottom:14}}>Loading…</div>}
+      {/* T62: card-shaped skeletons instead of a bare "Loading…" line */}
+      {!loaded&&<>
+        <div style={card}><Skeleton lines={[34,88,70]} line={11}/></div>
+        <div style={card}><Skeleton lines={[42,80]} line={11}/></div>
+      </>}
       {loaded&&!current&&(
         <div style={{...card,color:CA.muted,fontSize:12.5,lineHeight:1.65}}>
           No active phase. Save a program, or build one with Joe, and it starts a fresh phase here, tracked from day one.
