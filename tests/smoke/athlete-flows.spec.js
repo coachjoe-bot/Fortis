@@ -179,6 +179,34 @@ test("opener DIFFERENT WORKOUT: the next message picks the session, Quick Log + 
 // PIN-recover. The banner is a slim ask, never a gate: Save writes the address
 // (gateway-allowlisted + format-guarded) and fires the welcome email; Later
 // snoozes a week.
+test("T62: asking what's today mid-chat brings the Start buttons back with the programming", async ({ page }) => {
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  await mockApi(page, { athlete });
+  await aiByFeature(page, { quick_log_draft: DRAFT, joebot_chat: "Day 1 - Push. Bench Press 3x5 @ 185, then Dips 3x8." });
+  await loginAsAthlete(page, athlete);
+  // Answer the opener's own buttons away first (Not Now = no bar, no card)...
+  await page.getByRole("button", { name: "Not Now" }).click({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Start Workout" })).toHaveCount(0);
+  // ...then the mid-chat inquiry re-earns them (Will's standing rule): the
+  // programming in Joe's reply, the same three buttons underneath.
+  await page.getByPlaceholder(/Tell Coach Joe about your workout/).fill("what am I doing today?");
+  await page.getByRole("button", { name: "→", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Start Workout" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Different Workout" })).toBeVisible();
+});
+
+test("T62: leaked tool names never render in a chat bubble", async ({ page }) => {
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  await mockApi(page, { athlete });
+  await aiByFeature(page, { quick_log_draft: DRAFT, joebot_chat: "prefill_log_sheet, pin_session_card\nSolid session. Numbers are moving." });
+  await loginAsAthlete(page, athlete);
+  await page.getByRole("button", { name: "Not Now" }).click({ timeout: 15000 });
+  await page.getByPlaceholder(/Tell Coach Joe about your workout/).fill("how are we looking this week?");
+  await page.getByRole("button", { name: "→", exact: true }).click();
+  await expect(page.getByText("Solid session. Numbers are moving.")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText(/prefill_log_sheet|pin_session_card/)).toHaveCount(0);
+});
+
 test("a name-only athlete gets the recovery-email banner; Save writes the address", async ({ page }) => {
   const athlete = makeAthlete({ email: null });
   await mockApi(page, { athlete });

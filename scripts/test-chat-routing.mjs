@@ -385,5 +385,24 @@ ok(!asksProgramEdit("can you put my program on my home screen?"), "the lock-scre
 ok(!asksProgramEdit("did bench 3x5 at 225, felt strong"), "a plain log never matches");
 ok(!asksProgramEdit("what's in my program for tomorrow?"), "a program QUESTION never matches");
 
+// ── stripToolNameNoise (T62 leakage filter) ──────────────────────────────────
+console.log("stripToolNameNoise:");
+{
+  const { stripToolNameNoise, KNOWN_TOOL_NAMES } = await import("../src/chatRouting.js");
+  ok(stripToolNameNoise("prefill_log_sheet, pin_session_card\nAlright, day 2 push. Let's work.")
+     === "Alright, day 2 push. Let's work.", "the leaked name line (Will's 08-31 screenshot) vanishes whole");
+  ok(stripToolNameNoise("Solid session. Numbers are moving.") === "Solid session. Numbers are moving.", "clean text passes byte-identical");
+  ok(stripToolNameNoise("I'll call prefill_log_sheet() and get your sheet ready.")
+     === "I'll call and get your sheet ready.", "an inline name (with call parens) is excised, sentence kept");
+  ok(stripToolNameNoise("set_position") === "", "a reply that is ONLY a tool name strips to empty");
+  ok(stripToolNameNoise("pin_session_card, clear_session_card\n\nRest day today. Recover.")
+     === "Rest day today. Recover.", "leading noise + blank line collapse cleanly");
+  ok(stripToolNameNoise("Your max is 315. remember_fact\nKeep pushing.")
+     === "Your max is 315.\nKeep pushing.", "a trailing name on a real line is trimmed with its separators");
+  ok(stripToolNameNoise("The prefill_log_sheets in the gym") === "The prefill_log_sheets in the gym",
+     "word-boundary: a longer identifier is not a match");
+  ok(KNOWN_TOOL_NAMES.includes("show_start_buttons"), "strip list carries the new start-buttons tool");
+}
+
 if (fail) { console.error(`\n${fail} FAILURE(S) (${pass} passed)`); process.exit(1); }
 console.log(`\nAll ${pass} chat-routing checks pass.`);

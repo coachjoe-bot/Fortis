@@ -94,5 +94,34 @@ console.log("sessionCardIsLive:");
   ok(!sessionCardIsLive(null, now), "no state → not live");
 }
 
+// ── workout start clock (T62 duration) ───────────────────────────────────────
+console.log("workout start clock:");
+{
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  const { markWorkoutStart, workoutStartAt, clearWorkoutStart, workoutDurationSeconds } = await import("../src/sessionCard.js");
+  const now = Date.now();
+  ok(workoutStartAt("a1", now) === null, "no stamp, no card → no start clock");
+  markWorkoutStart("a1", now - 60 * 60_000);
+  ok(workoutStartAt("a1", now) === now - 60 * 60_000, "stamp reads back");
+  markWorkoutStart("a1", now - 5 * 60_000);
+  ok(workoutStartAt("a1", now) === now - 60 * 60_000, "FIRST start of the day wins (re-pin never restarts the clock)");
+  clearWorkoutStart("a1");
+  ok(workoutStartAt("a1", now) === null, "cleared clock is gone");
+  markWorkoutStart("a2", now - SESSION_CARD_MAX_AGE_MS - 60_000);
+  ok(workoutStartAt("a2", now) === null, "a stamp past the draft window is dead");
+  markWorkoutStart("a2", now); // a dead stamp is replaceable
+  ok(workoutStartAt("a2", now) === now, "a dead stamp gives way to a fresh start");
+  // duration rule
+  ok(workoutDurationSeconds(now - 45 * 60_000, now) === 45 * 60, "a 45-minute session records 45 minutes");
+  ok(workoutDurationSeconds(now - 2 * 60_000, now) === null, "under 5 minutes = typed-after-the-fact, no duration");
+  ok(workoutDurationSeconds(now - SESSION_CARD_MAX_AGE_MS - 1000, now) === null, "past the 8h window = abandoned clock, no duration");
+  ok(workoutDurationSeconds(null, now) === null, "no clock, no duration, never garbage");
+}
+
 console.log(`\n${fail === 0 ? `All ${pass} green.` : `${fail} FAILED, ${pass} passed`}`);
 process.exit(fail === 0 ? 0 : 1);

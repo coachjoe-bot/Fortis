@@ -64,6 +64,32 @@ test("rec: boot restores the bar, the sheet shows the tagged swap, Apply lands b
   expect(write.body.data.program_text).toContain("Overhead Press 3x8 @ 95"); // everything else untouched
 });
 
+test("rec DISMISS (T62): the pair renders (struck old + incoming line), Dismiss lands as a real status", async ({ page }) => {
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  const { calls } = await mockApi(page, {
+    athlete, chatReply: DRAFT_REPLY,
+    dataReads: { program_drafts: (body) => String(body.params || "").includes('status=in.("rec"') ? [REC_ROW(athlete.id)] : [] },
+  });
+  await loginAsAthlete(page, athlete, "/?chatfirst=1&mastermind=1");
+  const bar = page.getByText("PROGRAM REC — Pec swap").first();
+  await expect(bar).toBeVisible({ timeout: 15000 });
+  await bar.click();
+  // Will's 08-31 audit rule: every spot is a PAIR — the struck original and,
+  // directly beneath it, the unmissable incoming line.
+  await expect(page.getByText("Day 1 - Push — replacing")).toBeVisible();
+  await expect(page.getByText("↳ What goes in").first()).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Replacement 1" })).toHaveValue("Floor Press 3x5 @ 165");
+  // The duration picker + all three actions live OUTSIDE the scroll region.
+  await expect(page.getByRole("button", { name: "Rest of block" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save for Later" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply to Program" })).toBeVisible();
+  await page.getByRole("button", { name: "Dismiss this rec" }).click();
+  await expect(page.getByText(/Dismissed\. Program stays as it is/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("PROGRAM REC — Pec swap")).toHaveCount(0);
+  const write = calls.find((c) => c.body?.op === "update" && c.body?.table === "program_drafts" && c.body?.data?.status === "rec_dismissed");
+  expect(write).toBeTruthy();
+});
+
 test("rec pattern gate: a first pain mention is NOTED (watched note), never a rec", async ({ page }) => {
   const msg = "my knee felt a little cranky on squats today";
   const athlete = makeAthlete({ program_text: PROGRAM });

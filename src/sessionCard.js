@@ -240,6 +240,48 @@ export const expireSessionCardIfStale = async (athleteId) => {
   if (d && !sessionCardIsLive(d)) await clearSessionCard(athleteId);
 };
 
+// ── workout start clock (T62 session duration) ───────────────────────────────
+// One stamp per day, FIRST start wins (the one-event rule's sibling: re-pins,
+// day corrections and sheet rebuilds must not restart the clock). Stamped by
+// every "workout started" event — Start Workout tap, pin (model or auto), the
+// zero-tap starting-now pin — and consumed by finalizeWorkout, which records
+// duration only for a real same-day log inside sane bounds. A card pinned by an
+// older path without an explicit stamp still counts: the card state's own
+// startedAt is the fallback clock.
+const startKey = (athleteId) => `wilco_workoutstart_${athleteId}`;
+
+export const markWorkoutStart = (athleteId, now = Date.now()) => {
+  try {
+    const cur = JSON.parse(localStorage.getItem(startKey(athleteId)) || "null");
+    if (cur && cur.day === qlLocalDay(now) && now - cur.at <= SESSION_CARD_MAX_AGE_MS) return;
+    localStorage.setItem(startKey(athleteId), JSON.stringify({ day: qlLocalDay(now), at: now }));
+  } catch (_) {}
+};
+
+export const workoutStartAt = (athleteId, now = Date.now()) => {
+  try {
+    const cur = JSON.parse(localStorage.getItem(startKey(athleteId)) || "null");
+    if (cur && cur.day === qlLocalDay(now) && now - cur.at <= SESSION_CARD_MAX_AGE_MS) return cur.at;
+  } catch (_) {}
+  const card = activeSessionCard(athleteId);
+  return card && card.startedAt ? card.startedAt : null;
+};
+
+export const clearWorkoutStart = (athleteId) => {
+  try { localStorage.removeItem(startKey(athleteId)); } catch (_) {}
+};
+
+// Pure duration rule, exported for tests: elapsed seconds from a start clock to
+// the log landing, or null when it would be garbage. Backdated logs never reach
+// this (the caller gates on same-local-day); under 5 minutes means the athlete
+// is typing up a session that happened somewhere else, over the 8h draft window
+// means an abandoned clock — neither is a real duration.
+export const workoutDurationSeconds = (startAt, now = Date.now()) => {
+  if (!Number.isFinite(startAt)) return null;
+  const el = Math.round((now - startAt) / 1000);
+  return el >= 300 && el <= SESSION_CARD_MAX_AGE_MS / 1000 ? el : null;
+};
+
 // ── one offer per day ────────────────────────────────────────────────────────
 // "No thanks" means not today — the offer comes back tomorrow, not next message.
 export const sessionCardDeclinedToday = (athleteId) => {

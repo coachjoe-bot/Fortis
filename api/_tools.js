@@ -80,6 +80,11 @@ export const TOOLSETS = {
       },
     },
     {
+      name: "show_start_buttons",
+      description: "Show the Start Workout / Not Now / Different Workout buttons under your reply — the same three the opener uses. Call it EVERY time your reply presents today's session and they have not started yet: they asked what today is, asked what they're doing, or you brought today's session up yourself. The app renders the buttons after your reply; Start Workout pins the session and raises the log sheet, so never also call prefill_log_sheet or pin_session_card just because you presented the workout — those fire when they actually START. Never call it mid-workout, on a finished log, or when a session card is already pinned.",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
       name: "propose_program_rec",
       description: "Stage a PROGRAM REC — the ONLY way you change an athlete's saved program, and it never writes directly: the app raises a reviewable sheet showing each replaced line beside its replacement, and the athlete applies it. Call for any program-change ask or confirmed need: swapping exercises or whole days, making a logged workout the template for a program day ('make what I logged Monday for this block'), adding weekly progression, protecting a confirmed injury. Each swap's find is text copied VERBATIM from the PROGRAM in your context — exact characters and spacing, long enough to be unique — tagged with its week number and day when the program has them (the same line in two weeks needs one tagged swap per week). replace is the complete new text for that spot in the program's own style. Building from a log: carry the logged exercises, sets, reps and loads EXACTLY; compute percentages only when they asked to progress. Surgical always — never touch text outside the ask.",
       input_schema: {

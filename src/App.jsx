@@ -54,6 +54,7 @@ import {
   asksTodaysWorkout, asksLockScreenCard, asksStartingWorkout, asksClearCard, buildSessionCard, sessionCardSupported, showSessionCard,
   repinSessionCard, clearSessionCard, activeSessionCard, expireSessionCardIfStale,
   sessionCardDeclinedToday, markSessionCardDeclined,
+  markWorkoutStart, workoutStartAt, clearWorkoutStart, workoutDurationSeconds,
 } from "./sessionCard.js";
 // Notification deep links (T51): a push carries `?n=<target>`; this turns it into
 // the screen the push was about, on both cold and warm starts.
@@ -107,7 +108,7 @@ const ProgramEditPane = lazy(() => import("./builder.jsx").then(m => ({ default:
 import {
   needsAdvancedParser, looksLikeLifting, parseGotNothing, asksToRemember,
   looksLikeWorkoutLog, hasExplicitWorkingBasis, propagate1RM, isFullProgramEcho,
-  stripFailedAttempts, asksProgramEdit,
+  stripFailedAttempts, asksProgramEdit, stripToolNameNoise,
 } from "./chatRouting.js";
 export { isFullProgramEcho };
 // Boot layer: is this build still the deployed one, the warm-reopen snapshot, and
@@ -6749,8 +6750,29 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         } else if(tc.name==="pin_session_card"){
           const had = activeSessionCard(updatedAthlete.id);
           if(had) await refreshSessionCard(updatedAthlete, msgs);
-          else await pinSessionCard(updatedAthlete);
+          else {
+            const res = await pinSessionCard(updatedAthlete);
+            // T62: the AUTO-pin's confirmation speaks in the APP's voice — Joe's
+            // contract forbids him claiming the card is up (he can't see the
+            // lock screen), so the truthful line comes from code, native only
+            // (on web there is no card and the dock is the surface — silent).
+            if(tc.auto && sessionCardSupported() && !res.rest){
+              joeBubble(res.shown
+                ? "Today's session is on your lock screen. It clears itself when you log."
+                : "Heads up, couldn't pin your lock-screen card. Your device is blocking WILCO notifications. Settings, Notifications, WILCO, flip them on and ask me again.");
+            }
+          }
+          // Pin = a workout is starting: stamp the session clock (first stamp
+          // of the day wins; consumed by finalizeWorkout for the log's duration).
+          markWorkoutStart(updatedAthlete.id);
           if(CHAT_FIRST_ON) openDockFromStore();
+        } else if(tc.name==="show_start_buttons"){
+          // T62 (Will's standing rule): whenever Joe presents today's session,
+          // the Start Workout / Not Now / Different Workout buttons ride under
+          // it — the model flags the presentation, CODE draws the exact same
+          // buttons the opener uses. Never mid-workout: a pinned card means
+          // the session already started.
+          if(!activeSessionCard(updatedAthlete.id)) setOpenerChoicePending(true);
         } else if(tc.name==="clear_session_card"){
           clearSessionCard(updatedAthlete.id);
           if(CHAT_FIRST_ON){ setSheetOpen(false); setDockWorkout(null); }
@@ -6982,11 +7004,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     }
   };
 
-  const dismissRec = () => {              // ✕ — park it, keep every edit
+  const dismissRec = () => {              // ✕ / Save for Later — park it, keep every edit
     const p = recPending;
     setRecOpen(false); setRecPending(null);
     if(p?.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{blueprint:{rec:{...p.rec, parked:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
     joeBubble("Parked it. It's under Program, Memory, in Drafts whenever you want it.");
+  };
+
+  // DISMISS (T62, Will 08-31): the rec goes AWAY — a real status on the row
+  // (rec_dismissed, gateway enum + DB CHECK both extended), never a hidden
+  // card. The row stays in Past Blocks marked Dismissed as the audit trail;
+  // reopening it from there restages it if they change their mind.
+  const discardRec = () => {
+    const p = recPending; if(!p || recBusy) return;
+    setRecOpen(false); setRecPending(null);
+    if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"rec_dismissed", blueprint:{rec:{...p.rec, parked:true, dismissedAt:new Date().toISOString()}}, updated_at:new Date().toISOString()}).catch(()=>{});
+    try{ track("program_rec_dismissed","ai",{origin:p.rec.origin}); }catch(_){}
+    joeBubble("Dismissed. Program stays as it is. If you change your mind it's under Program, Memory, in Past Blocks.");
   };
 
   const recEditSwap = (i, replace) => {    // direct edit — verbatim, auto-saved
@@ -7078,7 +7112,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setRecPending({draftId:row.id, rec:un});
     setRecWhyOpen(true);
     setShowProgram(false); setSheetOpen(false); setPgOpen(false); setRecOpen(true);
-    sbUpdateWhere("program_drafts",`?id=eq.${row.id}`,{blueprint:{rec:un}, updated_at:new Date().toISOString()}).catch(()=>{});
+    // Reopening a DISMISSED rec un-dismisses it (T62) — back to a live rec row,
+    // same one-door lifecycle. The status write is a no-op for already-"rec" rows.
+    sbUpdateWhere("program_drafts",`?id=eq.${row.id}`,{status:"rec", blueprint:{rec:un}, updated_at:new Date().toISOString()}).catch(()=>{});
   };
 
   // Manual revert from Past Blocks (an applied rec), and the timed auto-revert.
@@ -7572,10 +7608,20 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // T40: a logged session takes the lock-screen card down — any tier (free
       // returns before the insert below, and their card must still clear). Only a
       // REAL log for TODAY counts: a backdated log is not today's session done.
+      let durationSeconds = null;
       try{
         const isRealLog = (parsedFinal.exercises?.length>0) || parsedFinal.run_data || parsedFinal.practice_data;
         const ld = parsedFinal.log_date;
         const isToday = !ld || !/^\d{4}-\d{2}-\d{2}$/.test(ld) || qlLocalDay(new Date(ld+"T12:00:00")) === qlLocalDay();
+        // T62: session duration — start clock stamped when the workout started
+        // (Start tap / pin / auto-pin), end = this log landing. Same-day real
+        // logs only, sane bounds only (workoutDurationSeconds): a backdated or
+        // typed-after-the-fact log gets NO duration, never a garbage one. The
+        // clock is consumed either way so a later log can't inherit it.
+        if(isRealLog && isToday){
+          durationSeconds = workoutDurationSeconds(workoutStartAt(updatedAthlete.id));
+          clearWorkoutStart(updatedAthlete.id);
+        }
         if(isRealLog && isToday && activeSessionCard(updatedAthlete.id)) clearSessionCard(updatedAthlete.id);
       }catch(_){}
 
@@ -7587,7 +7633,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // Keep the returned row id: the optimistic history row below carries it, so the
       // just-logged workout is immediately targetable by the AI correction flow and
       // the manual Edit modal (which used to error "hasn't finished syncing" on it).
-      const insertedRows = await sbInsert("workouts",{athlete_id:updatedAthlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsedFinal});
+      const insertedRows = await sbInsert("workouts",{athlete_id:updatedAthlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsedFinal,...(durationSeconds!=null?{duration_seconds:durationSeconds}:{})});
       const insertedId = Array.isArray(insertedRows) ? insertedRows[0]?.id : insertedRows?.id;
       haptic(15); // silent save confirm — the old header ✓ badge crowded the top bar and is gone
 
@@ -7896,7 +7942,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // a session as its own WORKOUT card and the header count ran one high until a
       // reload. bot_reply feeds the card's Coach Joe quote. (The cert-block fallback
       // row already sets athlete_id — this was its forgotten twin.)
-      setWorkoutHistory(prev=>[{id:insertedId,athlete_id:updatedAthlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsedFinal,created_at:new Date().toISOString()},...prev]);
+      setWorkoutHistory(prev=>[{id:insertedId,athlete_id:updatedAthlete.id,raw_message:msg,bot_reply:reply,parsed_data:parsedFinal,created_at:new Date().toISOString(),...(durationSeconds!=null?{duration_seconds:durationSeconds}:{})},...prev]);
 
       if(newPRs.length>0){
         // Crew "pr" moment — ONLY when the lift changed TIER (a rank-up), not
@@ -8170,6 +8216,7 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setOpenerChoicePending(false);
     markOpenerChoice(athlete.id);
     if(choice==="yes"){
+      markWorkoutStart(athlete.id); // Start tap = the session clock starts (T62 duration)
       if(!sessionCardSupported()){
         setMessages(prev=>[...prev,{role:"assistant",content:"Let's get it. Log it here when you're done."}]);
         if(CHAT_FIRST_ON) openDockFromStore();
@@ -8835,6 +8882,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       // can't race the settle/fallback writes below, then settle the bubble.
       if(deltaRaf!=null){ cancelAnimationFrame(deltaRaf); deltaRaf = null; }
       deltaBuf = "";
+      // T62: model-narrated tool identifiers never reach the transcript or the
+      // persisted bot_reply — the renderer strips them too (already-polluted
+      // history), but the settle is where NEW pollution is stopped at the source.
+      reply = stripToolNameNoise(reply);
       if(reply && reply.trim()){
         // Settle on the stream's full text — guarantees the tail chunk that was
         // still buffered when the stream closed is never dropped.
@@ -8843,13 +8894,13 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // A28: the stream died but a substantial partial is already on screen.
         // Keep it — regenerating replaced visibly-rendered text with differently-
         // worded copy and billed the tokens twice. Only regenerate empty bubbles.
-        reply = streamedText;
+        reply = stripToolNameNoise(streamedText);
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       } else {
         // One-shot fallback: mastermind persona/memory ride along, tools don't
         // (the JSON path returns text only) — a dropped stream costs the turn's
         // actions, never the reply.
-        reply = await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows, pureLog:fromQuickLog, parsedLog:parsedForReply}:{parsedLog:parsedForReply});
+        reply = stripToolNameNoise(await getJoeBotReply(msg,updatedAthlete,newMsgs,workoutHistory,athleteGoals,athleteContext,null,MASTERMIND_ON?{mastermind:true, memoryRows, pureLog:fromQuickLog, parsedLog:parsedForReply}:{parsedLog:parsedForReply}));
         setMessages(prev=>{ const u=[...prev]; const last=u[u.length-1]; if(last && last.role==="assistant") u[u.length-1]={role:"assistant",content:reply}; return u; });
       }
       // A held reply keeps the typing dot up until releaseReply shows the bubble
@@ -8890,8 +8941,25 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
         // turn would resurrect the logger for a workout that just ended (Will
         // 08-28) — dropped deterministically here, not just discouraged in the
         // prompt.
-        const rest = masterToolCalls.filter(tc=>tc.name!=="set_position" && tc.name!=="propose_preference"
-          && !(fromQuickLog && (tc.name==="prefill_log_sheet" || tc.name==="pin_session_card")));
+        let rest = masterToolCalls.filter(tc=>tc.name!=="set_position" && tc.name!=="propose_preference"
+          && !(fromQuickLog && (tc.name==="prefill_log_sheet" || tc.name==="pin_session_card" || tc.name==="show_start_buttons")));
+        // T62 AUTO-PIN (Will 08-31): a prefill without a pin means the model
+        // judged a workout is STARTING but forgot the lock screen — he had to
+        // ask for it by name. The pin is appended in code, ordered AFTER the
+        // prefill so the card projects the fresh park, through the same
+        // executor branch (one pin path, never a second). Web degrades inside
+        // showSessionCard (no native plugin → false) with no false claim, and
+        // an active card just refreshes (the one-event rule's own branch).
+        // Suppressed on presentation turns: a what's-today inquiry (regex) or a
+        // show_start_buttons turn is Joe SHOWING the session, not the athlete
+        // starting it — there the pin waits behind the Start Workout tap.
+        if(rest.some(tc=>tc.name==="prefill_log_sheet")
+           && !rest.some(tc=>tc.name==="pin_session_card")
+           && !rest.some(tc=>tc.name==="show_start_buttons")
+           && !masterToolCalls.some(tc=>tc.name==="clear_session_card")
+           && !(asksTodaysWorkout(msg) && !asksStartingWorkout(msg))){
+          rest = [...rest, {name:"pin_session_card", input:{}, auto:true}];
+        }
         if(rest.length) executeMasterTools(rest, updatedAthlete, newMsgs);
       }
 
@@ -9321,9 +9389,23 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
       {
         const explicitCardAsk = asksLockScreenCard(msg);
         const startingNow = asksStartingWorkout(msg);
-        if((asksTodaysWorkout(msg) || explicitCardAsk || startingNow) && !chipSetThisSend && sessionCardSupported()
+        // T62 (Will's standing rule, supersedes T56's zero-tap pin on
+        // what's-today): an INQUIRY about today's workout gets the programming
+        // in Joe's reply plus the same Start Workout / Not Now / Different
+        // Workout buttons the opener uses — the pin moves behind the Start
+        // tap. Deterministic (the regex, not the model); the mastermind's
+        // show_start_buttons tool covers presentations the regex can't see.
+        // Works on web too (Start degrades to the dock), so no
+        // sessionCardSupported gate here. Starting/pin asks below still
+        // zero-tap: those ARE the start.
+        if(asksTodaysWorkout(msg) && !explicitCardAsk && !startingNow && !chipSetThisSend
+           && hasProgram && !activeSessionCard(updatedAthlete.id) && !fromQuickLog){
+          setOpenerChoicePending(true); chipSetThisSend = true;
+        }
+        else if((explicitCardAsk || startingNow) && !chipSetThisSend && sessionCardSupported()
            && hasProgram && !activeSessionCard(updatedAthlete.id)
            && (explicitCardAsk || !sessionCardDeclinedToday(updatedAthlete.id))){
+          if(startingNow) markWorkoutStart(updatedAthlete.id); // said they're starting = clock starts (T62)
           // T56 (Will's spec, 08-18): permission already granted (or native, where
           // pinSessionCard reports blocked truthfully) → ZERO-TAP pin. The chip
           // survives only for the web ungranted case, where accepting IS the
@@ -9957,7 +10039,10 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   userSelect:"text",WebkitUserSelect:"text",WebkitTouchCallout:"default",cursor:"text"}}>
                   {/* While the streaming placeholder is still empty, show the typing dots INSIDE
                       this bubble (instead of a second stacked indicator bubble below). */}
-                  {m.role==="assistant"?(!m.content&&loading&&i===messages.length-1?<div className="ld-dots"><i/><i/><i/></div>:<StreamText text={m.content}/>):m.content}
+                  {/* stripToolNameNoise: the display-side half of the T62 leakage
+                      fix — cleans mid-stream deltas AND history rows persisted
+                      before the settle-side strip existed. */}
+                  {m.role==="assistant"?(!m.content&&loading&&i===messages.length-1?<div className="ld-dots"><i/><i/><i/></div>:<StreamText text={stripToolNameNoise(m.content)}/>):m.content}
                   {/* Opener answer — IN the bubble, big and bold (Will 08-29: the
                       floating chips above the composer got ignored; these can't be).
                       Same answerOpenerChoice handlers; retired by a tap or by typing
@@ -10355,24 +10440,35 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                 : <div style={{marginTop:3,fontSize:11,color:CA.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(recPending.rec.why||"").slice(0,80)}</div>}
             </div>
             <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.muted,textTransform:"uppercase",paddingLeft:2}}>What changes · {recPending.rec.swaps.length} {recPending.rec.swaps.length===1?"spot":"spots"}</div>
+            {/* T62 (Will 08-31): every spot is a PAIR — the struck old line, and
+                directly beneath it the incoming line, unmissable (bold, accent
+                ink, accent side-bar): the sheet has to let a reader AUDIT every
+                swap without guessing. The incoming line stays editable (the
+                hand-edit-is-sacred contract) — a textarea styled as content. */}
             {recPending.rec.swaps.map((s,i)=>(
               <div key={i} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,overflow:"hidden"}}>
                 <div style={{background:`${CA.amber}14`,borderBottom:`1px dashed ${CA.border}`,padding:"7px 10px"}}>
                   <div style={{fontSize:8,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:CA.amber,marginBottom:3}}>
                     {[s.week!=null?`Week ${s.week}`:null, s.day].filter(Boolean).join(" · ")||"In your program"} — replacing
                   </div>
-                  <div style={{fontSize:11.5,color:CA.muted2,textDecoration:"line-through",textDecorationThickness:1,lineHeight:1.5}}>{s.find}</div>
+                  <div style={{fontSize:11.5,color:CA.muted2,textDecoration:"line-through",textDecorationThickness:1,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{s.find}</div>
                 </div>
-                <div style={{padding:"7px 10px"}}>
-                  <div style={{fontSize:8,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:CA.accent,marginBottom:3}}>With</div>
+                <div style={{padding:"7px 10px 8px",borderLeft:`3px solid ${CA.accent}`}}>
+                  <div style={{fontSize:8,fontWeight:700,letterSpacing:1.1,textTransform:"uppercase",color:CA.accent,marginBottom:3}}>↳ What goes in</div>
                   <textarea value={s.replace} onChange={e=>recEditSwap(i, e.target.value)} spellCheck={false}
-                    aria-label={`Replacement ${i+1}`} rows={Math.max(1, Math.ceil(s.replace.length/44))}
-                    style={{width:"100%",background:"transparent",border:"none",outline:"none",resize:"none",color:CA.text,fontSize:12,lineHeight:1.5,fontFamily:"inherit",padding:0}}/>
+                    aria-label={`Replacement ${i+1}`}
+                    rows={Math.max(s.replace.split("\n").length, Math.ceil(Math.max(s.replace.length,1)/40))}
+                    style={{width:"100%",minHeight:20,background:"transparent",border:"none",outline:"none",resize:"none",color:CA.accent,fontWeight:700,fontSize:12.5,lineHeight:1.5,fontFamily:"inherit",padding:0,display:"block"}}/>
                 </div>
               </div>
             ))}
             {recBusy && <div style={{color:CA.muted,fontSize:12}}>Joe's updating the rec…</div>}
-            <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.muted,textTransform:"uppercase",paddingLeft:2,marginTop:2}}>How long</div>
+          </div>
+          {/* T62 (Will 08-31): everything ABOVE here scrolls; the duration
+              picker and the actions stay fixed and reachable no matter how
+              many spots the rec carries. */}
+          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"8px 14px 0"}}>
+            <div style={{fontSize:9,fontWeight:700,letterSpacing:1.2,color:CA.muted,textTransform:"uppercase",marginBottom:5}}>How long</div>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {["1w","2w","3w","block"].map(d=>(
                 <button key={d} onClick={()=>recSetDuration(d)}
@@ -10382,13 +10478,18 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
               ))}
             </div>
           </div>
-          <div style={{flexShrink:0,borderTop:`1px solid ${CA.border}`,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+          <div style={{flexShrink:0,background:CA.navy2,padding:"9px 14px",display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={discardRec} disabled={recBusy} aria-label="Dismiss this rec"
+              style={{background:"transparent",color:CA.muted,border:`1px solid ${CA.border}`,borderRadius:9,padding:"9px 12px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:recBusy?0.6:1}}>
+              Dismiss
+            </button>
+            <div style={{flex:1}}/>
             <button onClick={dismissRec} disabled={recBusy}
-              style={{background:CA.navy2,color:CA.accent,border:`1px solid ${CA.accent}`,borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:recBusy?0.6:1}}>
+              style={{background:CA.navy2,color:CA.accent,border:`1px solid ${CA.accent}`,borderRadius:9,padding:"9px 12px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer",opacity:recBusy?0.6:1}}>
               Save for Later
             </button>
             <button onClick={applyRec} disabled={recBusy}
-              style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 14px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:recBusy?"not-allowed":"pointer",opacity:recBusy?0.6:1}}>
+              style={{background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"9px 12px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:recBusy?"not-allowed":"pointer",opacity:recBusy?0.6:1}}>
               Apply to Program
             </button>
           </div>
@@ -12006,7 +12107,9 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                     return pd.session_feel;
                   });
                   const feelVal = sessionFeel?(typeof sessionFeel.parsed_data==="string"?JSON.parse(sessionFeel.parsed_data):sessionFeel.parsed_data)?.session_feel:null;
-                  const lastReply = [...session.entries].reverse().find(e=>e.bot_reply)?.bot_reply;
+                  // stripToolNameNoise: rows persisted before the T62 leakage fix
+                  // can carry model-narrated tool names — never shown.
+                  const lastReply = stripToolNameNoise([...session.entries].reverse().find(e=>e.bot_reply)?.bot_reply || "");
                   const sessionDate = effectiveDate(session.entries[0]);
 
                   // Check if this is a run session
@@ -12024,6 +12127,11 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                   // The Quick Log focus note that came with this session, if any —
                   // why the day mattered, in Joe's words, kept with the log.
                   const focusNote = session.entries.map(e=>getPD(e).focus_note).find(Boolean);
+                  // T62: how long the session took — recorded only when the
+                  // workout was started in-app (Start tap / lock-screen pin) and
+                  // logged the same day, so absence is honest, never guessed.
+                  const durSec = Math.max(0, ...session.entries.map(e=>e.duration_seconds||0));
+                  const durLabel = durSec>=300 ? (durSec>=3600 ? `${Math.floor(durSec/3600)}h ${Math.round((durSec%3600)/60)}m` : `${Math.round(durSec/60)} min`) : null;
 
                   return (
                     <div key={i} style={{background:"rgba(58,123,255,0.03)",border:`1px solid ${CA.line2}`,borderRadius:12,padding:14,marginBottom:10}}>
@@ -12039,8 +12147,10 @@ function MyLogModal({workoutHistory, athlete, onClose, proofDigest, onDigestRead
                           )}
                         </div>
                       </div>
-                      {(tonnage>0||topSet)&&(
+                      {(tonnage>0||topSet||durLabel)&&(
                         <div style={{display:"flex",flexWrap:"wrap",gap:"2px 8px",justifyContent:"flex-end",marginTop:-4,marginBottom:8,color:CA.muted,fontSize:11,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>
+                          {durLabel&&<span>{durLabel}</span>}
+                          {durLabel&&(tonnage>0||topSet)&&<span style={{color:CA.faint}}>·</span>}
                           {tonnage>0&&<span>{displayStat(tonnage).toLocaleString()} {unitLabel()}</span>}
                           {tonnage>0&&topSet&&<span style={{color:CA.faint}}>·</span>}
                           {topSet&&<span>top: {topSet.name} {fmtWeight(topSet.weight,topSet.unit)}×{topSet.reps}</span>}
@@ -12450,7 +12560,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     const ownerFilter = viewer==="coach" ? "coach" : "athlete";
     // Program Recs (Will 08-28) ride the same rows; they surface here only for
     // the athlete under chat-first (the handlers arrive as props from that path).
-    const statuses = onResumeRec ? '("interview","draft","rec","rec_applied")' : '("interview","draft")';
+    const statuses = onResumeRec ? '("interview","draft","rec","rec_applied","rec_dismissed")' : '("interview","draft")';
     sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.${statuses}&order=updated_at.desc&select=*`)
       .then(r=>{ if(Array.isArray(r)) setDrafts(r); })
       .catch(()=>{})
@@ -12531,8 +12641,9 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     );
   }
 
-  const recRows = drafts.filter(d=>d.status==="rec"||d.status==="rec_applied");
-  const builderRows = drafts.filter(d=>d.status!=="rec"&&d.status!=="rec_applied");
+  const REC_STATUSES = new Set(["rec","rec_applied","rec_dismissed"]);
+  const recRows = drafts.filter(d=>REC_STATUSES.has(d.status));
+  const builderRows = drafts.filter(d=>!REC_STATUSES.has(d.status));
   const recOf = (d) => d.blueprint?.rec || null;
 
   return (
@@ -12543,12 +12654,17 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
         {recRows.map(d=>{
           const r = recOf(d); if(!r) return null;
           const applied = d.status==="rec_applied";
+          // T62: a dismissed rec stays as a muted audit row — the record that a
+          // change was proposed and waved off. Open restages it if they change
+          // their mind.
+          const dismissed = d.status==="rec_dismissed";
+          const chipInk = applied?CA.green:dismissed?CA.muted:CA.accent;
           return (
-            <div key={d.id} style={card}>
+            <div key={d.id} style={{...card,...(dismissed?{opacity:.75}:{})}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
                 <span style={{...DISP,fontSize:15,letterSpacing:1,color:CA.text}}>{d.title||"PROGRAM REC"}</span>
-                <span style={{background:applied?`${CA.green}18`:`${CA.accent}18`,border:`1px solid ${applied?CA.green:CA.accent}55`,color:applied?CA.green:CA.accent,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
-                  {applied?"Applied":r.reverted?"Reverted":"Rec"}
+                <span style={{background:`${chipInk}18`,border:`1px solid ${chipInk}55`,color:chipInk,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
+                  {applied?"Applied":dismissed?"Dismissed":r.reverted?"Reverted":"Rec"}
                 </span>
                 <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
               </div>

@@ -42,6 +42,10 @@ for (const [frag, why] of [
   ["A rec has to EARN its place", "the pattern rule: first mention watches, repeat drafts (Will 08-28)"],
   ["one odd day is allowed to be one odd day", "breathing room for shifting circumstances (Will 08-28)"],
   ["compute percentages only when they ask to progress", "log-to-program carries exact numbers by default (Will 08-29)"],
+  ["call show_start_buttons", "presenting today's session always offers the start buttons (Will 08-31)"],
+  ["the buttons ARE the question", "presentation replies end on the workout, buttons close it (Will 08-31)"],
+  ["The app pins the card itself", "auto-pin on start is the app's job, the model never announces it (Will 08-31)"],
+  ["NEVER appear in your reply text", "tool-name leakage: names are hands, not words (Will 08-31)"],
 ]) ok(cardAll.includes(frag), `card keeps: ${why} ("${frag}")`);
 ok(!/—/.test(cardAll), "card contains no em dashes (practices its own voice rule)");
 ok(CREW_ENABLED === cardAll.includes("CREW:"), "crew line rides the flag exactly");
@@ -64,8 +68,18 @@ for (const t of TOOLSETS.mastermind_athlete) {
   ok(t.input_schema && t.input_schema.type === "object", `${t.name} schema is an object schema`);
   ok(t.input_schema.additionalProperties === false, `${t.name} schema closes additionalProperties`);
 }
-for (const n of ["set_position", "remember_fact", "forget_fact", "pin_session_card", "clear_session_card", "prefill_log_sheet", "propose_preference", "propose_program_rec"])
+for (const n of ["set_position", "remember_fact", "forget_fact", "pin_session_card", "clear_session_card", "prefill_log_sheet", "propose_preference", "propose_program_rec", "show_start_buttons"])
   ok(names.has(n), `toolset includes ${n}`);
+// T62 tool-name leakage filter: the client-side strip list must cover every
+// name the model can see (registry + the v2 confirm-floor names) — a new
+// server tool that isn't added to KNOWN_TOOL_NAMES fails HERE, not on an
+// athlete's screen.
+{
+  const { KNOWN_TOOL_NAMES, stripToolNameNoise } = await import("../src/chatRouting.js");
+  for (const t of TOOLSETS.mastermind_athlete) ok(KNOWN_TOOL_NAMES.includes(t.name), `strip list covers ${t.name}`);
+  for (const n of HARD_CONFIRM_FLOOR) ok(KNOWN_TOOL_NAMES.includes(n), `strip list covers floor name ${n}`);
+  ok(stripToolNameNoise("prefill_log_sheet, pin_session_card\nAlright, day 2. Let's work.") === "Alright, day 2. Let's work.", "strips the leaked name line, keeps the reply");
+}
 // Program Recs (Will 08-28): the write-tool can only STAGE, and its duration
 // vocabulary is exactly the hard set — no "permanent", nothing vague.
 {

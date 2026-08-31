@@ -258,9 +258,14 @@ const ATHLETE_COL_ALLOW = {
     ]),
     values: {
       owner_type: (v) => v === "athlete",
-      // rec / rec_applied: staged Program Recs (Will's 08-28 design) ride the
-      // same rows as Builder drafts — the payload lives in blueprint.rec.
-      status: (v) => ["interview", "draft", "applied", "rec", "rec_applied"].includes(v),
+      // rec / rec_applied / rec_dismissed: staged Program Recs (Will's 08-28
+      // design) ride the same rows as Builder drafts — the payload lives in
+      // blueprint.rec. rec_dismissed (T62) = the athlete waved it off; kept as
+      // an audit row in Past Blocks, never resurfaced as a bar. TWIN: the DB
+      // CHECK constraint program_drafts_status_check must carry the same enum
+      // (migration 20260831_program_drafts_status_rec_dismissed) — they are
+      // separate gates and BOTH must know every status.
+      status: (v) => ["interview", "draft", "applied", "rec", "rec_applied", "rec_dismissed"].includes(v),
       scope: (v) => ["full", "short", "quick"].includes(v),
     },
   },
