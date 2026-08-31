@@ -107,7 +107,9 @@ test("live: chat-first logging — Start Workout raises the bar, the sheet pre-f
   try { await start.click({ timeout: 45_000 }); }
   catch { test.skip(true, "opener resolved to a rest day — no session to drive"); }
   // The bar comes up titled with the session; open it into the ONE-sheet log.
-  const bar = page.getByRole("button", { name: /Take it off the screen/ }).locator("..");
+  // (The outer bar's accessible name concatenates the x label + the title —
+  // the banked title-attr/text-child gotcha — so match the LONGER name.)
+  const bar = page.getByRole("button", { name: /Take it off the screen .+/ });
   await expect(bar).toBeVisible({ timeout: 30_000 });
   await bar.click();
   const draft = page.getByRole("textbox", { name: "Today's workout log" });
@@ -139,7 +141,7 @@ test("live: web parity — 'starting my workout' raises the workout bar, never a
   await composer.fill("at the gym, starting my workout");
   await page.getByRole("button", { name: "→", exact: true }).click();
   // The mastermind preps the sheet: the workout bar appears above the composer.
-  const barX = page.getByRole("button", { name: /Take it off the screen/ });
+  const barX = page.getByRole("button", { name: "Take it off the screen", exact: true });
   await expect(barX).toBeVisible({ timeout: 90_000 });
   expect(await page.evaluate(() => window.__cards.length)).toBe(0);
   // Cleanup: take the bar down so the park doesn't leak into later specs.
