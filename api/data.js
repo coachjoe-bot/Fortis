@@ -260,6 +260,11 @@ const ATHLETE_COL_ALLOW = {
       owner_type: (v) => v === "athlete",
       // rec / rec_applied: staged Program Recs (Will's 08-28 design) ride the
       // same rows as Builder drafts — the payload lives in blueprint.rec.
+      // Dismissing a rec DELETES the row (Will 09-01), so no dismissed status
+      // exists app-side; the DB CHECK still tolerates 'rec_dismissed' from the
+      // 20260831 migration (inert, nothing writes it). TWIN: the DB CHECK
+      // constraint program_drafts_status_check and this enum are separate
+      // gates — BOTH must know every status the app writes.
       status: (v) => ["interview", "draft", "applied", "rec", "rec_applied"].includes(v),
       scope: (v) => ["full", "short", "quick"].includes(v),
     },

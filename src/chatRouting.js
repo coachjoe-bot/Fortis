@@ -163,3 +163,46 @@ export const isFullProgramEcho = (prog, programText) =>
 // past-tense forms out.)
 export const PROGRAM_EDIT_ASK_RE = /\b(?:add|append|put|tack|stick)\b[^.!?\n]{0,60}\b(?:to|onto|into|in|on)\s+my\s+(?:program|plan|split|training plan)\b/i;
 export const asksProgramEdit = (message) => PROGRAM_EDIT_ASK_RE.test(String(message || ""));
+
+// ── Tool-name leakage filter (T62) ───────────────────────────────────────────
+// The model sometimes narrates its own tool calls INTO its prose — Will's 08-31
+// screenshot had "prefill_log_sheet, pin_session_card" as the first line of
+// Joe's bubble. The SSE relay and the stream client both keep tool frames out
+// of the text (verified), so the identifiers arrive as model-written TEXT; the
+// prompt already forbids it, and a prompt rule can be ignored. This filter
+// cannot: every assistant bubble renders through it (which also cleans history
+// rows persisted before the fix), and send() runs settled replies through it
+// before they reach bot_reply.
+//
+// The list is every tool name the model can see (api/_tools.js TOOLSETS plus
+// the HARD_CONFIRM_FLOOR v2 names). The client can't import the server module,
+// so scripts/test-chat-routing.mjs asserts this copy stays in sync — a new
+// server tool that isn't added here fails the suite, not the athlete.
+export const KNOWN_TOOL_NAMES = [
+  "set_position", "remember_fact", "forget_fact",
+  "pin_session_card", "clear_session_card", "prefill_log_sheet",
+  "propose_program_rec", "propose_preference", "show_start_buttons",
+  "replace_program", "delete_log_entry", "send_coach_request",
+];
+const TOOL_NAME_SRC = `\\b(?:${KNOWN_TOOL_NAMES.join("|")})\\b(?:\\(\\))?`;
+// A line that was ONLY tool noise (names, commas, arrows, bullets) vanishes
+// entirely; a name inside a real sentence is excised and the seams cleaned.
+const TOOL_SEPARATORS_RE = /^[\s,;:·•|&+/\\\-–—>()[\]{}]*$/;
+export const stripToolNameNoise = (text) => {
+  const t = String(text ?? "");
+  if (!KNOWN_TOOL_NAMES.some((n) => t.includes(n))) return t;
+  const out = [];
+  for (const line of t.split("\n")) {
+    const nameRe = new RegExp(TOOL_NAME_SRC, "g");
+    if (!nameRe.test(line)) { out.push(line); continue; }
+    let s = line.replace(new RegExp(TOOL_NAME_SRC, "g"), "");
+    if (TOOL_SEPARATORS_RE.test(s)) continue;
+    s = s.replace(/\(\s*\)/g, "")
+      .replace(/,(\s*,)+/g, ",")
+      .replace(/^[\s,;:·•|&\-–—>]+/, "")
+      .replace(/[\s,;:·•|&\-–—>]+$/, "")
+      .replace(/\s{2,}/g, " ");
+    if (s) out.push(s);
+  }
+  return out.join("\n").replace(/^\n+/, "").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
+};

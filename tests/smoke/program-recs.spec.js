@@ -64,6 +64,62 @@ test("rec: boot restores the bar, the sheet shows the tagged swap, Apply lands b
   expect(write.body.data.program_text).toContain("Overhead Press 3x8 @ 95"); // everything else untouched
 });
 
+test("rec DISMISS (T62): the pair renders (struck old + incoming line), Dismiss DELETES the row", async ({ page }) => {
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  const { calls } = await mockApi(page, {
+    athlete, chatReply: DRAFT_REPLY,
+    dataReads: { program_drafts: (body) => String(body.params || "").includes('status=in.("rec"') ? [REC_ROW(athlete.id)] : [] },
+  });
+  await loginAsAthlete(page, athlete, "/?chatfirst=1&mastermind=1");
+  const bar = page.getByText("PROGRAM REC — Pec swap").first();
+  await expect(bar).toBeVisible({ timeout: 15000 });
+  await bar.click();
+  // Will's 08-31 audit rule: every spot is a PAIR — the struck original and,
+  // directly beneath it, the unmissable incoming line.
+  await expect(page.getByText("Day 1 - Push — replacing")).toBeVisible();
+  await expect(page.getByText("↳ What goes in").first()).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Replacement 1" })).toHaveValue("Floor Press 3x5 @ 165");
+  // The duration picker + all three actions live OUTSIDE the scroll region.
+  await expect(page.getByRole("button", { name: "Rest of block" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save for Later" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Apply to Program" })).toBeVisible();
+  // Will 09-01: dismissed = deleted outright, no lingering row anywhere.
+  await page.getByRole("button", { name: "Dismiss this rec" }).click();
+  await expect(page.getByText(/Deleted\. Program stays as it is/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("PROGRAM REC — Pec swap")).toHaveCount(0);
+  const del = calls.find((c) => c.body?.op === "delete" && c.body?.table === "program_drafts" && String(c.body?.params || "").includes("rec-row-1"));
+  expect(del).toBeTruthy();
+});
+
+test("rec bar ✕ asks (Will 09-01): Save to Drafts parks, Delete removes, backdrop cancels", async ({ page }) => {
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  const { calls } = await mockApi(page, {
+    athlete, chatReply: DRAFT_REPLY,
+    dataReads: { program_drafts: (body) => String(body.params || "").includes('status=in.("rec"') ? [REC_ROW(athlete.id)] : [] },
+  });
+  await loginAsAthlete(page, athlete, "/?chatfirst=1&mastermind=1");
+  const bar = page.getByText("PROGRAM REC — Pec swap").first();
+  await expect(bar).toBeVisible({ timeout: 15000 });
+  // ✕ opens the ask instead of silently parking.
+  await page.getByRole("button", { name: "Close the program rec", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Close this program rec" });
+  await expect(dialog).toBeVisible();
+  // Backdrop tap cancels — the rec stays live, nothing written. (Click the
+  // overlay's own corner: viewport coords can miss the app column entirely.)
+  await dialog.locator("..").click({ position: { x: 8, y: 8 } });
+  await expect(dialog).toHaveCount(0);
+  await expect(bar).toBeVisible();
+  expect(calls.find((c) => c.body?.op === "delete" && c.body?.table === "program_drafts")).toBeFalsy();
+  // Save to Drafts parks it (the bar comes down, the row survives as parked).
+  await page.getByRole("button", { name: "Close the program rec", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save to Drafts" }).click();
+  await expect(page.getByText(/Parked it\./)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("PROGRAM REC — Pec swap")).toHaveCount(0);
+  const park = calls.find((c) => c.body?.op === "update" && c.body?.table === "program_drafts" && c.body?.data?.blueprint?.rec?.parked === true);
+  expect(park).toBeTruthy();
+  expect(calls.find((c) => c.body?.op === "delete" && c.body?.table === "program_drafts")).toBeFalsy();
+});
+
 test("rec pattern gate: a first pain mention is NOTED (watched note), never a rec", async ({ page }) => {
   const msg = "my knee felt a little cranky on squats today";
   const athlete = makeAthlete({ program_text: PROGRAM });

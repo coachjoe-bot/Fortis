@@ -70,12 +70,28 @@ struct SessionCardLiveActivity: Widget {
                         .font(.system(size: 10.5, weight: .heavy))
                         .kerning(1.8)
                         .foregroundStyle(c.accent)
+                        .layoutPriority(1)
                         .padding(.trailing, 3)
-                    Spacer(minLength: 10)
+                    Spacer(minLength: 8)
+                    // T62: start time + a LIVE elapsed stopwatch to its right.
+                    // timerInterval text ticks in the widget process itself, no
+                    // pushes; the range's far end is the 8h Live Activity
+                    // ceiling, which iOS reaches before the timer can run out.
+                    // Proven live in the sim 09-01 (ticked 0:15 on the lock
+                    // screen). The trailing pair scales down before it can
+                    // crowd the brand on narrow widths.
                     Text("STARTED \(context.state.startedAt, style: .time)")
                         .font(.system(size: 8.5, weight: .semibold))
                         .kerning(0.8)
                         .foregroundStyle(c.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(timerInterval: context.state.startedAt...context.state.startedAt.addingTimeInterval(8 * 3600),
+                         countsDown: false)
+                        .font(.system(size: 8.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(c.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .padding(.trailing, 3)
                 }
                 Rectangle().fill(c.rule).frame(height: 1)
@@ -85,6 +101,15 @@ struct SessionCardLiveActivity: Widget {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .padding(.trailing, 3)
+                // T62: long exercise lines WRAP instead of truncating with "…"
+                // (Will's 08-31 screenshot lost "(progression fr…"). The numbered
+                // 1-6 separation stays; the per-line wrap allowance shrinks as
+                // the exercise count grows because the ~160pt lock-screen budget
+                // is a hard iOS ceiling that CLIPS overflow top and bottom — so
+                // a 6-lift card gets 2 lines per exercise, a 3-lift card wraps
+                // freely. Past the allowance a line still truncates; that is the
+                // platform's constraint, not a style choice.
+                let lineCap = context.state.lines.count <= 3 ? 4 : context.state.lines.count <= 4 ? 3 : 2
                 VStack(alignment: .leading, spacing: 2.5) {
                     ForEach(Array(context.state.lines.prefix(6).enumerated()), id: \.offset) { i, line in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -95,8 +120,9 @@ struct SessionCardLiveActivity: Widget {
                             Text(line)
                                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                                 .foregroundStyle(c.ink)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
+                                .lineLimit(lineCap)
+                                .minimumScaleFactor(0.9)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
