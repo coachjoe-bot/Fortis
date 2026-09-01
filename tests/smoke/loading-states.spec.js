@@ -65,3 +65,46 @@ for (const theme of ["light", "dark"]) {
     }
   });
 }
+
+test("a skeleton never FLASHES: every skeleton root carries the hold class", async ({ page }) => {
+  // Will's 09-01 phone pass: a warm login painted a full page of chat bubbles
+  // for ~half a second before the real transcript landed, which reads as "some
+  // other screen loaded by mistake". Skeleton roots hold at opacity 0 for 500ms
+  // so a fast wait shows nothing at all. Losing that class brings the flash back.
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  await mockApi(page, { athlete });
+  await page.route("**/api/data", async (route) => {
+    const body = route.request().postDataJSON() || {};
+    if (body.table === "workouts" && body.op === "read") await new Promise((r) => setTimeout(r, 4000));
+    return route.fallback();
+  });
+
+  await loginAsAthlete(page, athlete);
+  const chat = page.getByRole("status", { name: "Syncing feed" });
+  await expect(chat).toHaveClass(/skhold/, { timeout: 15_000 });
+  // and it is genuinely transparent at first paint, not merely class-tagged
+  expect(await chat.evaluate((el) => getComputedStyle(el).opacity)).toBe("0");
+});
+
+test("Progress → Running with runs logged but nothing chartable shows the radar, not a lone sentence", async ({ page }) => {
+  // The zero-run branch stops firing the moment ONE run exists, and every chart
+  // needs 2+ points — so a single logged run used to leave a kicker over one grey
+  // line in an otherwise empty pane. That was the void Will hit on 09-01.
+  const athlete = makeAthlete({ program_text: PROGRAM });
+  const oneRun = [{
+    id: "run-1", athlete_id: athlete.id, created_at: "2026-08-28T17:30:00.000Z",
+    workout_date: "2026-08-28", raw_text: "easy 3 miles",
+    parsed_data: { exercises: [], run_data: { run_type: "easy", distance_miles: 3, pace_per_mile: "8:30" } },
+  }];
+  await mockApi(page, { athlete, dataReads: { workouts: oneRun } });
+
+  await loginAsAthlete(page, athlete);
+  await page.getByRole("button", { name: "PROGRESS", exact: true }).click();
+  await page.getByRole("button", { name: /^running$/i }).first().click();
+
+  await expect(page.getByText("AWAITING SIGNAL")).toBeVisible();
+  await expect(page.locator(".radar")).toBeVisible();
+  await expect(page.getByText("Log more runs to see trend charts.")).toHaveCount(0);
+  // the readout is honest about what IS logged
+  await expect(page.getByText(/1 run logged/)).toBeVisible();
+});

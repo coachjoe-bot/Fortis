@@ -2287,6 +2287,15 @@ input,textarea,select,button{font-family:'Inter',system-ui,-apple-system,sans-se
    light = warm stone bars under a white sheen, dark = raised navy under a faint
    blue one. */
 .sk{position:relative;overflow:hidden;border-radius:6px;background:${IS_DARK?"#101b36":"#E9E3D7"};}
+/* A skeleton must never FLASH. Anything that resolves quickly (a warm login, a
+   cached pane) would otherwise paint a full page of bars for ~300-500ms, which
+   reads as "some other screen loaded by mistake" — exactly what Will reported
+   on his 09-01 phone pass after the first rollout. Every skeleton root holds at
+   opacity 0 for 500ms first, so a fast wait shows nothing at all and only a
+   genuinely slow one gets the skeleton. --skop lets a caller keep a per-card
+   stagger as the animation's end state. */
+.skhold{animation:skHold 160ms ease-out 500ms both;}
+@keyframes skHold{from{opacity:0;}to{opacity:var(--skop,1);}}
 .sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,${IS_DARK?"rgba(106,160,255,.13)":"rgba(255,255,255,.7)"},transparent);animation:skSweep 1.9s ease-in-out infinite;}
 @keyframes skSweep{to{transform:translateX(100%);}}
 .ld-dots{display:flex;align-items:center;gap:5px;}
@@ -2766,7 +2775,7 @@ export function AwaitingSignal({hint, label="AWAITING SIGNAL"}) {
 // is coming, never be a blank void. Sized per context by the caller.
 export function Skeleton({lines=[70,95,85,60], line=12, gap=10, style}) {
   return (
-    <div aria-hidden style={style}>
+    <div aria-hidden className="skhold" style={style}>
       {lines.map((w,i)=>(
         <div key={i} className="sk" style={{height:line,width:`${w}%`,marginBottom:i<lines.length-1?gap:0}}/>
       ))}
@@ -2778,7 +2787,7 @@ export function Skeleton({lines=[70,95,85,60], line=12, gap=10, style}) {
 // textarea that used to sit above "Joe's updating the sheet…" (Will, 08-31).
 export function SheetSkeleton({caption="Joe's updating the sheet…"}) {
   return (
-    <div role="status" aria-label={caption} style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:14,minHeight:280,display:"flex",flexDirection:"column"}}>
+    <div role="status" aria-label={caption} className="skhold" style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:14,minHeight:280,display:"flex",flexDirection:"column"}}>
       <Skeleton lines={[46]} line={16}/>
       <div style={{height:18}}/>
       <Skeleton lines={[86,64,78,58,72,52]} line={12} gap={14}/>
@@ -2795,7 +2804,7 @@ export function SkeletonCards({n=2, lines=[34,88,64], line=11, style}) {
   return (
     <>
       {Array.from({length:n},(_,i)=>(
-        <div key={i} aria-hidden style={{border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10,opacity:1-i*0.18,...style}}>
+        <div key={i} aria-hidden className="skhold" style={{border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10,"--skop":String(1-i*0.18),...style}}>
           <Skeleton lines={lines} line={line}/>
         </div>
       ))}
@@ -2812,7 +2821,7 @@ export function ChatSkeleton({caption="Syncing feed"}) {
     background:CA.navy2, border:`1px solid ${CA.border}`,
   });
   return (
-    <div role="status" aria-label={caption} style={{flex:1,display:"flex",flexDirection:"column",padding:"20px 4px",gap:0}}>
+    <div role="status" aria-label={caption} className="skhold" style={{flex:1,display:"flex",flexDirection:"column",padding:"20px 4px",gap:0}}>
       <div style={bubble(78,false)}><Skeleton lines={[92,74,58]} line={10} gap={9}/></div>
       <div style={bubble(52,true)}><Skeleton lines={[88,60]} line={10} gap={9}/></div>
       <div style={bubble(70,false)}><Skeleton lines={[86,66]} line={10} gap={9}/></div>
@@ -13655,13 +13664,21 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
           const distData=runs.filter(r=>r.run.distance_miles||r.run.distance_km).map(r=>({label:fmtDateShort(r.date),y:r.run.distance_miles||r.run.distance_km}));
           const paceData=runs.filter(r=>r.run.pace_per_mile||r.run.pace_per_km).map(r=>({label:fmtDateShort(r.date),y:paceToMin(r.run.pace_per_mile||r.run.pace_per_km)})).filter(d=>d.y!==null);
           const hrData=runs.filter(r=>r.run.heart_rate_avg).map(r=>({label:fmtDateShort(r.date),y:r.run.heart_rate_avg}));
+          // Every chart needs 2+ points. With runs logged but none of the three
+          // series chartable, this pane used to be a kicker over one grey
+          // sentence — the actual void Will hit on 09-01 (the zero-run branch
+          // above never fires once you've logged a single run). Same readout as
+          // every other empty Progress tab, with an honest count.
+          if(distData.length<2&&paceData.length<2&&hrData.length<2)
+            return <AwaitingSignal hint={`${runs.length} run${runs.length===1?"":"s"} logged. Tell Coach Joe about one more and your pace, mileage and heart-rate trends chart themselves here.`}/>;
           return (
             <div>
               <div style={{color:CA.blue,fontSize:11,letterSpacing:1,fontWeight:700,marginBottom:12}}>RUNNING PROGRESS</div>
               {distData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Distance per run</div><LineChart data={distData} color={CA.blue} palette={CA} unit=" mi"/></div>}
               {paceData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:4}}>Pace (min/mi), lower is faster</div><LineChart data={paceData} color={CA.green} palette={CA} unit=""/></div>}
               {hrData.length>=2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:12,padding:16,marginBottom:14}}><div style={{color:CA.text,fontWeight:700,fontSize:14,marginBottom:12}}>Avg heart rate (bpm)</div><LineChart data={hrData} color={CA.red} palette={CA} unit=" bpm"/></div>}
-              {distData.length<2&&paceData.length<2&&<div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:10,padding:16,color:CA.muted2,fontSize:12}}>Log more runs to see trend charts.</div>}
+              {/* every chart needs 2+ points; that case is handled above by the
+                  radar, so nothing lands here unless a chart actually rendered */}
             </div>
           );
         })()}
