@@ -2544,6 +2544,77 @@ export function useOnline() {
 export const isNetworkError = (e) =>
   !!e && (e.name==="TypeError" || /network|failed to fetch|load failed|offline/i.test(e.message||""));
 
+// ─── iOS KEYBOARD GEOMETRY (T62) ─────────────────────────────────────────────
+// On iOS — Safari AND the WKWebView shell — the layout viewport NEVER shrinks
+// for the on-screen keyboard. The OS instead PANS the page to reveal the focused
+// input, and for viewport-height surfaces (the 100dvh chat shell, the fixed
+// full-screen Program modal) that pan is pure breakage: bottom composers wedge
+// mid-screen over grey dead space, the header scrolls off, and on WKWebView the
+// pan can REST after the keyboard closes (the leftover grey band). visualViewport
+// is the honest source of keyboard geometry: inset = the strip of layout
+// viewport the keyboard covers.
+//
+// Contract:
+//  - engage only while an editable element has focus in the tree this hook is
+//    mounted in (signup never mounts it and keeps its legitimate document
+//    scroll; a pinch-zoomed viewport must not read as a keyboard);
+//  - consumers pad their bottom by the inset so composers sit above the
+//    keyboard — flex geometry, never an html/body overflow lock (that clipped
+//    signup once) and never env(safe-area-inset-bottom) (47941e6);
+//  - while engaged, document scroll is clamped back to 0 so the OS pan can't
+//    dislodge the layout — inner overflow containers still scroll free;
+//  - when the keyboard closes the inset returns to 0 and one last clamp clears
+//    any leftover pan, so no phantom padding survives dismissal.
+function useKeyboardInset(){
+  const [inset,setInset] = useState(0);
+  useEffect(()=>{
+    const vv = typeof window!=="undefined" ? window.visualViewport : null;
+    if(!vv) return;
+    const editable = (el) => !!el && (el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+    let engaged = editable(document.activeElement);
+    const read = () => {
+      const kb = engaged ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+      setInset(prev => Math.abs(prev-kb)<2 ? prev : kb);
+      // The clamp: while the keyboard owns layout (and once more as it leaves),
+      // the document stays at 0 — the pan is the bug, not the fix.
+      if((engaged||kb===0) && (window.scrollX||window.scrollY)) window.scrollTo(0,0);
+    };
+    const onFocusIn  = (e)=>{ engaged = editable(e.target); read(); };
+    // Focus hopping between inputs fires focusout→focusin in the same tick;
+    // deferring the disengage read keeps the padding from flapping to 0 between.
+    const onFocusOut = ()=>{ engaged = false; setTimeout(read, 80); };
+    // Mount clamp: the login screen legitimately document-scrolls under the
+    // keyboard, and on WKWebView that offset SURVIVES the switch into the
+    // shell — the clipped header + resting grey band right after login. The
+    // shell's layout owns the viewport, so entering it resets the document.
+    if(window.scrollX||window.scrollY) window.scrollTo(0,0);
+    // Resting-band clamp (native): Capacitor's contentInset "always" makes
+    // safe-area offsets LEGAL RESTING positions for the WKWebView scroll view,
+    // so a plain finger drag can leave the shell displaced with a grey band at
+    // either end — no keyboard involved. While this hook is mounted the
+    // document must never scroll (everything scrolls in inner containers), so
+    // any offset that SETTLES gets snapped back. Debounced past the gesture:
+    // fighting the rubber band mid-drag stutters, correcting the rest doesn't.
+    let settle = 0;
+    const onWinScroll = ()=>{
+      clearTimeout(settle);
+      settle = setTimeout(()=>{ if(window.scrollX||window.scrollY) window.scrollTo(0,0); }, 160);
+    };
+    window.addEventListener("scroll", onWinScroll);
+    vv.addEventListener("resize", read);
+    vv.addEventListener("scroll", read);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    read();
+    return ()=>{
+      vv.removeEventListener("resize", read); vv.removeEventListener("scroll", read);
+      document.removeEventListener("focusin", onFocusIn); document.removeEventListener("focusout", onFocusOut);
+      window.removeEventListener("scroll", onWinScroll); clearTimeout(settle);
+    };
+  },[]);
+  return inset;
+}
+
 // ─── BUILD FRESHNESS HOOK + "UPDATE READY" PILL ──────────────────────────────
 // The pill renders at the app root (so it survives every view) but the thing it
 // must not interrupt — a streaming reply — lives deep inside AthleteView. Rather
@@ -6914,6 +6985,10 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   // line, the composer shrinks, and the stale bottom left a gap under the
   // footer with the chat showing through it (Will's phone, 08-25).
   const [sheetFrame,setSheetFrame] = useState({top:96,bottom:86});
+  // T62: the strip of viewport the iOS keyboard covers. Pads the shell and the
+  // Program modal, and lifts the sheets, so composers ride above the keyboard
+  // instead of letting the OS pan the page (see useKeyboardInset).
+  const kbInset = useKeyboardInset();
   useEffect(()=>{
     if(!CHAT_FIRST_ON) return;
     const measure = () => setSheetFrame(f=>{
@@ -9831,7 +9906,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
   // them — that judgment is the AI's job now, not a ticker's.
 
   return (
-    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,maxWidth:600,margin:"0 auto",position:"relative"}}>
+    <div style={{height:"100dvh",display:"flex",flexDirection:"column",backgroundColor:CA.navy,maxWidth:600,margin:"0 auto",position:"relative",paddingBottom:kbInset}}>
       <style>{GS}{GSA}</style>
       {/* PR "NEW MAX" stamp — pressed straight on (cyan) when a logged lift beats the old best */}
       {prStamp&&(
@@ -10449,7 +10524,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           collapsible strip, hard durations, Save for Later / Apply ──────────── */}
       {CHAT_FIRST_ON && recPending && (
         <div aria-hidden={!recOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
-          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          /* T62: + kbInset — absolute offsets measure from the shell's padding
+             EDGE, so the keyboard padding alone doesn't lift the sheets. */
+          top:sheetFrame.top,bottom:sheetFrame.bottom+kbInset,
           transform:recOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
           pointerEvents:recOpen?"auto":"none",visibility:recOpen?"visible":"hidden",
           background:CA.navy,display:"flex",flexDirection:"column"}}>
@@ -10528,7 +10605,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* ── T58/3b: the program sheet ────────────────────────────────────────── */}
       {CHAT_FIRST_ON && dockProgram && (
         <div aria-hidden={!pgOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
-          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          /* T62: + kbInset — absolute offsets measure from the shell's padding
+             EDGE, so the keyboard padding alone doesn't lift the sheets. */
+          top:sheetFrame.top,bottom:sheetFrame.bottom+kbInset,
           /* visibility rides the transition: hidden may only land AFTER the
              slide-down finishes, or closing pops instead of animating. */
           transform:pgOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
@@ -10576,7 +10655,9 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
       {/* ── T58 chat-first: the log sheet (slides under the header) ─────────── */}
       {CHAT_FIRST_ON && dockWorkout && (
         <div aria-hidden={!sheetOpen} style={{position:"absolute",left:0,right:0,zIndex:40,
-          top:sheetFrame.top,bottom:sheetFrame.bottom,
+          /* T62: + kbInset — absolute offsets measure from the shell's padding
+             EDGE, so the keyboard padding alone doesn't lift the sheets. */
+          top:sheetFrame.top,bottom:sheetFrame.bottom+kbInset,
           /* visibility rides the transition — see the program sheet above. */
           transform:sheetOpen?"translateY(0)":"translateY(110%)",transition:"transform .3s ease, visibility .3s",
           pointerEvents:sheetOpen?"auto":"none",visibility:sheetOpen?"visible":"hidden",
@@ -10698,7 +10779,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
 
       {/* Program View Modal */}
       {showProgram&&(
-        <div className={athlete.temp_program_text?"cyber-away":"cyber"} style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",zIndex:400,maxWidth:600,margin:"0 auto"}}>
+        <div className={athlete.temp_program_text?"cyber-away":"cyber"} style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",zIndex:400,maxWidth:600,margin:"0 auto",paddingBottom:kbInset}}>
           <style>{GS}{GSA}</style>
           <div style={{flex:1,minHeight:0,width:"100%",display:"flex",flexDirection:"column"}}>
             <div style={{paddingTop:"calc(16px + env(safe-area-inset-top, 0px))",paddingBottom:"12px",paddingLeft:"20px",paddingRight:"20px",borderBottom:`1px solid ${CA.border}`,background:CA.navy2,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
