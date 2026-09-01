@@ -19,7 +19,7 @@
 //   after the pane unmounts and parks the finished draft straight to the DB, so
 //   leaving the tab never loses a draft.
 import { useState, useEffect, useMemo, useRef } from "react";
-import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, sbUpsert, track } from "./App.jsx";
+import { CA, CA_BTN, DISP, IS_DARK, PAPER_GRID, Skeleton, askClaude, sbDelete, sbInsert, sbRead, sbUpdateWhere, sbUpsert, track } from "./App.jsx";
 import { epley1RM, normalizeExName, toLbs, computeGritSnapshot, ratioLimitersLine, feasibilityLine } from "./grit.js";
 import { normalizePrefs, prefsPromptLines, validatePref, describePref, nextSignalState, clearedSignal } from "./trainingPrefs.js";
 import { campaignLine, parseBlockInfo } from "./programContract.js";
@@ -904,13 +904,24 @@ Anything wrong is a one-word fix now and a wasted week later. Good to build?`;
       {(phase === "interview" || phase === "boot") && (
         <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 10 }}>
           <div ref={scrollRef} style={{ flex: 1, minHeight: 120, overflowY: "auto", display: "flex", flexDirection: "column", gap: 9, paddingRight: 2 }}>
-            {phase === "boot" && <div style={{ color: CA.muted, fontSize: 12, ...mono }}>▮▯▯ charging blueprint…</div>}
+            {/* T62: Joe's opening question arriving — a bubble taking shape in the
+                place it will occupy, not a mono placeholder above empty space. */}
+            {phase === "boot" && (
+              <div role="status" aria-label="Charging blueprint" style={{ alignSelf: "flex-start", maxWidth: "88%", minWidth: "72%", background: CA.navy3, border: `1px solid ${CA.border}`, borderRadius: 11, padding: "10px 12px" }}>
+                <Skeleton lines={[94, 76, 52]} line={10} gap={9} />
+              </div>
+            )}
             {transcript.map((m, i) => (
               <div key={i} style={{ alignSelf: m.role === "user" ? "flex-end" : "flex-start", maxWidth: "88%", background: m.role === "user" ? `${CA.accent}18` : CA.navy3, border: `1px solid ${m.role === "user" ? `${CA.accent}44` : CA.border}`, borderRadius: 11, padding: "8px 12px", color: CA.text, fontSize: 12.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
                 {m.content}
               </div>
             ))}
-            {busy && <div style={{ color: CA.muted, fontSize: 11, ...mono }}>Joe's thinking…</div>}
+            {busy && (
+              <div style={{ display: "flex", alignItems: "center", gap: 9, color: CA.muted, fontSize: 11, ...mono }}>
+                <div className="ld-dots" style={{ transform: "scale(.7)", transformOrigin: "left center" }}><i /><i /><i /></div>
+                Joe's thinking…
+              </div>
+            )}
             {err && <div style={{ color: CA.red, fontSize: 11.5 }}>{err}{transcript.length === 0 && <button onClick={() => openInterview(blueprint, scope)} style={{ ...miniBtn(true), marginLeft: 8 }}>Retry</button>}</div>}
           </div>
           {chips.length > 0 && !busy && (

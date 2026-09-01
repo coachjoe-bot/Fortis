@@ -5,7 +5,7 @@
 // the dynamic import means the cycle App→coach→App is resolved at load time.
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import {
-  CA, CA_BTN, CA_GLOW, DISP, GS, IS_DARK, PAPER_GRID, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
+  CA, CA_BTN, CA_GLOW, DISP, GS, IS_DARK, PAPER_GRID, setDarkTheme, LineChart, MASTER_CODE, RunCard, SUPABASE_KEY, SUPABASE_URL, Skeleton, SkeletonCards, askClaude, bestE1RMForExercise, btn, cleanerName, daysBetween, disablePush, displayForKey, enablePush, epley1RM, fmtDate, fmtDateRelative, fmtDateShort, fmtWeight, formatSetDetails, getAuth, getExerciseSets, getPushStatusForCaller, getPushSubscription, groupIntoSessions, haptic, idApi, inpA, isRealSession, liftTier, normalizeExName, pushSupported, sbDelete, sbInsert, sbRead, sbUpdate, sbUpdateWhere, sbUpsert, snapshotProgram, ProgramDraftsPane, ProgramBlocksPane, toLbs, track, useIsMobile
 } from "./App.jsx";
 // Imported from the module directly rather than re-exported through App.jsx —
 // deepLink.js is dependency-free, and routing a notification target should not
@@ -801,7 +801,7 @@ function CoachPrograms({coachId, athletes = [], workouts = [], onApplied, applyP
       {/* ── BUILDER ── */}
       {ctx&&(builderMounted||sub==="builder")&&(
         <div style={{minHeight:420,display:sub==="builder"?"flex":"none",flexDirection:"column"}}>
-          <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+          <Suspense fallback={<div style={{padding:"18px 4px"}}><SkeletonCards n={2} lines={[40,90,72,56]}/></div>}>
             <ProgramBuilderPane key={`${ctx.id}-${builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"}`}
               athlete={ctx} viewer="coach" coachId={coachId} saveTarget="library"
               workoutHistory={workouts.filter(w=>w.athlete_id===ctx.id)}
@@ -846,7 +846,7 @@ function CoachPrograms({coachId, athletes = [], workouts = [], onApplied, applyP
       <div style={{...DISP,fontSize:14,letterSpacing:1.5,color:CA.text,margin:"18px 0 10px"}}>
         MY PROGRAMS{rows?` · ${rows.length}`:""}
       </div>
-      {rows===null&&<div style={{color:CA.muted,fontSize:13}}>Loading...</div>}
+      {rows===null&&<SkeletonCards n={2} lines={[42,86,60]}/>}
       {rows&&rows.length===0&&(
         <div style={{color:CA.muted,fontSize:13,lineHeight:1.6}}>
           Nothing saved yet. Build one with Joe in the Builder tab, or paste one above — then put it on anyone.
@@ -1465,7 +1465,16 @@ function CoachDashboard({coach,onLogout}) {
 
       <div style={{padding:isMobile?12:20,maxWidth:1400,margin:"0 auto"}}>
         {loading?(
-          <div style={{textAlign:"center",padding:60,color:CA.muted}}>Loading...</div>
+          /* T62: the dashboard's own shape while the roster batch lands — a brief
+             block over a roster list, not a centred "Loading..." on empty space. */
+          <div role="status" aria-label="Loading your dashboard" style={{maxWidth:700}}>
+            <div style={{background:CA.navy2,border:`1px solid ${CA.border}`,borderRadius:14,padding:16,marginBottom:20}}>
+              <Skeleton lines={[30]} line={14}/>
+              <div style={{height:16}}/>
+              <Skeleton lines={[92,78,64]} line={11} gap={12}/>
+            </div>
+            <SkeletonCards n={4} lines={[36,80]} line={11}/>
+          </div>
         ):(
           <>
             {/* ── OVERVIEW TAB ── */}
@@ -1595,7 +1604,7 @@ function CoachDashboard({coach,onLogout}) {
                       </button>
                     )}
                     {selectedWorkouts?.id!==selected.id?(
-                      <div style={{padding:40,textAlign:"center",color:CA.muted,fontSize:13}}>Loading history…</div>
+                      <div style={{padding:"24px 4px"}} role="status" aria-label="Loading history"><SkeletonCards n={4} lines={[38,82,58]}/></div>
                     ):(
                     <AthleteDetail
                       athlete={selected}

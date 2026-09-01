@@ -2276,8 +2276,29 @@ input,textarea,select,button{font-family:'Inter',system-ui,-apple-system,sans-se
    the animation only plays the entrance, so reduced-motion / no-anim = still shown. */
 @keyframes proofDrop{from{opacity:0;transform:translateY(14px) scale(0.985);}to{opacity:1;transform:translateY(0) scale(1);}}
 .proof-drop{animation:proofDrop 0.5s cubic-bezier(.2,.7,.2,1) both;}
+/* ─── T62 LOADING VOCABULARY — app-wide, so it MUST live in GS ───────────────
+   Every waiting surface in the app speaks these two words: skeleton bars that
+   sketch the SHAPE of what's coming (never a spinner, never a blank card), and
+   the three-dot pulse for "someone is composing". They sit in GS rather than
+   GSA because the coach dashboard mounts GS+GSC only — an athlete-string home
+   made them silently invisible on every coach surface (found 08-31 by driving
+   the coach dashboard: the cards painted, the bars inside were transparent).
+   Same structure in both themes, each in its own colors (the both-themes rule):
+   light = warm stone bars under a white sheen, dark = raised navy under a faint
+   blue one. */
+.sk{position:relative;overflow:hidden;border-radius:6px;background:${IS_DARK?"#101b36":"#E9E3D7"};}
+.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,${IS_DARK?"rgba(106,160,255,.13)":"rgba(255,255,255,.7)"},transparent);animation:skSweep 1.9s ease-in-out infinite;}
+@keyframes skSweep{to{transform:translateX(100%);}}
+.ld-dots{display:flex;align-items:center;gap:5px;}
+.ld-dots i{width:8px;height:8px;border-radius:50%;background:${CA.muted};opacity:.4;animation:ldd 1.3s ease-in-out infinite;}
+.ld-dots i:nth-child(2){animation-delay:.18s}.ld-dots i:nth-child(3){animation-delay:.36s}
+@keyframes ldd{0%,60%,100%{opacity:.35;transform:translateY(0);}30%{opacity:1;transform:translateY(-4px);}}
 @media (prefers-reduced-motion: reduce){
   .proof-drop,.word-in{animation:none!important;}
+  .sk::after,.ld-dots i{animation:none!important;}
+  /* a static sheen would sit at full strength over the whole bar */
+  .sk::after{opacity:0!important;}
+  .ld-dots i{opacity:.5!important;}
 }
 `;
 // GSA — athlete-side motion primitives for the aesthetic overhaul. All keyframe
@@ -2380,19 +2401,8 @@ ${IS_DARK?`
 .ld-hex i:nth-child(2){animation-delay:.1s}.ld-hex i:nth-child(3){animation-delay:.2s}.ld-hex i:nth-child(4){animation-delay:.1s}.ld-hex i:nth-child(5){animation-delay:.2s}.ld-hex i:nth-child(6){animation-delay:.3s}.ld-hex i:nth-child(7){animation-delay:.2s}.ld-hex i:nth-child(8){animation-delay:.3s}.ld-hex i:nth-child(9){animation-delay:.4s}
 @keyframes hp{50%{opacity:1;}}
 `}
-.ld-dots{display:flex;align-items:center;gap:5px;}
-.ld-dots i{width:8px;height:8px;border-radius:50%;background:${CA.muted};opacity:.4;animation:ldd 1.3s ease-in-out infinite;}
-.ld-dots i:nth-child(2){animation-delay:.18s}.ld-dots i:nth-child(3){animation-delay:.36s}
-@keyframes ldd{0%,60%,100%{opacity:.35;transform:translateY(0);}30%{opacity:1;transform:translateY(-4px);}}
-/* T62 SKELETON — the app-wide loading system. Bars sketch the SHAPE of the
-   content being fetched (a sheet being written, cards, rows) and a slow sheen
-   sweeps them. Never a spinner bolted on, never a bare caption on an empty card.
-   Same structure both themes; each theme its own colors (the both-themes rule):
-   light = warm stone bars with a white sheen, dark = raised navy with a faint
-   blue sheen. */
-.sk{position:relative;overflow:hidden;border-radius:6px;background:${IS_DARK?"#101b36":"#E9E3D7"};}
-.sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,${IS_DARK?"rgba(106,160,255,.13)":"rgba(255,255,255,.7)"},transparent);animation:skSweep 1.9s ease-in-out infinite;}
-@keyframes skSweep{to{transform:translateX(100%);}}
+/* .ld-dots + the T62 skeleton system live in GS, not here — the coach dashboard
+   mounts GS+GSC only, so an athlete-string home made them invisible coach-side. */
 /* PR "NEW MAX" stamp — straight on, cyan */
 .stampstage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:700;pointer-events:none;}
 /* T56: dimming scrim behind the stamps — they used to slam straight over busy
@@ -2476,9 +2486,8 @@ ${IS_DARK?`
    for Settings group labels ("PROOF FEED", "WEIGHT UNIT", etc.) */
 .setgrp{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:${CA.faint};}
 @media (prefers-reduced-motion: reduce){
-  .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.radar i,.sk::after,.ld-charge i,.ld-scan::before,.ld-hex i,.ld-dots i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
-  /* static sheen would sit at full opacity over the whole bar — hide it instead */
-  .sk::after{opacity:0!important;}
+  /* .sk / .ld-dots are handled by the same guard in GS (their rules live there) */
+  .a-ticker,.a-flap,.a-stamp,.a-draw,.radar::before,.radar i,.ld-charge i,.ld-scan::before,.ld-hex i,.stamp,.proof-loop{animation:none!important;transform:none!important;opacity:1!important;}
   .radar i{opacity:.5!important;}
   .crewspine::after{transition:none!important;}
   .hcell.go .hfill{transform:scaleX(var(--pct,0))!important;}
@@ -2705,6 +2714,54 @@ export function SheetSkeleton({caption="Joe's updating the sheet…"}) {
       <div style={{marginTop:"auto",paddingTop:20,display:"flex",alignItems:"center",gap:9,color:CA.muted,fontSize:12}}>
         <div className="ld-dots" style={{transform:"scale(.8)",transformOrigin:"left center"}}><i/><i/><i/></div>
         {caption}
+      </div>
+    </div>
+  );
+}
+// One card's worth of skeleton, in the card chrome the real content will wear.
+// `n` cards, so a list-shaped pane loads as a list, not as one lonely box.
+export function SkeletonCards({n=2, lines=[34,88,64], line=11, style}) {
+  return (
+    <>
+      {Array.from({length:n},(_,i)=>(
+        <div key={i} aria-hidden style={{border:`1px solid ${CA.border}`,borderRadius:12,padding:13,background:CA.navy3,marginBottom:10,opacity:1-i*0.18,...style}}>
+          <Skeleton lines={lines} line={line}/>
+        </div>
+      ))}
+    </>
+  );
+}
+// Chat cold start: alternating bubble blocks so the wait looks like a
+// conversation arriving, not a progress bar. Joe's side is wider (his openers
+// run long); the athlete's sits right.
+export function ChatSkeleton({caption="Syncing feed"}) {
+  const bubble = (w, mine) => ({
+    alignSelf: mine?"flex-end":"flex-start", width:`${w}%`,
+    borderRadius:14, padding:12, marginBottom:10,
+    background:CA.navy2, border:`1px solid ${CA.border}`,
+  });
+  return (
+    <div role="status" aria-label={caption} style={{flex:1,display:"flex",flexDirection:"column",padding:"20px 4px",gap:0}}>
+      <div style={bubble(78,false)}><Skeleton lines={[92,74,58]} line={10} gap={9}/></div>
+      <div style={bubble(52,true)}><Skeleton lines={[88,60]} line={10} gap={9}/></div>
+      <div style={bubble(70,false)}><Skeleton lines={[86,66]} line={10} gap={9}/></div>
+      <div style={{display:"flex",alignItems:"center",gap:9,justifyContent:"center",marginTop:14,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:10,letterSpacing:1,color:CA.muted}}>
+        <div className="ld-dots" style={{transform:"scale(.7)"}}><i/><i/><i/></div>{caption}
+      </div>
+    </div>
+  );
+}
+// Whole-screen fallback while a lazy chunk downloads (the coach dashboard is the
+// big one — it used to paint a bare full-viewport ground, i.e. a blank screen).
+// Mounts GS itself: this renders ABOVE the screens that normally carry it.
+export function ScreenSkeleton({caption="Loading…"}) {
+  return (
+    <div className="cyber" style={{minHeight:"100vh",background:CA.navy,padding:"calc(18px + env(safe-area-inset-top, 0px)) 16px 16px"}}>
+      <style>{GS}</style>
+      <div role="status" aria-label={caption} style={{maxWidth:600,margin:"0 auto"}}>
+        <Skeleton lines={[38]} line={20}/>
+        <div style={{height:22}}/>
+        <SkeletonCards n={3} lines={[30,84,68,52]}/>
       </div>
     </div>
   );
@@ -4125,7 +4182,9 @@ function WilcoRoot() {
   }
 
   if(view==="athlete"&&athlete) return <AthleteView athlete={athlete} onLogout={()=>{clearAuthSession();setAthlete(null);setView("home");}}/>;
-  if(view==="coach"&&coach) return <Suspense fallback={<div style={{minHeight:"100vh",background:CA.navy}}/>}><CoachDashboard coach={coach} onLogout={()=>{clearAuthSession();setCoach(null);setView("home");}}/></Suspense>;
+  // T62: the fallback used to be a bare full-viewport ground — a literal blank
+  // screen for as long as the coach chunk took to download.
+  if(view==="coach"&&coach) return <Suspense fallback={<ScreenSkeleton caption="Loading your dashboard…"/>}><CoachDashboard coach={coach} onLogout={()=>{clearAuthSession();setCoach(null);setView("home");}}/></Suspense>;
 
   // REBRAND 2026-08-07 — athlete and coach entry are now the SAME screen treatment.
   // The old split existed only because athlete entry carried the electric-blue storefront
@@ -4544,7 +4603,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
         </div>
       )}
 
-      {initializing && <div style={{color:CA.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Loading secure checkout…</div>}
+      {initializing && <div role="status" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"20px 0"}}><Skeleton lines={[100]} line={10} style={{width:180}}/><span style={{color:CA.muted,fontSize:13}}>Loading secure checkout…</span></div>}
       {initError && (
         <div style={{textAlign:"center",padding:"12px 0"}}>
           <div style={{color:CA.red,fontSize:13,marginBottom:10}}>{initError}</div>
@@ -4552,7 +4611,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
         </div>
       )}
       {clientSecret && stripeObj && (
-        <Suspense fallback={<div style={{color:CA.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Loading secure checkout…</div>}>
+        <Suspense fallback={<div role="status" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"20px 0"}}><Skeleton lines={[100]} line={10} style={{width:180}}/><span style={{color:CA.muted,fontSize:13}}>Loading secure checkout…</span></div>}>
           <StripePayBlock stripeObj={stripeObj}
             options={{clientSecret, appearance:{theme:"night", variables:{colorPrimary:CA.accent, colorBackground:CA.navy3, colorText:CA.text, borderRadius:"10px"}}}}
             payLabel={payLabel} onCardSaved={subscribeWithCard} onSuccess={onSuccess} onEvent={onPayEvent}
@@ -4560,7 +4619,7 @@ function PaymentStep({athleteId, pin, tier, billing, eventCtx, onSuccess}) {
         </Suspense>
       )}
       {clientSecret && STRIPE_PK && !stripeObj && !stripeFailed && (
-        <div style={{color:CA.muted,fontSize:13,textAlign:"center",padding:"20px 0"}}>Loading secure checkout…</div>
+        <div role="status" style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"20px 0"}}><Skeleton lines={[100]} line={10} style={{width:180}}/><span style={{color:CA.muted,fontSize:13}}>Loading secure checkout…</span></div>
       )}
       {clientSecret && stripeFailed && (
         <div style={{textAlign:"center",padding:"12px 0"}}>
@@ -10001,10 +10060,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
             has the greeting (or today's transcript) painted from the device, so
             showing "Syncing feed" over it would be a step backwards. */}
         {!historyLoaded&&messages.length===0&&!openerLoading?(
-          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,padding:"48px 20px"}}>
-            <div className="ld-charge"><i/></div>
-            <div style={{fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace",fontSize:10,letterSpacing:1,color:CA.muted}}>Syncing feed</div>
-          </div>
+          <ChatSkeleton caption="Syncing feed"/>
         ):(
           <>
             {messages.map((m,i)=>(
@@ -10686,7 +10742,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   ))}
                 </div>
                 <div style={{display:builderMode==="build"?"flex":"none",flexDirection:"column",flex:1,minHeight:0}}>
-                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading the Builder…</div>}>
+                  <Suspense fallback={<div style={{padding:"18px 4px"}}><SkeletonCards n={2} lines={[40,90,72,56]}/></div>}>
                     <ProgramBuilderPane key={builderDraft?.id||builderDraft?.__rebuildFrom?.id||"new"} athlete={athlete} viewer="athlete"
                       locked={!!athlete.program_locked}
                       workoutHistory={workoutHistory}
@@ -10697,7 +10753,7 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
                   </Suspense>
                 </div>
                 {builderMode==="edit"&&(
-                  <Suspense fallback={<div style={{color:CA.muted,fontSize:12,fontFamily:"ui-monospace,Menlo,monospace",padding:"18px 4px"}}>▮▯▯ loading…</div>}>
+                  <Suspense fallback={<div style={{padding:"18px 4px"}}><SkeletonCards n={2} lines={[34,88,64]}/></div>}>
                     <ProgramEditPane athlete={athlete} viewer="athlete" onSaveToProgram={applyBuilderText}/>
                   </Suspense>
                 )}
@@ -13464,6 +13520,11 @@ function ProgressModal({athlete, workoutHistory, onClose}) {
             {!bodyweight&&dedupedBench.length===0&&(
               <div style={{color:CA.muted,textAlign:"center",padding:40,fontSize:13}}>Add your weight in Settings to see your strength benchmarks.</div>
             )}
+            {/* T62: bodyweight set but nothing logged rendered NOTHING at all —
+                the one Progress tab with no empty state. */}
+            {bodyweight&&dedupedBench.length===0&&(
+              <AwaitingSignal hint="Log a few lifts and your benchmarks rank themselves against the standards for your bodyweight."/>
+            )}
           </div>
         )}
 
@@ -14430,7 +14491,7 @@ function CrewTab({athlete, demo=false}){
 
       {sub==="moments"&&(
         <div>
-          {feedLoading&&<div style={{color:CA.muted,fontSize:12}}>Loading…</div>}
+          {feedLoading&&<SkeletonCards n={3} lines={[46,88,62]}/>}
           {!feedLoading&&feed&&(()=>{
             // Last-7-days readout across the whole crew, at the top of the feed.
             // Counts only, no names and no order: a summary of what the crew did,
