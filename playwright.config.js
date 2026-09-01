@@ -9,6 +9,13 @@
 // flakes, fix the spec — don't retry past it.
 import { defineConfig } from "@playwright/test";
 
+// Port is overridable because `reuseExistingServer` will happily REUSE another
+// worktree's dev server on the same port — several WILCO worktrees run gates at
+// once, and a suite that silently grades a different branch's bundle produces
+// shifting failures in specs you never touched. Set SMOKE_PORT to run in
+// parallel with another checkout. (Diagnosed 09-01: a third session held 5175.)
+const PORT = Number(process.env.SMOKE_PORT || 5175);
+
 export default defineConfig({
   testDir: "tests/smoke",
   timeout: 45_000,            // per test — Stripe.js failure path alone burns ~2.5s per attempt cycle
@@ -18,7 +25,7 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost:5175",
+    baseURL: `http://localhost:${PORT}`,
     // The app registers a PWA service worker (public/sw.js). A live SW would
     // handle fetches OUTSIDE Playwright's route interception and silently bypass
     // the API mocks — block it. (mocks.js also stubs register() so the page's
@@ -27,8 +34,8 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npx vite --port 5175 --strictPort",
-    port: 5175,
+    command: `npx vite --port ${PORT} --strictPort`,
+    port: PORT,
     reuseExistingServer: true,
     timeout: 60_000,
   },
