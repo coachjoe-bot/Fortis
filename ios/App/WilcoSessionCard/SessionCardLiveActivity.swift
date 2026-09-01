@@ -73,26 +73,26 @@ struct SessionCardLiveActivity: Widget {
                         .layoutPriority(1)
                         .padding(.trailing, 3)
                     Spacer(minLength: 8)
-                    // T62: start time + a LIVE elapsed stopwatch. timerInterval
-                    // text ticks in the widget process itself, no pushes. The
-                    // range's far end is the 8h Live Activity ceiling — iOS ends
-                    // the activity before the timer can run out. The whole
-                    // trailing run scales down before anything crowds the brand
-                    // on narrow widths.
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text("STARTED \(context.state.startedAt, style: .time) ·")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .kerning(0.8)
-                            .foregroundStyle(c.muted)
-                        Text(timerInterval: context.state.startedAt...context.state.startedAt.addingTimeInterval(8 * 3600),
-                             countsDown: false)
-                            .font(.system(size: 8.5, weight: .bold).monospacedDigit())
-                            .foregroundStyle(c.accent)
-                            .frame(maxWidth: 44, alignment: .leading)
-                    }
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .padding(.trailing, 3)
+                    // T62: start time + a LIVE elapsed stopwatch to its right.
+                    // timerInterval text ticks in the widget process itself, no
+                    // pushes; the range's far end is the 8h Live Activity
+                    // ceiling, which iOS reaches before the timer can run out.
+                    // Proven live in the sim 09-01 (ticked 0:15 on the lock
+                    // screen). The trailing pair scales down before it can
+                    // crowd the brand on narrow widths.
+                    Text("STARTED \(context.state.startedAt, style: .time)")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .kerning(0.8)
+                        .foregroundStyle(c.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(timerInterval: context.state.startedAt...context.state.startedAt.addingTimeInterval(8 * 3600),
+                         countsDown: false)
+                        .font(.system(size: 8.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(c.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .padding(.trailing, 3)
                 }
                 Rectangle().fill(c.rule).frame(height: 1)
                 Text(context.state.title)
