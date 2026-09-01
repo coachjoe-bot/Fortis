@@ -6963,6 +6963,9 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
   const [recOpen,setRecOpen] = useState(false);
   const [recBusy,setRecBusy] = useState(false);
   const [recWhyOpen,setRecWhyOpen] = useState(false);
+  // The bar's ✕ never acts silently (Will 09-01): it asks Save to Drafts or
+  // Delete. Backdrop tap cancels and the rec stays live.
+  const [recExitAsk,setRecExitAsk] = useState(false);
   const recSaveRef = useRef(null);
   useEffect(()=>()=>clearTimeout(recSaveRef.current),[]);
 
@@ -7004,28 +7007,24 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     }
   };
 
-  const dismissRec = () => {              // ✕ / Save for Later — park it, keep every edit
+  const dismissRec = () => {              // Save for Later / Save to Drafts — park it, keep every edit
     const p = recPending;
-    setRecOpen(false); setRecPending(null);
+    setRecOpen(false); setRecPending(null); setRecExitAsk(false);
     if(p?.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{blueprint:{rec:{...p.rec, parked:true}}, updated_at:new Date().toISOString()}).catch(()=>{});
     joeBubble("Parked it. It's under Program, Memory, in Drafts whenever you want it.");
   };
 
-  // DISMISS (T62, Will 08-31): the rec goes AWAY — a real status on the row
-  // (rec_dismissed, gateway enum + DB CHECK both extended), never a hidden
-  // card. The row stays in Past Blocks marked Dismissed as the audit trail;
-  // reopening it from there restages it if they change their mind.
+  // DISMISS (T62, Will 09-01 ruling): dismissed means GONE — the row is
+  // deleted outright, nothing lingers in Past Blocks. A refused delete must be
+  // LOUD in telemetry (the recs-wave lesson): a swallowed failure here means
+  // the bar resurrects on next boot with no trace of why.
   const discardRec = () => {
     const p = recPending; if(!p || recBusy) return;
-    setRecOpen(false); setRecPending(null);
-    // A refused persist must be LOUD in telemetry (the recs-wave lesson): a
-    // swallowed failure here means the bar resurrects on next boot with no
-    // trace of why — caught live on 08-31 when the pre-deploy prod gateway
-    // rejected the new status and the catch ate it.
-    if(p.draftId) sbUpdateWhere("program_drafts",`?id=eq.${p.draftId}`,{status:"rec_dismissed", blueprint:{rec:{...p.rec, parked:true, dismissedAt:new Date().toISOString()}}, updated_at:new Date().toISOString()})
+    setRecOpen(false); setRecPending(null); setRecExitAsk(false);
+    if(p.draftId) sbDelete("program_drafts",`?id=eq.${p.draftId}`)
       .catch((e)=>{ try{ reportError("data", e, { component:"program_rec_dismiss", meta:{ origin:p.rec.origin } }); }catch(_){} });
     try{ track("program_rec_dismissed","ai",{origin:p.rec.origin}); }catch(_){}
-    joeBubble("Dismissed. Program stays as it is. If you change your mind it's under Program, Memory, in Past Blocks.");
+    joeBubble("Deleted. Program stays as it is. If you want that change later, just ask me again.");
   };
 
   const recEditSwap = (i, replace) => {    // direct edit — verbatim, auto-saved
@@ -7117,8 +7116,6 @@ function AthleteView({athlete: initialAthlete, onLogout}) {
     setRecPending({draftId:row.id, rec:un});
     setRecWhyOpen(true);
     setShowProgram(false); setSheetOpen(false); setPgOpen(false); setRecOpen(true);
-    // Reopening a DISMISSED rec un-dismisses it (T62) — back to a live rec row,
-    // same one-door lifecycle. The status write is a no-op for already-"rec" rows.
     sbUpdateWhere("program_drafts",`?id=eq.${row.id}`,{status:"rec", blueprint:{rec:un}, updated_at:new Date().toISOString()}).catch(()=>{});
   };
 
@@ -10410,11 +10407,33 @@ Keep it under 200 words. No fluff. If the frames are unclear, use the clearest o
           <div onClick={()=>{setSheetOpen(false); setPgOpen(false); setRecOpen(true); setRecWhyOpen(true);}} role="button" tabIndex={0}
             onKeyDown={e=>{ if(e.key==="Enter"){ setSheetOpen(false); setPgOpen(false); setRecOpen(true); } }}
             style={{background:CA.navy2,color:CA.accent,border:`1.5px solid ${CA.accent}`,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-            <button onClick={e=>{e.stopPropagation();dismissRec();}} aria-label="Park the program rec"
+            <button onClick={e=>{e.stopPropagation();setRecExitAsk(true);}} aria-label="Close the program rec"
               style={{background:"none",border:"none",color:"inherit",opacity:.7,fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0}}>✕</button>
             <span aria-hidden style={{width:7,height:7,borderRadius:"50%",background:CA.accent,flexShrink:0}}/>
             <span style={{...DISP,fontSize:12.5,letterSpacing:0.6,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>PROGRAM REC — {recPending.rec.title}</span>
             <span aria-hidden style={{fontSize:12,opacity:.85}}>▲</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── the ✕ asks (Will 09-01): Save to Drafts keeps it under Memory,
+          Delete removes the row outright. Backdrop tap = cancel, rec stays. */}
+      {CHAT_FIRST_ON && recPending && recExitAsk && (
+        <div onClick={()=>setRecExitAsk(false)} style={{position:"absolute",inset:0,zIndex:60,background:"rgba(10,15,29,0.45)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div onClick={e=>e.stopPropagation()} role="dialog" aria-label="Close this program rec"
+            style={{background:CA.navy,border:`1px solid ${CA.border}`,borderRadius:14,padding:"16px 16px 14px",width:"100%",maxWidth:340,boxShadow:"0 12px 40px rgba(0,0,0,0.35)"}}>
+            <div style={{...DISP,fontSize:13,letterSpacing:0.6,color:CA.text,marginBottom:4}}>SAVE THIS PROGRAM REC?</div>
+            <div style={{fontSize:12,lineHeight:1.55,color:CA.muted2,marginBottom:12}}>Save to Drafts keeps "{recPending.rec.title}" under Program, Memory. Delete removes it for good.</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={discardRec}
+                style={{flex:1,background:"transparent",color:CA.red,border:`1px solid ${CA.red}66`,borderRadius:9,padding:"10px 8px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer"}}>
+                Delete
+              </button>
+              <button onClick={dismissRec}
+                style={{flex:1.4,background:CA_BTN,color:CA.onAccent,border:"none",borderRadius:9,padding:"10px 8px",...DISP,fontSize:11.5,letterSpacing:0.5,cursor:"pointer"}}>
+                Save to Drafts
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -12565,7 +12584,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     const ownerFilter = viewer==="coach" ? "coach" : "athlete";
     // Program Recs (Will 08-28) ride the same rows; they surface here only for
     // the athlete under chat-first (the handlers arrive as props from that path).
-    const statuses = onResumeRec ? '("interview","draft","rec","rec_applied","rec_dismissed")' : '("interview","draft")';
+    const statuses = onResumeRec ? '("interview","draft","rec","rec_applied")' : '("interview","draft")';
     sbRead("program_drafts",`?athlete_id=eq.${athlete.id}&owner_type=eq.${ownerFilter}&status=in.${statuses}&order=updated_at.desc&select=*`)
       .then(r=>{ if(Array.isArray(r)) setDrafts(r); })
       .catch(()=>{})
@@ -12646,7 +12665,7 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
     );
   }
 
-  const REC_STATUSES = new Set(["rec","rec_applied","rec_dismissed"]);
+  const REC_STATUSES = new Set(["rec","rec_applied"]);
   const recRows = drafts.filter(d=>REC_STATUSES.has(d.status));
   const builderRows = drafts.filter(d=>!REC_STATUSES.has(d.status));
   const recOf = (d) => d.blueprint?.rec || null;
@@ -12659,17 +12678,12 @@ export function ProgramDraftsPane({athlete, viewer="athlete", onSaveToProgram, o
         {recRows.map(d=>{
           const r = recOf(d); if(!r) return null;
           const applied = d.status==="rec_applied";
-          // T62: a dismissed rec stays as a muted audit row — the record that a
-          // change was proposed and waved off. Open restages it if they change
-          // their mind.
-          const dismissed = d.status==="rec_dismissed";
-          const chipInk = applied?CA.green:dismissed?CA.muted:CA.accent;
           return (
-            <div key={d.id} style={{...card,...(dismissed?{opacity:.75}:{})}}>
+            <div key={d.id} style={card}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
                 <span style={{...DISP,fontSize:15,letterSpacing:1,color:CA.text}}>{d.title||"PROGRAM REC"}</span>
-                <span style={{background:`${chipInk}18`,border:`1px solid ${chipInk}55`,color:chipInk,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
-                  {applied?"Applied":dismissed?"Dismissed":r.reverted?"Reverted":"Rec"}
+                <span style={{background:applied?`${CA.green}18`:`${CA.accent}18`,border:`1px solid ${applied?CA.green:CA.accent}55`,color:applied?CA.green:CA.accent,borderRadius:6,padding:"1px 8px",fontSize:9.5,letterSpacing:1,textTransform:"uppercase"}}>
+                  {applied?"Applied":r.reverted?"Reverted":"Rec"}
                 </span>
                 <span style={{marginLeft:"auto",color:CA.muted,fontSize:10.5}}>{fmtD(d.updated_at||d.created_at)}</span>
               </div>
